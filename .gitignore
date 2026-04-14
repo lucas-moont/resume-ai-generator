@@ -1,0 +1,26 @@
+data/profile/*
+!data/profile/.gitkeep
+
+data/profile_master.json
+data/projects/*.md
+
+.env
+.venv/
+**/.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+node_modules/
+dist/
+*.log
+
+.DS_Store
+Thumbs.db
+
+# Optional: local PDF exports
+exports/*.pdf
+
+my-to-do.txt

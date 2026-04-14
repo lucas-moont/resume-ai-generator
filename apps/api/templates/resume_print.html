@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="{{ resume.locale or 'pt-BR' }}">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ resume.fullName }} — Resume</title>
+  <style>
+{% include "resume.css" %}
+  </style>
+</head>
+<body>
+  {% set is_pt = (resume.locale or 'pt-BR').startswith('pt') %}
+  {% set t_summary = 'Resumo' if is_pt else 'Summary' %}
+  {% set t_experience = 'Experiência' if is_pt else 'Experience' %}
+  {% set t_projects = 'Projetos' if is_pt else 'Projects' %}
+  {% set t_technologies = 'Tecnologias' if is_pt else 'Technologies' %}
+  {% set t_education = 'Formação' if is_pt else 'Education' %}
+  {% set t_location = 'Localização' if is_pt else 'Location' %}
+  {% set t_phone = 'Telefone' if is_pt else 'Phone' %}
+  {% set t_links = 'Links' %}
+  {% set t_present = 'Atual' if is_pt else 'Present' %}
+  <div class="page">
+    <header class="doc-header">
+      <div class="doc-header-main">
+        <h1 class="name">{{ resume.fullName }}</h1>
+        <p class="headline">{{ resume.headline | safe }}</p>
+      </div>
+    </header>
+    <div class="layout">
+      <main class="main">
+        <section class="main-section">
+          <h2 class="section-label"><span class="section-accent">//</span> {{ t_summary }}</h2>
+          <p class="summary">{{ resume.summary | safe }}</p>
+        </section>
+        {% if resume.experience %}
+        <section class="main-section">
+          <h2 class="section-label"><span class="section-accent">//</span> {{ t_experience }}</h2>
+          {% for job in resume.experience %}
+          <article class="exp">
+            <div class="exp-head">
+              <span class="exp-title">{{ job.title }}</span>
+              <span class="exp-company">{{ job.company }}</span>
+              <span class="exp-dates tabular">{{ job.start }} — {{ job.end or t_present }}</span>
+            </div>
+            {% if job.location %}<p class="exp-loc">{{ job.location }}</p>{% endif %}
+            {% if job.highlights %}
+            <ul class="exp-list">
+              {% for h in job.highlights %}
+              <li>{{ h | safe }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </article>
+          {% endfor %}
+        </section>
+        {% endif %}
+        {% if resume.projects %}
+        <section class="main-section">
+          <h2 class="section-label"><span class="section-accent">//</span> {{ t_projects }}</h2>
+          {% for proj in resume.projects %}
+          <article class="proj">
+            <h3 class="proj-name">{{ proj.name | safe }}</h3>
+            <p class="proj-desc">{{ proj.description | safe }}</p>
+          </article>
+          {% endfor %}
+        </section>
+        {% endif %}
+        {% if resume.skills %}
+        <section class="main-section">
+          <h2 class="section-label"><span class="section-accent">//</span> {{ t_technologies }}</h2>
+          <ul class="skill-chips main-skills">
+            {% for s in resume.skills %}
+            <li>{{ s }}</li>
+            {% endfor %}
+          </ul>
+        </section>
+        {% endif %}
+        {% if resume.education %}
+        <section class="main-section">
+          <h2 class="section-label"><span class="section-accent">//</span> {{ t_education }}</h2>
+          {% for ed in resume.education %}
+          <article class="edu">
+            <div class="edu-head">
+              <span class="edu-degree">{{ ed.degree }}</span>
+              <span class="edu-inst">{{ ed.institution }}</span>
+              {% if ed.end %}<span class="edu-end tabular">{{ ed.end }}</span>{% endif %}
+            </div>
+            {% if ed.details %}<p class="edu-details">{{ ed.details | safe }}</p>{% endif %}
+          </article>
+          {% endfor %}
+        </section>
+        {% endif %}
+      </main>
+      <aside class="sidebar" aria-label="Contact">
+        {% if resume.location %}
+        <section class="side-block">
+          <h2 class="side-title">{{ t_location }}</h2>
+          <p class="side-text">{{ resume.location }}</p>
+        </section>
+        {% endif %}
+        {% if resume.phone %}
+        <section class="side-block">
+          <h2 class="side-title">{{ t_phone }}</h2>
+          <p class="side-text tabular">{{ resume.phone }}</p>
+        </section>
+        {% endif %}
+        {% if resume.links %}
+        <section class="side-block">
+          <h2 class="side-title">{{ t_links }}</h2>
+          <ul class="side-links">
+            {% for link in resume.links %}
+            <li><a href="{{ link.url }}">{{ link.label }}</a></li>
+            {% endfor %}
+          </ul>
+        </section>
+        {% endif %}
+      </aside>
+    </div>
+  </div>
+</body>
+</html>

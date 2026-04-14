@@ -1,0 +1,257 @@
+.app-shell {
+  min-height: 100vh;
+  background: linear-gradient(160deg, #0f172a 0%, #1e293b 45%, #0f172a 100%);
+  color: #e2e8f0;
+}
+
+.app-top {
+  padding: 1rem 1.5rem 0.5rem;
+  border-bottom: 1px solid #334155;
+}
+
+.app-title {
+  margin: 0;
+  font-family: "Consolas", ui-monospace, monospace;
+  font-size: 1.25rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #5eead4;
+}
+
+.app-sub {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(320px, 38%) 1fr;
+  gap: 0;
+  min-height: calc(100vh - 72px);
+}
+
+.panel {
+  padding: 1rem 1.25rem;
+}
+
+.panel-left {
+  border-right: 1px solid #334155;
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.panel-right {
+  overflow: auto;
+  background: #475569;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+  margin-bottom: 0.35rem;
+}
+
+.field-label.inline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+}
+
+.job-input {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #f1f5f9;
+  padding: 0.65rem 0.75rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+  margin-bottom: 0.75rem;
+}
+
+.job-input.small {
+  min-height: 80px;
+}
+
+.job-input:focus {
+  outline: 2px solid #0e7490;
+  outline-offset: 1px;
+}
+
+.row {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.text-input {
+  border-radius: 6px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #f1f5f9;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.progress-card {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.6);
+  padding: 0.65rem 0.7rem;
+  margin-bottom: 0.75rem;
+}
+
+.progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  margin-bottom: 0.4rem;
+}
+
+.progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: #1e293b;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #06b6d4 0%, #22d3ee 100%);
+  transition: width 350ms ease;
+}
+
+.step-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.22rem;
+  font-size: 0.73rem;
+  color: #94a3b8;
+}
+
+.step-list li.active {
+  color: #67e8f9;
+}
+
+.step-list li.done {
+  color: #86efac;
+}
+
+.progress-hint {
+  margin: 0.4rem 0 0;
+}
+
+.btn {
+  border-radius: 6px;
+  border: 1px solid #64748b;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  background: #0e7490;
+  border-color: #0e7490;
+  color: #fff;
+}
+
+.btn.secondary {
+  background: #164e63;
+  border-color: #155e75;
+}
+
+.btn.ghost {
+  background: transparent;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin: 0 0 0.5rem;
+}
+
+.error {
+  font-size: 0.85rem;
+  color: #fca5a5;
+  margin: 0 0 0.5rem;
+}
+
+.refine-block {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed #475569;
+}
+
+.preview-wrap {
+  padding: 1rem;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.preview-scale {
+  transform: scale(0.92);
+  transform-origin: top center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  border-radius: 4px;
+}
+
+.preview-placeholder {
+  margin-top: 3rem;
+  padding: 2rem;
+  text-align: center;
+  color: #cbd5e1;
+  max-width: 320px;
+  font-size: 0.95rem;
+}
+
+@media print {
+  .app-shell {
+    background: #fff;
+  }
+  .app-top,
+  .panel-left {
+    display: none !important;
+  }
+  .split {
+    display: block;
+    min-height: auto;
+  }
+  .panel-right {
+    display: block;
+    background: #fff;
+    padding: 0;
+  }
+  .preview-wrap {
+    padding: 0;
+    display: block;
+  }
+  .preview-scale {
+    transform: none;
+    box-shadow: none;
+  }
+}

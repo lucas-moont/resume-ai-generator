@@ -1,0 +1,45 @@
+{
+  "fullName": "Alex Sample",
+  "headline": "Full Stack Developer",
+  "location": "São Paulo, BR",
+  "phone": "+55 11 99999-0000",
+  "githubUsername": "octocat",
+  "links": [
+    { "label": "LinkedIn", "url": "https://www.linkedin.com/in/example" },
+    { "label": "GitHub", "url": "https://github.com/octocat" },
+    { "label": "Portfolio", "url": "https://example.com" }
+  ],
+  "summary": "Developer focused on web products, APIs, and clear UX. Replace this text with your real summary.",
+  "experience": [
+    {
+      "company": "Example Corp",
+      "title": "Software Engineer",
+      "location": "Remote",
+      "start": "2022-01",
+      "end": null,
+      "highlights": [
+        "Shipped features using React and FastAPI",
+        "Improved CI and automated tests"
+      ]
+    }
+  ],
+  "projects": [],
+  "skills": [
+    "TypeScript",
+    "React",
+    "Python",
+    "FastAPI",
+    "PostgreSQL",
+    "Git",
+    "Docker"
+  ],
+  "education": [
+    {
+      "institution": "Sample University",
+      "degree": "B.Sc. Computer Science",
+      "end": "2020",
+      "details": "Relevant coursework: algorithms, databases."
+    }
+  ],
+  "locale": "pt-BR"
+}

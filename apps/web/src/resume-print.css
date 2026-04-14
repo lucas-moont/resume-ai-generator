@@ -1,0 +1,249 @@
+@page {
+  size: A4;
+  margin: 0;
+}
+
+.resume-doc * {
+  box-sizing: border-box;
+}
+
+.resume-doc {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.35;
+  color: #0f1419;
+  background: #fdfefe;
+}
+
+.resume-doc .page {
+  max-width: 210mm;
+  min-height: 280mm;
+  margin: 0 auto;
+  padding: 10mm 12mm;
+  background: #fdfefe;
+}
+
+.resume-doc .doc-header {
+  border-bottom: 2px solid #0e7490;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.resume-doc .name {
+  margin: 0;
+  font-family: "Consolas", "Cascadia Mono", ui-monospace, monospace;
+  font-size: 18pt;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+}
+
+.resume-doc .headline {
+  margin: 4px 0 0;
+  font-size: 10pt;
+  color: #0e7490;
+  font-weight: 600;
+}
+
+.resume-doc .layout {
+  display: grid;
+  grid-template-columns: 28% 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.resume-doc .main {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.resume-doc .sidebar {
+  grid-column: 1;
+  grid-row: 1;
+  border-right: 1px solid #cbd5e1;
+  padding-right: 12px;
+}
+
+.resume-doc .side-block {
+  margin-bottom: 14px;
+}
+
+.resume-doc .side-title {
+  margin: 0 0 4px;
+  font-family: "Consolas", ui-monospace, monospace;
+  font-size: 8pt;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #64748b;
+}
+
+.resume-doc .side-text {
+  margin: 0;
+  font-size: 9.5pt;
+}
+
+.resume-doc .side-links {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 9.5pt;
+}
+
+.resume-doc .side-links a {
+  color: #0e7490;
+  text-decoration: none;
+}
+
+.resume-doc .skill-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.resume-doc .skill-chips li {
+  font-size: 8.5pt;
+  padding: 2px 6px;
+  border: 1px solid #94a3b8;
+  border-radius: 2px;
+  background: #f1f5f9;
+  font-family: "Consolas", ui-monospace, monospace;
+}
+
+.resume-doc .main-skills {
+  margin-top: 4px;
+}
+
+.resume-doc .main-section {
+  margin-bottom: 14px;
+}
+
+.resume-doc .section-label {
+  margin: 0 0 8px;
+  font-family: "Consolas", ui-monospace, monospace;
+  font-size: 10pt;
+  color: #0f172a;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 4px;
+}
+
+.resume-doc .section-accent {
+  color: #0e7490;
+  margin-right: 6px;
+}
+
+.resume-doc .summary {
+  margin: 0;
+  font-size: 10pt;
+  color: #334155;
+}
+
+.resume-doc .summary strong,
+.resume-doc .summary b,
+.resume-doc .headline strong,
+.resume-doc .headline b,
+.resume-doc .proj-name strong,
+.resume-doc .proj-name b,
+.resume-doc .proj-desc strong,
+.resume-doc .proj-desc b,
+.resume-doc .exp-list strong,
+.resume-doc .exp-list b,
+.resume-doc .edu-details strong,
+.resume-doc .edu-details b {
+  font-weight: 700;
+  color: inherit;
+}
+
+.resume-doc .exp {
+  margin-bottom: 12px;
+}
+
+.resume-doc .exp-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+  font-size: 10pt;
+}
+
+.resume-doc .exp-title {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.resume-doc .exp-company {
+  color: #0e7490;
+  font-weight: 600;
+}
+
+.resume-doc .exp-dates {
+  margin-left: auto;
+  font-size: 9pt;
+  color: #64748b;
+}
+
+.resume-doc .exp-loc {
+  margin: 2px 0 4px;
+  font-size: 9pt;
+  color: #64748b;
+}
+
+.resume-doc .exp-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 9.5pt;
+  color: #334155;
+}
+
+.resume-doc .proj {
+  margin-bottom: 10px;
+}
+
+.resume-doc .proj-name {
+  margin: 0 0 4px;
+  font-size: 10.5pt;
+  font-family: "Consolas", ui-monospace, monospace;
+  color: #0f172a;
+}
+
+.resume-doc .proj-desc {
+  margin: 0;
+  font-size: 9.5pt;
+  color: #334155;
+}
+
+.resume-doc .edu {
+  margin-bottom: 8px;
+}
+
+.resume-doc .edu-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 10pt;
+}
+
+.resume-doc .edu-degree {
+  font-weight: 700;
+}
+
+.resume-doc .edu-inst {
+  color: #0e7490;
+}
+
+.resume-doc .edu-end {
+  margin-left: auto;
+  font-size: 9pt;
+  color: #64748b;
+}
+
+.resume-doc .edu-details {
+  margin: 4px 0 0;
+  font-size: 9.5pt;
+  color: #475569;
+}
+
+.resume-doc .tabular {
+  font-variant-numeric: tabular-nums;
+}
