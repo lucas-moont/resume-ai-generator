@@ -28,7 +28,7 @@ export function ResumePreview({ resume }: { resume: ResumeDocument }) {
         present: 'Present',
       }
   return (
-    <div className="resume-doc preview-scale">
+    <div className="resume-doc">
       <div className="page">
         <header className="doc-header">
           <div className="doc-header-main">

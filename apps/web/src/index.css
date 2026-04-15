@@ -1,10 +1,46 @@
-:root {
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, "Times New Roman", serif;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-shell {
+    min-height: auto;
+    background: #fff !important;
+  }
+  .print-grid {
+    display: block !important;
+    min-height: auto !important;
+  }
+  .print-preview {
+    background: #fff !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  .print-scale {
+    transform: none !important;
+    box-shadow: none !important;
+  }
 }
