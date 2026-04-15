@@ -24,3 +24,8 @@ Thumbs.db
 exports/*.pdf
 
 my-to-do.txt
+
+# Local agent skill installs (npx skills, universal .agents layout)
+.agents/
+.claude/skills/
+skills-lock.json
