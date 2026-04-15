@@ -5,9 +5,12 @@ Web app to tailor your resume to a job description using **Ollama** (local LLM) 
 ## Features
 
 - Paste a job description → generate an ATS-friendly, tech-styled resume JSON rendered in the preview.
-- Refine with short natural-language instructions.
+- **Light / dark theme** in the UI (persisted in `localStorage`).
+- **Streaming** endpoints for generate and refine: the UI shows **step-by-step progress** while the model runs (`/api/generate/stream`, `/api/refine/stream`).
+- Refine with short natural-language instructions (non-streaming API still available).
 - Download PDF without using the browser print dialog (server-side Playwright).
 - Merge **GitHub public repos** (optional token) with **local project `.md` files** (including private work).
+- Generation system prompt includes a **tailored-resume** skill block (job analysis, honest keyword mapping, ATS-oriented structure) composed with `generate.md` — see `apps/api/prompts/skills/tailored-resume-generator.md`.
 
 ## Prerequisites
 
@@ -113,15 +116,18 @@ Free-form markdown: problem, your role, stack, outcomes.
 ## API overview
 
 - `GET /api/health` — health check
-- `GET /api/profile` — loads `data/profile_master.json` (validation)
+- `GET /api/profile` — loads the resolved profile JSON (same resolution order as [Personal data](#personal-data-not-in-this-repository); validates schema)
 - `GET /api/github/repos` — lists repos for `githubUsername` in profile
 - `POST /api/generate` — body: `{ "job_description", "model?", "locale?" }` → tailored `ResumeDocument`
+- `POST /api/generate/stream` — same body as generate; **SSE** stream with `stage` events (progress, message) and a final `done` event with the resume JSON
 - `POST /api/refine` — body: `{ "resume", "message", "model?" }`
+- `POST /api/refine/stream` — same as refine over **SSE**
 - `POST /api/export/pdf` — body: `{ "resume": { ... } }` → PDF download
 
 ## Prompts
 
-System prompts live in `apps/api/prompts/system/` (`generate.md`, `refine.md`). Edit them to change LLM behavior without touching the UI.
+- **System:** `apps/api/prompts/system/` — `generate.md`, `refine.md` (JSON-only resume output rules).
+- **Skills:** `apps/api/prompts/skills/` — extra behavior merged into generation (e.g. `tailored-resume-generator.md`). The API loads `generate.md` plus that skill via `load_generate_system_prompt()` in `app/prompt_loader.py`. Edit these files to change LLM behavior without touching the UI.
 
 ## Troubleshooting
 
