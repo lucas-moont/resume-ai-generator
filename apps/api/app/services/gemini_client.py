@@ -2,7 +2,13 @@ import json
 
 import httpx
 
-from app.config import DEFAULT_GEMINI_MODEL, GEMINI_API_KEY
+from app.config import (
+    DEFAULT_GEMINI_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_MAX_OUTPUT_TOKENS,
+    LLM_TEMPERATURE,
+    LLM_TIMEOUT_SECONDS,
+)
 
 
 def _gemini_error_message(data: dict, status: int) -> str:
@@ -40,25 +46,30 @@ def _extract_text(data: dict) -> str:
     return "".join(texts).strip()
 
 
-async def chat_json_gemini(system: str, user: str) -> str:
+async def chat_json_gemini(system: str, user: str, model: str | None = None) -> str:
     key = (GEMINI_API_KEY or "").strip()
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set.")
-    model = (DEFAULT_GEMINI_MODEL or "gemini-2.5-flash").strip()
+    model_name = (model or DEFAULT_GEMINI_MODEL or "gemini-2.5-flash").strip()
+    # Send the key in a header, never in the URL query string: URLs leak into logs, proxies,
+    # and httpx exception/traceback text; the header does not.
     url = (
         "https://generativelanguage.googleapis.com/v1beta/"
-        f"models/{model}:generateContent?key={key}"
+        f"models/{model_name}:generateContent"
     )
+    headers = {"x-goog-api-key": key}
     payload = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "temperature": 0.35,
+            "temperature": LLM_TEMPERATURE,
+            "topP": 0.95,
+            "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
         },
     }
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        r = await client.post(url, json=payload)
+    async with httpx.AsyncClient(timeout=float(LLM_TIMEOUT_SECONDS)) as client:
+        r = await client.post(url, json=payload, headers=headers)
         try:
             data = r.json()
         except json.JSONDecodeError:

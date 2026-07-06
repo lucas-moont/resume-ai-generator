@@ -3,6 +3,8 @@ import os
 
 from dotenv import load_dotenv
 
+from app.services.secret_store import resolve_secret
+
 ROOT_DIR = Path(__file__).resolve().parents[3]
 load_dotenv(ROOT_DIR / ".env")
 DATA_DIR = Path(os.getenv("DATA_DIR", str(ROOT_DIR / "data"))).resolve()
@@ -14,10 +16,56 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip() or None
+GITHUB_TOKEN = resolve_secret("GITHUB_TOKEN")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip() or None
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, min(maximum, int(raw)))
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, min(maximum, float(raw)))
+    except ValueError:
+        return default
+
+
+# Generation tuning (shared intent across providers).
+LLM_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.4, minimum=0.0, maximum=1.5)
+# Ollama context window: default output/input models truncate long prompts (profile + PDF +
+# projects) at 2k-4k tokens, silently lowering quality. Raise the window and output budget.
+OLLAMA_NUM_CTX = _env_int("OLLAMA_NUM_CTX", 8192, minimum=2048, maximum=131072)
+OLLAMA_NUM_PREDICT = _env_int("OLLAMA_NUM_PREDICT", 4096, minimum=512, maximum=32768)
+# Gemini output budget (a full resume JSON can exceed the small implicit default).
+GEMINI_MAX_OUTPUT_TOKENS = _env_int("GEMINI_MAX_OUTPUT_TOKENS", 8192, minimum=1024, maximum=65536)
+# Per LLM call: stream heartbeat timeout and HTTP client timeout (local models can be slow).
+LLM_TIMEOUT_SECONDS = _env_int("LLM_TIMEOUT_SECONDS", 900, minimum=60, maximum=3600)
+
+AI_PROVIDER = os.getenv("AI_PROVIDER", "auto").strip().lower() or "auto"
+AI_DEFAULT_MODEL = os.getenv("AI_DEFAULT_MODEL", "").strip() or None
+
+GEMINI_API_KEY = resolve_secret("GEMINI_API_KEY")
 DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+
+# Anthropic / Claude. Resolved from env var, then the OS keychain. When present it both lets
+# AI_PROVIDER=auto pick Claude and is passed explicitly to the SDK. When absent, the client is
+# built bare so the SDK uses a local `ant auth login` OAuth session — no variable needed here.
+ANTHROPIC_API_KEY = resolve_secret("ANTHROPIC_API_KEY")
+DEFAULT_CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5").strip() or "claude-sonnet-5"
+# Claude output budget for the resume JSON (kept non-streaming; a full resume fits well under this).
+CLAUDE_MAX_OUTPUT_TOKENS = _env_int("CLAUDE_MAX_OUTPUT_TOKENS", 8192, minimum=1024, maximum=32768)
+# Extended thinking for Claude: "off" (default) keeps the whole token budget for the JSON and is
+# fastest/cheapest; "adaptive" lets Claude reason first (raise CLAUDE_MAX_OUTPUT_TOKENS if you do).
+CLAUDE_THINKING = os.getenv("CLAUDE_THINKING", "off").strip().lower() or "off"
 
 
 def resolve_profile_json_path() -> Path:

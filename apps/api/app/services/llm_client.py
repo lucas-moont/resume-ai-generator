@@ -1,14 +1,13 @@
-from app.config import GEMINI_API_KEY
-from app.services.gemini_client import chat_json_gemini
-from app.services.ollama_client import chat_json as chat_json_ollama
-
-
-def use_gemini() -> bool:
-    return bool((GEMINI_API_KEY or "").strip())
+from app.config import AI_DEFAULT_MODEL
+from app.services.llm.provider_factory import build_provider
+from app.services.llm.provider_resolver import (
+    resolve_active_provider,
+    resolve_provider_name_for_model,
+)
 
 
 def llm_backend_label() -> str:
-    return "Gemini" if use_gemini() else "Ollama"
+    return resolve_active_provider().name
 
 
 async def chat_json(
@@ -16,6 +15,9 @@ async def chat_json(
     user: str,
     model: str | None = None,
 ) -> str:
-    if use_gemini():
-        return await chat_json_gemini(system, user)
-    return await chat_json_ollama(system, user, model=model)
+    model_override = (model or "").strip() or AI_DEFAULT_MODEL
+    # If the requested model names a specific backend (e.g. a claude-* or gemini-* model picked in
+    # the UI selector), route to that provider. Otherwise use the configured AI_PROVIDER.
+    inferred = resolve_provider_name_for_model(model_override)
+    provider = build_provider(inferred) if inferred else resolve_active_provider()
+    return await provider.chat_json(system, user, model_override=model_override)
