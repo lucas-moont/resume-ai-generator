@@ -2,7 +2,7 @@ import json
 import unittest
 
 from app.models import ResumeDocument
-from app.services.ollama_client import parse_resume_json
+from app.services.llm.resume_json_parser import parse_resume_json
 
 
 class OllamaParserTests(unittest.TestCase):
@@ -61,8 +61,10 @@ class OllamaParserTests(unittest.TestCase):
 
         parsed = parse_resume_json(raw, fallback, refine=False)
 
-        self.assertEqual(parsed.fullName, "KEVVAN")
+        # Canonical name is preserved: the LLM must not rename the candidate.
+        self.assertEqual(parsed.fullName, "Kevvan")
         self.assertEqual(parsed.headline, "Fullstack Developer")
+        # Profile has no skills, so PDF/LLM-sourced skills pass through.
         self.assertEqual(parsed.skills, ["Node.js", "React"])
         self.assertEqual(parsed.education[0].institution, "Escola Publica")
         self.assertEqual(parsed.education[0].degree, "Ensino Medio")
@@ -118,6 +120,30 @@ class OllamaParserTests(unittest.TestCase):
         self.assertEqual(parsed.experience[1].company, "Acme")
         self.assertEqual(parsed.experience[1].title, "Engineer")
 
+    def test_extracts_email_alias_and_preserves_canonical_contact(self) -> None:
+        seed = ResumeDocument(fullName="", headline="", summary="", locale="pt-BR")
+        raw = json.dumps(
+            {
+                "fullName": "Kevvan",
+                "headline": "Dev",
+                "summary": "Base",
+                "emailAddress": "kevvan@example.com",
+            }
+        )
+        parsed = parse_resume_json(raw, seed, refine=False)
+        self.assertEqual(parsed.email, "kevvan@example.com")
+
+        fallback = ResumeDocument(
+            fullName="Kevvan",
+            headline="Dev",
+            summary="Base",
+            email="canonical@example.com",
+            locale="pt-BR",
+        )
+        raw2 = json.dumps({"email": "hallucinated@example.com"})
+        parsed2 = parse_resume_json(raw2, fallback, refine=False)
+        self.assertEqual(parsed2.email, "canonical@example.com")
+
     def test_preserves_personal_location_and_merges_links_and_skills(self) -> None:
         fallback = ResumeDocument(
             fullName="Kevvan",
@@ -145,9 +171,129 @@ class OllamaParserTests(unittest.TestCase):
         self.assertEqual(parsed.location, "São Paulo, BR")
         self.assertIn("GitHub", [l.label for l in parsed.links])
         self.assertIn("Portfolio", [l.label for l in parsed.links])
-        self.assertIn("React", parsed.skills)
-        self.assertIn("Node.js", parsed.skills)
+        # Profile already lists skills, so only its own skills survive (React matches, reordered
+        # first); a skill the model invents ("Node.js") is dropped, and languages are filtered.
+        self.assertEqual(parsed.skills[0], "React")
+        self.assertIn("TypeScript", parsed.skills)
+        self.assertIn("Tailwind", parsed.skills)
+        self.assertNotIn("Node.js", parsed.skills)
         self.assertNotIn("English", parsed.skills)
+
+    def test_generate_anchors_structure_to_profile_and_drops_fabrications(self) -> None:
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary",
+            phone="+55 11 90000-0000",
+            skills=["JavaScript", "React", "Node.js"],
+            experience=[
+                {
+                    "company": "SmartHow",
+                    "title": "Front-End Developer",
+                    "start": "2025",
+                    "end": None,
+                    "highlights": ["Original bullet"],
+                }
+            ],
+            education=[{"institution": "Cruzeiro do Sul", "degree": "ADS", "end": "2022"}],
+            locale="en",
+        )
+        raw = json.dumps(
+            {
+                "fullName": "John Doe",
+                "phone": "(555) 123-4567",
+                "headline": "Senior Full Stack Developer",
+                "summary": "Tailored summary for the job.",
+                "experience": [
+                    {
+                        "company": "SmartHow",
+                        "title": "Front-End Developer",
+                        "start": "2025",
+                        "end": "Present",
+                        "highlights": ["Rewritten, tailored bullet about React"],
+                    },
+                    {
+                        "company": "TechCorp Solutions",
+                        "title": "Senior Engineer",
+                        "start": "2019",
+                        "highlights": ["Fabricated role"],
+                    },
+                ],
+                "education": [{"institution": "UC Berkeley", "degree": "B.S. CS", "end": "2016"}],
+                "skills": ["React", "Python", "Express"],
+            }
+        )
+
+        parsed = parse_resume_json(raw, fallback, refine=False)
+
+        # Identity is canonical; fabricated name/phone are ignored.
+        self.assertEqual(parsed.fullName, "Lucas Monteiro")
+        self.assertEqual(parsed.phone, "+55 11 90000-0000")
+        # Prose is adopted from the LLM.
+        self.assertEqual(parsed.headline, "Senior Full Stack Developer")
+        self.assertEqual(parsed.summary, "Tailored summary for the job.")
+        # Only the real role remains, with its rewritten bullets; the fabricated one is dropped.
+        self.assertEqual(len(parsed.experience), 1)
+        self.assertEqual(parsed.experience[0].company, "SmartHow")
+        self.assertEqual(parsed.experience[0].highlights, ["Rewritten, tailored bullet about React"])
+        # Fabricated education is dropped in favor of the canonical entry.
+        self.assertEqual(len(parsed.education), 1)
+        self.assertEqual(parsed.education[0].institution, "Cruzeiro do Sul")
+        # Invented skills (Python, Express) are dropped; real ones are kept.
+        self.assertNotIn("Python", parsed.skills)
+        self.assertNotIn("Express", parsed.skills)
+        self.assertEqual(parsed.skills[0], "React")
+        self.assertIn("JavaScript", parsed.skills)
+        self.assertIn("Node.js", parsed.skills)
+
+
+    def test_generate_does_not_fill_contact_from_tailoring_llm(self) -> None:
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to keep.",
+            phone=None,
+            email="real@example.com",
+            locale="en",
+        )
+        raw = json.dumps(
+            {
+                "phone": "(555) 123-4567",
+                "email": "fake@doe.com",
+                "summary": "Tailored summary.",
+            }
+        )
+        parsed = parse_resume_json(raw, fallback, refine=False)
+        # A tailoring pass must never introduce contact details.
+        self.assertIsNone(parsed.phone)
+        self.assertEqual(parsed.email, "real@example.com")
+
+    def test_generate_falls_back_to_profile_prose_when_no_role_matches(self) -> None:
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Front-End Developer",
+            summary="Truthful base summary with enough words to be kept intact.",
+            experience=[
+                {"company": "SmartHow", "title": "Front-End Developer", "start": "2025", "highlights": ["Real bullet"]}
+            ],
+            locale="en",
+        )
+        raw = json.dumps(
+            {
+                "headline": "Senior Cloud Architect",
+                "summary": "Inflated summary with 10+ years and fabricated AWS microservices claims.",
+                "experience": [
+                    {"company": "TechCorp", "title": "Senior Engineer", "start": "2015", "highlights": ["Fake"]}
+                ],
+            }
+        )
+        parsed = parse_resume_json(raw, fallback, refine=False)
+        # Model ignored the real role, so its prose is discarded in favor of the profile's.
+        self.assertEqual(parsed.headline, "Front-End Developer")
+        self.assertEqual(parsed.summary, "Truthful base summary with enough words to be kept intact.")
+        self.assertEqual(len(parsed.experience), 1)
+        self.assertEqual(parsed.experience[0].company, "SmartHow")
+        self.assertEqual(parsed.experience[0].highlights, ["Real bullet"])
 
 
 if __name__ == "__main__":
