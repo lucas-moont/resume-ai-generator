@@ -1,0 +1,5 @@
+# Dev-only tooling (not needed to run the app). Install with:
+#   pip install -r apps/api/requirements-dev.txt
+# then, from the repo root:  pre-commit install
+pre-commit>=3.5.0
+detect-secrets>=1.5.0

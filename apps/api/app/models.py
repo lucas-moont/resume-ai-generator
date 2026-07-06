@@ -1,4 +1,9 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+TemplateId = Literal["modern", "classic", "minimal", "compact"]
+DEFAULT_TEMPLATE: TemplateId = "modern"
 
 
 class Link(BaseModel):
@@ -33,6 +38,7 @@ class ResumeDocument(BaseModel):
     fullName: str
     headline: str
     location: str | None = None
+    email: str | None = None
     phone: str | None = None
     links: list[Link] = Field(default_factory=list)
     summary: str
@@ -61,6 +67,7 @@ class RefineRequest(BaseModel):
 
 class PdfExportRequest(BaseModel):
     resume: ResumeDocument
+    template: TemplateId = DEFAULT_TEMPLATE
 
 
 class GitHubRepoInfo(BaseModel):

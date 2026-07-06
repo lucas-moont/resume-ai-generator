@@ -5,21 +5,20 @@ from app.services import llm_client
 
 
 class TestLlmClientRouting(unittest.IsolatedAsyncioTestCase):
-    async def test_uses_ollama_when_gemini_disabled(self) -> None:
-        with patch.object(llm_client, "use_gemini", return_value=False):
-            with patch.object(llm_client, "chat_json_ollama", new_callable=AsyncMock) as ollama:
-                ollama.return_value = '{"fullName":"A"}'
-                out = await llm_client.chat_json("sys", "user", model="mymodel")
-                self.assertEqual(out, '{"fullName":"A"}')
-                ollama.assert_awaited_once_with("sys", "user", model="mymodel")
+    async def test_chat_json_routes_to_resolved_provider(self) -> None:
+        provider = AsyncMock()
+        provider.chat_json = AsyncMock(return_value='{"fullName":"A"}')
+        provider.name = "ollama"
+        with patch.object(llm_client, "resolve_active_provider", return_value=provider):
+            out = await llm_client.chat_json("sys", "user", model="mymodel")
+            self.assertEqual(out, '{"fullName":"A"}')
+            provider.chat_json.assert_awaited_once_with("sys", "user", model_override="mymodel")
 
-    async def test_uses_gemini_when_enabled(self) -> None:
-        with patch.object(llm_client, "use_gemini", return_value=True):
-            with patch.object(llm_client, "chat_json_gemini", new_callable=AsyncMock) as gem:
-                gem.return_value = '{"fullName":"B"}'
-                out = await llm_client.chat_json("sys", "user", model="ignored")
-                self.assertEqual(out, '{"fullName":"B"}')
-                gem.assert_awaited_once_with("sys", "user")
+    def test_backend_label_uses_resolved_provider_name(self) -> None:
+        provider = AsyncMock()
+        provider.name = "gemini"
+        with patch.object(llm_client, "resolve_active_provider", return_value=provider):
+            self.assertEqual(llm_client.llm_backend_label(), "gemini")
 
 
 if __name__ == "__main__":

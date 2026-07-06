@@ -139,7 +139,7 @@ def sanitize_resume_for_display(data: dict) -> None:
                 link["label"] = sanitize_plain_text(link["label"])
             if isinstance(link.get("url"), str):
                 link["url"] = _safe_http_url(link["url"])
-    for key in ("location", "phone", "locale"):
+    for key in ("location", "email", "phone", "locale"):
         v = data.get(key)
         if isinstance(v, str):
             data[key] = sanitize_plain_text(v)

@@ -2,6 +2,7 @@
   "fullName": "Alex Sample",
   "headline": "Full Stack Developer",
   "location": "São Paulo, BR",
+  "email": "alex.sample@example.com",
   "phone": "+55 11 99999-0000",
   "githubUsername": "octocat",
   "links": [
