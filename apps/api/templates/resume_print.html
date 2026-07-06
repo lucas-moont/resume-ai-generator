@@ -15,25 +15,37 @@
   {% set t_technologies = 'Tecnologias' if is_pt else 'Technologies' %}
   {% set t_education = 'Formação' if is_pt else 'Education' %}
   {% set t_location = 'Localização' if is_pt else 'Location' %}
+  {% set t_email = 'E-mail' if is_pt else 'Email' %}
   {% set t_phone = 'Telefone' if is_pt else 'Phone' %}
   {% set t_links = 'Links' %}
+  {% set t_contact = 'Contato' if is_pt else 'Contact' %}
   {% set t_present = 'Atual' if is_pt else 'Present' %}
-  <div class="page">
+  <div class="page tpl-{{ template }}">
     <header class="doc-header">
       <div class="doc-header-main">
         <h1 class="name">{{ resume.fullName }}</h1>
         <p class="headline">{{ resume.headline | safe }}</p>
       </div>
+      <ul class="contact-bar">
+        {% if resume.location %}<li class="contact-item">{{ resume.location }}</li>{% endif %}
+        {% if resume.email %}<li class="contact-item">{{ resume.email }}</li>{% endif %}
+        {% if resume.phone %}<li class="contact-item tabular">{{ resume.phone }}</li>{% endif %}
+        {% for link in resume.links %}
+        <li class="contact-item"><a href="{{ link.url }}">{{ link.label }}</a></li>
+        {% endfor %}
+      </ul>
     </header>
     <div class="layout">
       <main class="main">
+        {% if resume.summary %}
         <section class="main-section">
-          <h2 class="section-label"><span class="section-accent">//</span> {{ t_summary }}</h2>
+          <h2 class="section-label"><span class="section-accent"></span>{{ t_summary }}</h2>
           <p class="summary">{{ resume.summary | safe }}</p>
         </section>
+        {% endif %}
         {% if resume.experience %}
         <section class="main-section">
-          <h2 class="section-label"><span class="section-accent">//</span> {{ t_experience }}</h2>
+          <h2 class="section-label"><span class="section-accent"></span>{{ t_experience }}</h2>
           {% for job in resume.experience %}
           <article class="exp">
             <div class="exp-head">
@@ -55,7 +67,7 @@
         {% endif %}
         {% if resume.projects %}
         <section class="main-section">
-          <h2 class="section-label"><span class="section-accent">//</span> {{ t_projects }}</h2>
+          <h2 class="section-label"><span class="section-accent"></span>{{ t_projects }}</h2>
           {% for proj in resume.projects %}
           <article class="proj">
             <h3 class="proj-name">{{ proj.name | safe }}</h3>
@@ -66,7 +78,7 @@
         {% endif %}
         {% if resume.skills %}
         <section class="main-section">
-          <h2 class="section-label"><span class="section-accent">//</span> {{ t_technologies }}</h2>
+          <h2 class="section-label"><span class="section-accent"></span>{{ t_technologies }}</h2>
           <ul class="skill-chips main-skills">
             {% for s in resume.skills %}
             <li>{{ s }}</li>
@@ -76,7 +88,7 @@
         {% endif %}
         {% if resume.education %}
         <section class="main-section">
-          <h2 class="section-label"><span class="section-accent">//</span> {{ t_education }}</h2>
+          <h2 class="section-label"><span class="section-accent"></span>{{ t_education }}</h2>
           {% for ed in resume.education %}
           <article class="edu">
             <div class="edu-head">
@@ -90,11 +102,17 @@
         </section>
         {% endif %}
       </main>
-      <aside class="sidebar" aria-label="Contact">
+      <aside class="sidebar" aria-label="{{ t_contact }}">
         {% if resume.location %}
         <section class="side-block">
           <h2 class="side-title">{{ t_location }}</h2>
           <p class="side-text">{{ resume.location }}</p>
+        </section>
+        {% endif %}
+        {% if resume.email %}
+        <section class="side-block">
+          <h2 class="side-title">{{ t_email }}</h2>
+          <p class="side-text"><a href="mailto:{{ resume.email }}">{{ resume.email }}</a></p>
         </section>
         {% endif %}
         {% if resume.phone %}

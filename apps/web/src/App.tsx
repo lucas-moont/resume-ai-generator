@@ -1,8 +1,27 @@
-import { useCallback, useLayoutEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { ResumePreview } from './components/ResumePreview'
-import type { ResumeDocument } from './types/resume'
+import type { ResumeDocument, TemplateId } from './types/resume'
 
-const DEFAULT_MODEL = 'llama3.2'
+const DEFAULT_MODEL = ''
+const TEMPLATE_OPTIONS: { value: TemplateId; label: string; description: string }[] = [
+  { value: 'modern', label: 'Modern', description: 'Sidebar · indigo accent' },
+  { value: 'classic', label: 'Classic', description: 'Serif · single column' },
+  { value: 'minimal', label: 'Minimal', description: 'Airy · monochrome' },
+  { value: 'compact', label: 'Compact', description: 'Dense · content-rich' },
+]
+type ModelSuggestion = { value: string; label: string }
+
+const FALLBACK_MODEL_SUGGESTIONS: ModelSuggestion[] = [
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
+  { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
+  { value: 'qwen3:8b', label: 'qwen3:8b (Ollama, local)' },
+  { value: 'phi4:latest', label: 'phi4:latest (Ollama, local)' },
+  { value: 'gemma4', label: 'gemma4 (Ollama, local)' },
+  { value: 'glm-5.2:cloud', label: 'glm-5.2:cloud (Ollama Cloud)' },
+  { value: 'llama3.1:8b', label: 'llama3.1:8b (Ollama, local)' },
+  { value: 'llama3.2', label: 'llama3.2 (Ollama, local)' },
+]
 const WORK_STEPS = [
   { id: 'preparing_context', label: 'Preparing context' },
   { id: 'extracting_profile_pdf', label: 'Extracting profile from PDF' },
@@ -70,10 +89,16 @@ function App() {
   )
   const [jobDescription, setJobDescription] = useState('')
   const [model, setModel] = useState(DEFAULT_MODEL)
-  const [locale, setLocale] = useState('pt-BR')
+  const [locale, setLocale] = useState('auto')
+  const [template, setTemplate] = useState<TemplateId>('modern')
   const [resume, setResume] = useState<ResumeDocument | null>(null)
   const [refineText, setRefineText] = useState('')
   const [loading, setLoading] = useState(false)
+  const [pdfLoading, setPdfLoading] = useState(false)
+  const [modelSuggestOpen, setModelSuggestOpen] = useState(false)
+  const [modelSuggestions, setModelSuggestions] = useState<ModelSuggestion[]>(
+    FALLBACK_MODEL_SUGGESTIONS,
+  )
   const [workType, setWorkType] = useState<WorkType>(null)
   const [workStep, setWorkStep] = useState(0)
   const [workProgress, setWorkProgress] = useState(0)
@@ -84,6 +109,25 @@ function App() {
   useLayoutEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
   }, [theme])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch('/api/models')
+        if (!r.ok || cancelled) return
+        const data = (await r.json()) as { models?: ModelSuggestion[] }
+        if (!cancelled && Array.isArray(data.models) && data.models.length > 0) {
+          setModelSuggestions(data.models)
+        }
+      } catch {
+        /* keep fallback list */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const applyTheme = useCallback((next: Theme) => {
     setTheme(next)
@@ -223,13 +267,14 @@ function App() {
   }
 
   const downloadPdf = async () => {
-    if (!resume) return
+    if (!resume || pdfLoading) return
     setError(null)
+    setPdfLoading(true)
     try {
       const r = await fetch('/api/export/pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resume }),
+        body: JSON.stringify({ resume, template }),
       })
       if (!r.ok) {
         const data = await r.json().catch(() => ({}))
@@ -240,11 +285,14 @@ function App() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'curriculo.pdf'
+      const safeName = (resume.fullName || 'resume').trim().replace(/\s+/g, '_')
+      a.download = `${safeName}_CV.pdf`
       a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
       setError(String(e))
+    } finally {
+      setPdfLoading(false)
     }
   }
 
@@ -271,7 +319,7 @@ function App() {
               Resume agent
             </h1>
             <p className="mt-1 max-w-xl text-sm leading-relaxed text-stone-600 dark:text-zinc-400">
-              Local Ollama · FastAPI · ATS-friendly layout
+              Local AI API · FastAPI · ATS-friendly layout
             </p>
           </div>
           <ThemeToggle theme={theme} onChange={applyTheme} />
@@ -306,21 +354,54 @@ function App() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label
-                  htmlFor="ollama-model"
+                  htmlFor="ai-model"
                   className="mb-2 block text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-500"
                 >
-                  Ollama model
+                  AI model (optional)
                 </label>
-                <input
-                  id="ollama-model"
-                  name="model"
-                  type="text"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className={fieldClass}
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                />
+                <div className="relative">
+                  <input
+                    id="ai-model"
+                    name="model"
+                    className={fieldClass}
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    onFocus={() => setModelSuggestOpen(true)}
+                    onBlur={() => window.setTimeout(() => setModelSuggestOpen(false), 120)}
+                    placeholder="Blank = server default · or an exact Ollama tag"
+                    autoComplete="off"
+                    spellCheck={false}
+                    role="combobox"
+                    aria-expanded={modelSuggestOpen}
+                    aria-controls="model-suggestions"
+                  />
+                  {modelSuggestOpen && (
+                    <ul
+                      id="model-suggestions"
+                      className="absolute left-0 right-0 top-full z-20 mt-1 max-h-60 overflow-auto rounded-xl border border-stone-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                    >
+                      {modelSuggestions.map((opt) => (
+                        <li key={opt.value}>
+                          <button
+                            type="button"
+                            className="flex w-full flex-col items-start px-3 py-2 text-left text-sm hover:bg-stone-100 dark:hover:bg-zinc-800"
+                            onMouseDown={(e) => {
+                              e.preventDefault()
+                              setModel(opt.value)
+                              setModelSuggestOpen(false)
+                            }}
+                          >
+                            <span className="font-medium text-stone-900 dark:text-zinc-100">{opt.value}</span>
+                            <span className="text-xs text-stone-500 dark:text-zinc-500">{opt.label}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <p className="mt-1.5 text-xs leading-relaxed text-stone-500 dark:text-zinc-500">
+                  Ollama models must match a name from <code>ollama list</code> (pull first).
+                </p>
               </div>
               <div>
                 <label
@@ -329,16 +410,66 @@ function App() {
                 >
                   Locale
                 </label>
-                <select
-                  id="locale"
-                  name="locale"
-                  className={fieldClass}
-                  value={locale}
-                  onChange={(e) => setLocale(e.target.value)}
-                >
-                  <option value="pt-BR">pt-BR</option>
-                  <option value="en">en</option>
-                </select>
+                <div className="relative">
+                  <select
+                    id="locale"
+                    name="locale"
+                    className={`${fieldClass} appearance-none pr-10`}
+                    value={locale}
+                    onChange={(e) => setLocale(e.target.value)}
+                  >
+                    <option value="auto">Auto (match job language)</option>
+                    <option value="pt-BR">pt-BR</option>
+                    <option value="en">en</option>
+                  </select>
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-500 dark:text-zinc-500"
+                  >
+                    <path d="m5 7 5 6 5-6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-500">
+                Resume template
+              </span>
+              <div
+                role="radiogroup"
+                aria-label="Resume template"
+                className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+              >
+                {TEMPLATE_OPTIONS.map((opt) => {
+                  const selected = template === opt.value
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setTemplate(opt.value)}
+                      className={`rounded-xl border px-3 py-2.5 text-left transition-[color,background-color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50 dark:focus-visible:ring-offset-zinc-950 ${
+                        selected
+                          ? 'border-stone-900 bg-stone-900 text-white shadow-sm focus-visible:ring-stone-500 dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950 dark:focus-visible:ring-zinc-300'
+                          : 'border-stone-200 bg-white text-stone-800 hover:border-stone-300 hover:bg-stone-50 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:focus-visible:ring-zinc-500'
+                      }`}
+                    >
+                      <span className="block text-sm font-semibold">{opt.label}</span>
+                      <span
+                        className={`mt-0.5 block text-xs ${
+                          selected
+                            ? 'text-white/70 dark:text-zinc-950/60'
+                            : 'text-stone-500 dark:text-zinc-500'
+                        }`}
+                      >
+                        {opt.description}
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
@@ -444,10 +575,11 @@ function App() {
                   </button>
                   <button
                     type="button"
-                    className={`${btnBase} bg-stone-900 text-white shadow-sm hover:bg-stone-800 focus-visible:ring-stone-500 focus-visible:ring-offset-stone-50 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:focus-visible:ring-zinc-300 dark:focus-visible:ring-offset-zinc-950`}
+                    className={`${btnBase} bg-stone-900 text-white shadow-sm hover:bg-stone-800 focus-visible:ring-stone-500 focus-visible:ring-offset-stone-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:focus-visible:ring-zinc-300 dark:focus-visible:ring-offset-zinc-950`}
+                    disabled={pdfLoading}
                     onClick={downloadPdf}
                   >
-                    Download PDF
+                    {pdfLoading ? 'Preparing PDF…' : 'Download PDF'}
                   </button>
                   <button
                     type="button"
@@ -463,10 +595,28 @@ function App() {
         </section>
 
         <section className="print-preview border-stone-200 bg-stone-200/80 px-4 py-6 sm:px-6 lg:overflow-auto dark:border-zinc-800 dark:bg-zinc-900/50">
+          {resume && (
+            <div className="no-print mx-auto mb-5 flex max-w-[820px] items-center justify-between gap-3">
+              <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-500">
+                Preview — {template}
+              </span>
+              <button
+                type="button"
+                className={`${btnBase} bg-stone-900 text-white shadow-sm hover:bg-stone-800 focus-visible:ring-stone-500 focus-visible:ring-offset-stone-200 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:focus-visible:ring-zinc-300 dark:focus-visible:ring-offset-zinc-900`}
+                disabled={pdfLoading}
+                onClick={downloadPdf}
+              >
+                <svg aria-hidden="true" viewBox="0 0 20 20" className="mr-2 h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 15h12" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                {pdfLoading ? 'Preparing PDF…' : 'Download PDF'}
+              </button>
+            </div>
+          )}
           <div className="print-preview-wrap mx-auto flex justify-center lg:min-h-[320px]">
             {resume ? (
               <div className="print-scale origin-top scale-[0.92] rounded-sm shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] ring-1 ring-black/5 dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.55)] dark:ring-white/10">
-                <ResumePreview resume={resume} />
+                <ResumePreview resume={resume} template={template} />
               </div>
             ) : (
               <div className="mt-12 max-w-sm rounded-2xl border border-dashed border-stone-300 bg-white/90 px-6 py-10 text-center text-sm leading-relaxed text-stone-600 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-400">

@@ -24,10 +24,13 @@ export interface EducationItem {
   details?: string | null
 }
 
+export type TemplateId = 'modern' | 'classic' | 'minimal' | 'compact'
+
 export interface ResumeDocument {
   fullName: string
   headline: string
   location?: string | null
+  email?: string | null
   phone?: string | null
   links: Link[]
   summary: string

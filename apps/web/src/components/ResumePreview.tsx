@@ -1,8 +1,14 @@
-import type { ResumeDocument } from '../types/resume'
+import type { ResumeDocument, TemplateId } from '../types/resume'
 import '../resume-print.css'
 import { SafeRichHtml } from './SafeRichHtml'
 
-export function ResumePreview({ resume }: { resume: ResumeDocument }) {
+export function ResumePreview({
+  resume,
+  template = 'modern',
+}: {
+  resume: ResumeDocument
+  template?: TemplateId
+}) {
   const isPt = (resume.locale || '').toLowerCase().startsWith('pt')
   const labels = isPt
     ? {
@@ -12,8 +18,10 @@ export function ResumePreview({ resume }: { resume: ResumeDocument }) {
         technologies: 'Tecnologias',
         education: 'Formação',
         location: 'Localização',
+        email: 'E-mail',
         phone: 'Telefone',
         links: 'Links',
+        contact: 'Contato',
         present: 'Atual',
       }
     : {
@@ -23,31 +31,49 @@ export function ResumePreview({ resume }: { resume: ResumeDocument }) {
         technologies: 'Technologies',
         education: 'Education',
         location: 'Location',
+        email: 'Email',
         phone: 'Phone',
         links: 'Links',
+        contact: 'Contact',
         present: 'Present',
       }
   return (
     <div className="resume-doc">
-      <div className="page">
+      <div className={`page tpl-${template}`}>
         <header className="doc-header">
           <div className="doc-header-main">
             <h1 className="name">{resume.fullName}</h1>
             <SafeRichHtml as="p" className="headline" html={resume.headline} />
           </div>
+          <ul className="contact-bar">
+            {resume.location && <li className="contact-item">{resume.location}</li>}
+            {resume.email && <li className="contact-item">{resume.email}</li>}
+            {resume.phone && <li className="contact-item tabular">{resume.phone}</li>}
+            {resume.links?.map((link, i) => (
+              <li className="contact-item" key={i}>
+                <a href={link.url} target="_blank" rel="noreferrer">
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
         </header>
         <div className="layout">
           <main className="main">
-            <section className="main-section">
-              <h2 className="section-label">
-                <span className="section-accent">//</span> {labels.summary}
-              </h2>
-              <SafeRichHtml as="p" className="summary" html={resume.summary} />
-            </section>
+            {resume.summary && (
+              <section className="main-section">
+                <h2 className="section-label">
+                  <span className="section-accent" />
+                  {labels.summary}
+                </h2>
+                <SafeRichHtml as="p" className="summary" html={resume.summary} />
+              </section>
+            )}
             {resume.experience?.length > 0 && (
               <section className="main-section">
                 <h2 className="section-label">
-                  <span className="section-accent">//</span> {labels.experience}
+                  <span className="section-accent" />
+                  {labels.experience}
                 </h2>
                 {resume.experience.map((job, i) => (
                   <article className="exp" key={i}>
@@ -73,7 +99,8 @@ export function ResumePreview({ resume }: { resume: ResumeDocument }) {
             {resume.projects?.length > 0 && (
               <section className="main-section">
                 <h2 className="section-label">
-                  <span className="section-accent">//</span> {labels.projects}
+                  <span className="section-accent" />
+                  {labels.projects}
                 </h2>
                 {resume.projects.map((proj, i) => (
                   <article className="proj" key={i}>
@@ -86,7 +113,8 @@ export function ResumePreview({ resume }: { resume: ResumeDocument }) {
             {resume.skills?.length > 0 && (
               <section className="main-section">
                 <h2 className="section-label">
-                  <span className="section-accent">//</span> {labels.technologies}
+                  <span className="section-accent" />
+                  {labels.technologies}
                 </h2>
                 <ul className="skill-chips main-skills">
                   {resume.skills.map((s, i) => (
@@ -98,16 +126,15 @@ export function ResumePreview({ resume }: { resume: ResumeDocument }) {
             {resume.education?.length > 0 && (
               <section className="main-section">
                 <h2 className="section-label">
-                  <span className="section-accent">//</span> {labels.education}
+                  <span className="section-accent" />
+                  {labels.education}
                 </h2>
                 {resume.education.map((ed, i) => (
                   <article className="edu" key={i}>
                     <div className="edu-head">
                       <span className="edu-degree">{ed.degree}</span>
                       <span className="edu-inst">{ed.institution}</span>
-                      {ed.end && (
-                        <span className="edu-end tabular">{ed.end}</span>
-                      )}
+                      {ed.end && <span className="edu-end tabular">{ed.end}</span>}
                     </div>
                     {ed.details && (
                       <SafeRichHtml as="p" className="edu-details" html={ed.details} />
@@ -117,11 +144,19 @@ export function ResumePreview({ resume }: { resume: ResumeDocument }) {
               </section>
             )}
           </main>
-          <aside className="sidebar" aria-label="Contact">
+          <aside className="sidebar" aria-label={labels.contact}>
             {resume.location && (
               <section className="side-block">
                 <h2 className="side-title">{labels.location}</h2>
                 <p className="side-text">{resume.location}</p>
+              </section>
+            )}
+            {resume.email && (
+              <section className="side-block">
+                <h2 className="side-title">{labels.email}</h2>
+                <p className="side-text">
+                  <a href={`mailto:${resume.email}`}>{resume.email}</a>
+                </p>
               </section>
             )}
             {resume.phone && (
