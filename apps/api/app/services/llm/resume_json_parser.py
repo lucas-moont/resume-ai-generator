@@ -278,8 +278,12 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
     populated, for the *set* of experiences, education, projects, and skills. The LLM is
     only allowed to:
       - author ``headline``/``summary`` prose;
-      - rewrite ``highlights`` for an experience whose company/title matches a profile role;
+      - rewrite ``highlights``/``title`` for an experience matched to a profile role by
+        company + start date (language-independent, so a translated title, e.g. pt-BR, is
+        adopted while company/dates always stay anchored to the profile);
       - rewrite the ``description`` of a project whose name matches a profile project;
+      - rewrite ``degree``/``details`` for an education entry matched to a profile entry by
+        institution;
       - select/reorder the profile's own skills.
     Anything the model invents with no match in the profile is discarded. When a section is
     empty in the profile (e.g. a name-only profile backed by a PDF), the LLM output for that
@@ -324,29 +328,72 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
                     if isinstance(l, dict) and str(l.get("label") or "").strip() and str(l.get("url") or "").strip()
                 ]
 
-    # Experience: anchor to profile roles, adopting rewritten highlights only on a match.
+    # Experience: anchor to profile roles, adopting the rewritten (possibly translated) title
+    # and highlights only on a match. Matching is done by normalized company + start date --
+    # NOT title -- for two reasons: (1) the LLM legitimately translates the title (e.g. pt-BR),
+    # so a title-based key would never match a translated role; (2) the profile can have two
+    # roles at the same company (e.g. "Savvi": "Full Stack Developer" and, earlier, "Development
+    # Intern"). Company + start date is language-independent and unique, so it tells the two
+    # roles apart; a title-based (or company-only) key would collapse both onto the same patch
+    # entry and duplicate its highlights across both roles. Each patch entry is "claimed" (used)
+    # at most once so that can never happen even in the date-mismatch fallback pass below.
     base_exp = out.get("experience") or []
     patch_exp = patch.get("experience") if isinstance(patch.get("experience"), list) else []
     matched_any = False
     if base_exp:
-        by_key: dict[str, dict] = {}
-        for e in patch_exp:
-            if not isinstance(e, dict):
+        valid_patch_exp = [e for e in patch_exp if isinstance(e, dict)]
+        used_exp = [False] * len(valid_patch_exp)
+        by_company_start: dict[str, list[int]] = {}
+        by_company: dict[str, list[int]] = {}
+        for idx, e in enumerate(valid_patch_exp):
+            ck = _norm_key(e.get("company"))
+            if not ck:
                 continue
-            ck, tk = _norm_key(e.get("company")), _norm_key(e.get("title"))
-            if ck or tk:
-                by_key.setdefault(f"{ck}|{tk}", e)
-                if ck:
-                    by_key.setdefault(ck, e)
+            by_company.setdefault(ck, []).append(idx)
+            sk = _norm_key(e.get("start"))
+            if sk:
+                by_company_start.setdefault(f"{ck}|{sk}", []).append(idx)
+
+        def _claim_exp(indices: list[int]) -> dict | None:
+            for idx in indices:
+                if not used_exp[idx]:
+                    used_exp[idx] = True
+                    return valid_patch_exp[idx]
+            return None
+
+        matched_for: list[dict | None] = [None] * len(base_exp)
+        # Pass 1: company + start date -- the primary, unique, language-independent match.
+        for i, base in enumerate(base_exp):
+            ck, sk = _norm_key(base.get("company")), _norm_key(base.get("start"))
+            if ck and sk:
+                matched_for[i] = _claim_exp(by_company_start.get(f"{ck}|{sk}", []))
+        # Pass 2: company-only fallback for any role the date pass missed (e.g. the LLM
+        # slightly reformatted the date). Still consumes at most one unused patch entry per
+        # base role, so a second same-company role can never re-grab an entry already claimed.
+        for i, base in enumerate(base_exp):
+            if matched_for[i] is not None:
+                continue
+            ck = _norm_key(base.get("company"))
+            if ck:
+                matched_for[i] = _claim_exp(by_company.get(ck, []))
+
         anchored_exp = []
-        for base in base_exp:
-            ck, tk = _norm_key(base.get("company")), _norm_key(base.get("title"))
-            match = by_key.get(f"{ck}|{tk}") or (by_key.get(ck) if ck else None)
-            if match and isinstance(match.get("highlights"), list):
-                cleaned = [h.strip() for h in match["highlights"] if isinstance(h, str) and h.strip()]
-                if cleaned:
-                    base = {**base, "highlights": cleaned}
-                    matched_any = True
+        for i, base in enumerate(base_exp):
+            match = matched_for[i]
+            if match is not None:
+                new_role = dict(base)
+                # Adopt the LLM's (possibly translated) title, but company/start/end/location
+                # always stay the profile's -- only wording, never the anchor, comes from the LLM.
+                llm_title = match.get("title")
+                if isinstance(llm_title, str) and llm_title.strip():
+                    new_role["title"] = llm_title.strip()
+                highlights = match.get("highlights")
+                if isinstance(highlights, list):
+                    cleaned = [h.strip() for h in highlights if isinstance(h, str) and h.strip()]
+                    if cleaned:
+                        new_role["highlights"] = cleaned
+                        matched_any = True
+                base = new_role
             anchored_exp.append(base)
         out["experience"] = anchored_exp
     else:
@@ -377,8 +424,45 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
     else:
         out["projects"] = patch_proj
 
-    # Education: never fabricated. Keep the profile's; only use the LLM's when the profile has none.
-    if not (out.get("education") or []):
+    # Education: never fabricated. The *set* of degrees always comes from the profile; only the
+    # LLM's when the profile has none at all (PDF/seed passthrough). When the profile does have
+    # education, match each entry to a patch entry by normalized institution (consuming each
+    # patch entry at most once, same rationale as experience) so a translated degree/details can
+    # be adopted without ever inventing one for an institution the LLM didn't mention.
+    base_edu = out.get("education") or []
+    if base_edu:
+        patch_edu = patch.get("education") if isinstance(patch.get("education"), list) else []
+        valid_patch_edu = [e for e in patch_edu if isinstance(e, dict)]
+        used_edu = [False] * len(valid_patch_edu)
+        by_institution: dict[str, list[int]] = {}
+        for idx, e in enumerate(valid_patch_edu):
+            ik = _norm_key(e.get("institution"))
+            if ik:
+                by_institution.setdefault(ik, []).append(idx)
+
+        def _claim_edu(indices: list[int]) -> dict | None:
+            for idx in indices:
+                if not used_edu[idx]:
+                    used_edu[idx] = True
+                    return valid_patch_edu[idx]
+            return None
+
+        anchored_edu = []
+        for base in base_edu:
+            ik = _norm_key(base.get("institution"))
+            match = _claim_edu(by_institution.get(ik, [])) if ik else None
+            if match is not None:
+                new_edu = dict(base)
+                llm_degree = match.get("degree")
+                if isinstance(llm_degree, str) and llm_degree.strip():
+                    new_edu["degree"] = llm_degree.strip()
+                llm_details = match.get("details")
+                if isinstance(llm_details, str) and llm_details.strip():
+                    new_edu["details"] = llm_details.strip()
+                base = new_edu
+            anchored_edu.append(base)
+        out["education"] = anchored_edu
+    else:
         pe = patch.get("education")
         if isinstance(pe, list):
             out["education"] = pe

@@ -295,6 +295,77 @@ class OllamaParserTests(unittest.TestCase):
         self.assertEqual(parsed.experience[0].company, "SmartHow")
         self.assertEqual(parsed.experience[0].highlights, ["Real bullet"])
 
+    def test_generate_matches_same_company_roles_by_start_date_and_adopts_translated_title(
+        self,
+    ) -> None:
+        # Regression test for two confirmed bugs: (1) same-company roles (two stints at
+        # "Savvi") both falling through to the same company-only patch match and duplicating
+        # highlights, and (2) the LLM's translated title being discarded in favor of the
+        # profile's English one. Matching by company + start date fixes both.
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to keep.",
+            experience=[
+                {
+                    "company": "Savvi",
+                    "title": "Full Stack Developer",
+                    "start": "2021-06",
+                    "end": "2025-04",
+                    "highlights": ["Original senior bullet"],
+                },
+                {
+                    "company": "Savvi",
+                    "title": "Development Intern",
+                    "start": "2021-01",
+                    "end": "2021-06",
+                    "highlights": ["Original intern bullet"],
+                },
+            ],
+            locale="pt-BR",
+        )
+        raw = json.dumps(
+            {
+                "headline": "Desenvolvedor Full Stack",
+                "summary": "Resumo adaptado para a vaga.",
+                "experience": [
+                    {
+                        "company": "Savvi",
+                        "title": "Desenvolvedor Full Stack",
+                        "start": "2021-06",
+                        "end": "2025-04",
+                        "highlights": ["Liderei o desenvolvimento de um e-commerce"],
+                    },
+                    {
+                        "company": "Savvi",
+                        "title": "Estagiário de Desenvolvimento",
+                        "start": "2021-01",
+                        "end": "2021-06",
+                        "highlights": ["Apoiei o desenvolvimento de projetos web para clientes"],
+                    },
+                ],
+            }
+        )
+
+        parsed = parse_resume_json(raw, fallback, refine=False)
+
+        self.assertEqual(len(parsed.experience), 2)
+        senior, intern = parsed.experience[0], parsed.experience[1]
+        # Company/dates stay anchored to the profile.
+        self.assertEqual(senior.company, "Savvi")
+        self.assertEqual(senior.start, "2021-06")
+        self.assertEqual(intern.company, "Savvi")
+        self.assertEqual(intern.start, "2021-01")
+        # Translated titles are adopted.
+        self.assertEqual(senior.title, "Desenvolvedor Full Stack")
+        self.assertEqual(intern.title, "Estagiário de Desenvolvimento")
+        # Each role keeps its own distinct highlights -- no duplication across same-company roles.
+        self.assertEqual(senior.highlights, ["Liderei o desenvolvimento de um e-commerce"])
+        self.assertEqual(
+            intern.highlights, ["Apoiei o desenvolvimento de projetos web para clientes"]
+        )
+        self.assertNotEqual(senior.highlights, intern.highlights)
+
 
 if __name__ == "__main__":
     unittest.main()
