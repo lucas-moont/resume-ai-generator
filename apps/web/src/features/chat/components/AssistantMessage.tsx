@@ -2,6 +2,7 @@ import type { ChatMessage } from '../store/chatStore'
 import { ResumeUpdatedCard } from './cards/ResumeUpdatedCard'
 import { ErrorCard } from './cards/ErrorCard'
 import { ProfileUpdatedCard } from './cards/ProfileUpdatedCard'
+import { ProfileUpdateAppliedCard } from './cards/ProfileUpdateAppliedCard'
 
 export function AssistantMessage({
   message,
@@ -29,6 +30,7 @@ export function AssistantMessage({
             onReject={(documentId) => onRejectDocument(documentId, message.id)}
           />
         )}
+        {message.card?.type === 'profileUpdateApplied' && <ProfileUpdateAppliedCard card={message.card} />}
       </div>
     </div>
   )

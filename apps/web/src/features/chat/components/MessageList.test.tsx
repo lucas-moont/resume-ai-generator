@@ -67,6 +67,19 @@ describe('MessageList', () => {
     expect(onApproveDocument).toHaveBeenCalledWith(7, expect.any(String))
   })
 
+  it('renders a ProfileUpdateAppliedCard for an assistant message carrying one (chat profile_update, no action buttons)', () => {
+    useChatStore.getState().appendAssistantMessage('Updated your profile.', {
+      type: 'profileUpdateApplied',
+      profileVersion: 3,
+      summary: 'Updated phone number.',
+    })
+
+    renderMessageList()
+
+    expect(screen.getByText(/version 3/i)).toBeInTheDocument()
+    expect(screen.getByText(/updated phone number\./i)).toBeInTheDocument()
+  })
+
   it('auto-scrolls to the bottom when pinned and a new message arrives', () => {
     useChatStore.getState().appendUserMessage('first')
     const { rerender } = renderMessageList()
