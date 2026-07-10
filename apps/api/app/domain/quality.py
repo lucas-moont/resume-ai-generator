@@ -2,11 +2,11 @@
 
 import re
 
-from app.domain.keywords import _extract_jd_keywords, _normalize_token
+from app.domain.keywords import extract_jd_keywords, normalize_token
 from app.domain.schemas import ResumeDocument
 
 # Weak bullet openers that signal generic, low-impact writing (checked case-insensitively).
-_WEAK_BULLET_OPENERS = (
+WEAK_BULLET_OPENERS = (
     "responsible for",
     "responsável por",
     "responsavel por",
@@ -28,7 +28,7 @@ _WEAK_BULLET_OPENERS = (
 )
 
 
-def _resume_keyword_blob(resume: ResumeDocument) -> set[str]:
+def resume_keyword_blob(resume: ResumeDocument) -> set[str]:
     parts: list[str] = [resume.headline or "", resume.summary or "", *resume.skills]
     for e in resume.experience:
         parts.extend(e.highlights or [])
@@ -36,21 +36,21 @@ def _resume_keyword_blob(resume: ResumeDocument) -> set[str]:
         parts.append(p.description or "")
         parts.append(p.name or "")
     tokens = re.findall(r"[A-Za-z][A-Za-z0-9.+#/]*", " ".join(parts))
-    return {_normalize_token(t) for t in tokens if _normalize_token(t)}
+    return {normalize_token(t) for t in tokens if normalize_token(t)}
 
 
-def _has_weak_bullets(resume: ResumeDocument) -> bool:
+def has_weak_bullets(resume: ResumeDocument) -> bool:
     for e in resume.experience:
         for h in e.highlights or []:
             plain = re.sub(r"<[^>]+>", "", (h or "")).strip().lower()
             if not plain:
                 continue
-            if any(plain.startswith(op) for op in _WEAK_BULLET_OPENERS):
+            if any(plain.startswith(op) for op in WEAK_BULLET_OPENERS):
                 return True
     return False
 
 
-def _quality_issues(resume: ResumeDocument, job_description: str) -> list[str]:
+def quality_issues(resume: ResumeDocument, job_description: str) -> list[str]:
     issues: list[str] = []
 
     summary_words = len((resume.summary or "").split())
@@ -75,7 +75,7 @@ def _quality_issues(resume: ResumeDocument, job_description: str) -> list[str]:
         if short_bullets:
             issues.append("Expand thin experience bullets into concrete, one-line achievements.")
 
-    if _has_weak_bullets(resume):
+    if has_weak_bullets(resume):
         issues.append(
             "Rewrite bullets that start with weak openers (e.g. 'Responsible for', "
             "'Worked on', pronouns) using strong action verbs."
@@ -84,9 +84,9 @@ def _quality_issues(resume: ResumeDocument, job_description: str) -> list[str]:
     if len(resume.skills) < 6:
         issues.append("List the relevant technologies the candidate actually has (aim for 8-16).")
 
-    jd_keywords = _extract_jd_keywords(job_description)
+    jd_keywords = extract_jd_keywords(job_description)
     if jd_keywords:
-        blob = _resume_keyword_blob(resume)
+        blob = resume_keyword_blob(resume)
         top = jd_keywords[:12]
         missing = [k for k in top if k not in blob]
         if top and len(missing) > max(2, len(top) // 2):

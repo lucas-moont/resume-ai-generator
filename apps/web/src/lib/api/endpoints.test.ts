@@ -101,6 +101,20 @@ describe('generateStream', () => {
     expect(caught).toBeInstanceOf(ApiError)
     expect((caught as ApiError).detail).toBe('model unavailable')
   })
+
+  it('forwards the AbortSignal to fetch — an already-aborted signal rejects immediately', async () => {
+    // MSW's mocked ReadableStream bodies aren't torn down by an in-flight
+    // abort in this version, so cancellation-mid-stream is covered instead
+    // at the parseSseStream level (sse.test.ts, real ReadableStream +
+    // AbortController). This test only proves the signal is actually wired
+    // through generateStream -> postInit -> fetch.
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      generateStream({ job_description: 'Backend engineer' }, controller.signal),
+    ).rejects.toThrow()
+  })
 })
 
 describe('refineStream', () => {

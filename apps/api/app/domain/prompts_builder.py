@@ -1,6 +1,6 @@
 """User-prompt assembly for the generate/refine LLM calls -- extracted from app/main.py (B2).
 
-``_build_refine_user_msg`` was inlined identically in both ``/api/refine`` and
+``build_refine_user_msg`` was inlined identically in both ``/api/refine`` and
 ``/api/refine/stream``; extracting it here removes that duplication without changing the
 resulting prompt text.
 """
@@ -8,7 +8,7 @@ resulting prompt text.
 from app.domain.schemas import ResumeDocument
 
 
-def _build_generation_user_msg(
+def build_generation_user_msg(
     *,
     job_description: str,
     profile: ResumeDocument,
@@ -52,7 +52,7 @@ Target locale for labels and prose: {locale}
 Return the tailored resume as JSON only, using the same schema as the profile."""
 
 
-def _build_refine_user_msg(*, resume: ResumeDocument, pdf_block: str, message: str) -> str:
+def build_refine_user_msg(*, resume: ResumeDocument, pdf_block: str, message: str) -> str:
     """Compose the refine user prompt (shared by /api/refine and /api/refine/stream)."""
     return f"""Current resume JSON:
 {resume.model_dump_json(indent=2)}

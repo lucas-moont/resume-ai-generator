@@ -7,11 +7,11 @@ language-detection library that would add non-determinism and an offline-unfrien
 
 import re
 
-_DEFAULT_LOCALE = "pt-BR"
-_SUPPORTED_LOCALES = frozenset({"pt-BR", "en"})
-_PT_DIACRITICS = frozenset("ãõáéíóúâêôàçÃÕÁÉÍÓÚÂÊÔÀÇ")
+DEFAULT_LOCALE = "pt-BR"
+SUPPORTED_LOCALES = frozenset({"pt-BR", "en"})
+PT_DIACRITICS = frozenset("ãõáéíóúâêôàçÃÕÁÉÍÓÚÂÊÔÀÇ")
 # Highly Portuguese-specific tokens (avoid forms that are also common English words).
-_PT_LANG_WORDS = frozenset(
+PT_LANG_WORDS = frozenset(
     {
         "de", "da", "do", "das", "dos", "para", "com", "uma", "que", "voce", "você", "não", "nao",
         "experiência", "experiencia", "desenvolvimento", "vaga", "requisitos", "conhecimento",
@@ -21,7 +21,7 @@ _PT_LANG_WORDS = frozenset(
     }
 )
 # Highly English-specific tokens.
-_EN_LANG_WORDS = frozenset(
+EN_LANG_WORDS = frozenset(
     {
         "the", "and", "with", "for", "you", "your", "our", "are", "have", "will", "role",
         "experience", "development", "requirements", "skills", "work", "team", "ability",
@@ -31,7 +31,7 @@ _EN_LANG_WORDS = frozenset(
 )
 
 
-def _detect_locale(text: str) -> str | None:
+def detect_locale(text: str) -> str | None:
     """Detect whether free-form text is Portuguese or English.
 
     Returns "pt-BR", "en", or None when there is not enough signal to decide.
@@ -42,10 +42,10 @@ def _detect_locale(text: str) -> str | None:
     tokens = re.findall(r"[a-zà-ÿ]+", lowered)
     if not tokens:
         return None
-    pt_hits = sum(1 for t in tokens if t in _PT_LANG_WORDS)
-    en_hits = sum(1 for t in tokens if t in _EN_LANG_WORDS)
+    pt_hits = sum(1 for t in tokens if t in PT_LANG_WORDS)
+    en_hits = sum(1 for t in tokens if t in EN_LANG_WORDS)
     # Diacritics are a near-certain Portuguese signal; weight them but do not let them dominate.
-    diacritics = sum(1 for ch in text if ch in _PT_DIACRITICS)
+    diacritics = sum(1 for ch in text if ch in PT_DIACRITICS)
     pt_score = pt_hits + min(diacritics, 8) * 0.5
     en_score = float(en_hits)
     if pt_score == en_score:
@@ -53,17 +53,17 @@ def _detect_locale(text: str) -> str | None:
     return "pt-BR" if pt_score > en_score else "en"
 
 
-def _resolve_locale(requested: str | None, job_description: str, profile_locale: str | None) -> str:
+def resolve_locale(requested: str | None, job_description: str, profile_locale: str | None) -> str:
     """Resolve the output locale.
 
     Explicit "pt-BR"/"en" always win. "auto" (or empty) triggers job-description language
     detection, falling back to the profile locale and finally the app default.
     """
-    if requested in _SUPPORTED_LOCALES:
+    if requested in SUPPORTED_LOCALES:
         return requested  # explicit manual override
-    detected = _detect_locale(job_description)
+    detected = detect_locale(job_description)
     if detected:
         return detected
-    if profile_locale in _SUPPORTED_LOCALES:
+    if profile_locale in SUPPORTED_LOCALES:
         return profile_locale
-    return _DEFAULT_LOCALE
+    return DEFAULT_LOCALE

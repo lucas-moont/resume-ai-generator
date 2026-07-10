@@ -45,6 +45,10 @@ function parseFrame<T>(frame: string): SseEvent<T> | null {
   const raw = dataLines.map(stripDataPrefix).join('\n')
   if (!raw) return null
 
+  // Invalid JSON throws (not skips), matching the pre-extraction
+  // runStreamRequest, which also called JSON.parse with no try/catch. The
+  // SyntaxError propagates out of the generator like any other stream
+  // error; callers already handle that via their surrounding try/catch.
   return { event, data: JSON.parse(raw) as T }
 }
 

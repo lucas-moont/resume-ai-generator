@@ -15,10 +15,17 @@ from app.config import (
     PROMPTS_DIR,
     resolve_profile_json_path,
 )
-from app.domain.keywords import _extract_jd_keywords, _normalize_token
-from app.domain.locale import _detect_locale, _resolve_locale
-from app.domain.prompts_builder import _build_generation_user_msg, _build_refine_user_msg
-from app.domain.quality import _quality_issues
+# Aliased to their historical private names: main.py's own body (and tests/unit's
+# characterization suite, e.g. `from app.main import _quality_issues`) still refer to these by
+# the underscore-prefixed names main.py used to define; the new app.domain.* modules expose a
+# clean public API instead, so the alias lives here at the one call site that needs it.
+from app.domain.keywords import extract_jd_keywords as _extract_jd_keywords, normalize_token as _normalize_token
+from app.domain.locale import detect_locale as _detect_locale, resolve_locale as _resolve_locale
+from app.domain.prompts_builder import (
+    build_generation_user_msg as _build_generation_user_msg,
+    build_refine_user_msg as _build_refine_user_msg,
+)
+from app.domain.quality import quality_issues as _quality_issues
 from app.domain.schemas import (
     GenerateRequest,
     GitHubRepoInfo,

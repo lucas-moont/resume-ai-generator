@@ -3,13 +3,13 @@
 import re
 
 
-def _normalize_token(s: str) -> str:
+def normalize_token(s: str) -> str:
     return re.sub(r"[^a-z0-9.+#-]+", "", s.lower())
 
 
 # Broad (not exhaustive) technology vocabulary used to spot job-description keywords.
-_TECH_VOCAB = frozenset(
-    _normalize_token(t)
+TECH_VOCAB = frozenset(
+    normalize_token(t)
     for t in (
         "javascript", "typescript", "python", "java", "kotlin", "swift", "go", "golang", "rust",
         "ruby", "php", "c", "c++", "c#", "scala", "elixir", "dart", "r", "matlab", "bash", "shell",
@@ -29,7 +29,7 @@ _TECH_VOCAB = frozenset(
     )
 )
 
-_JD_STOPWORDS = frozenset(
+JD_STOPWORDS = frozenset(
     {
         "the", "and", "for", "with", "you", "your", "our", "will", "are", "have", "has", "that",
         "this", "from", "who", "what", "when", "where", "how", "all", "any", "not", "but", "can",
@@ -39,7 +39,7 @@ _JD_STOPWORDS = frozenset(
 )
 
 
-def _extract_jd_keywords(job_description: str) -> list[str]:
+def extract_jd_keywords(job_description: str) -> list[str]:
     """Extract likely technology/skill keywords from a job description, stack-agnostically.
 
     Heuristics: known-tech vocabulary, tokens with tech punctuation (Node.js, C#, CI/CD),
@@ -53,15 +53,15 @@ def _extract_jd_keywords(job_description: str) -> list[str]:
         tok = raw_tok.strip(".,;:/-")
         if not tok:
             continue
-        norm = _normalize_token(tok)
-        if len(norm) < 2 or norm in _JD_STOPWORDS:
+        norm = normalize_token(tok)
+        if len(norm) < 2 or norm in JD_STOPWORDS:
             continue
         # Only treat punctuation as a tech signal when it is INTERNAL (Node.js, CI/CD) or a known
         # trailing form (C++, C#) — never a trailing sentence period.
         has_tech_punct = bool(re.search(r"[A-Za-z0-9][.+#/][A-Za-z0-9]", tok)) or tok.endswith(("++", "#"))
         is_acronym = tok.isupper() and len(tok) >= 2
         is_pascal = tok[0].isupper() and any(c.isupper() for c in tok[1:])
-        looks_tech = norm in _TECH_VOCAB or has_tech_punct or is_acronym or is_pascal
+        looks_tech = norm in TECH_VOCAB or has_tech_punct or is_acronym or is_pascal
         if not looks_tech:
             continue
         if norm not in counts:
