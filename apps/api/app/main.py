@@ -9,12 +9,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.db.engine import create_db_engine, init_db
+from app.db.seed import seed_profile_from_disk_if_empty
 from app.routers import catalog, export, generate, health, profile, refine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # No startup/shutdown work yet; B5 initializes the SQLite engine here.
+    engine = create_db_engine()
+    init_db(engine)
+    seed_profile_from_disk_if_empty(engine)
+    app.state.db_engine = engine
     yield
 
 

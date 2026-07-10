@@ -18,6 +18,11 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip(
 DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 GITHUB_TOKEN = resolve_secret("GITHUB_TOKEN")
 
+# SQLite persistence (B5). ``.as_posix()`` keeps the URL forward-slashed even on Windows,
+# where DATA_DIR resolves to e.g. C:\Users\...\data -- SQLAlchemy's sqlite dialect wants
+# "sqlite:///C:/Users/.../data/app.db", not backslashes.
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip() or f"sqlite:///{DATA_DIR.as_posix()}/app.db"
+
 
 def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     raw = os.getenv(name, "").strip()

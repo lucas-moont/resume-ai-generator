@@ -4,6 +4,11 @@ data/profile/*
 data/profile_master.json
 data/projects/*.md
 
+# B5: local SQLite persistence (app.db + WAL/SHM sidecar files)
+data/app.db
+data/app.db-wal
+data/app.db-shm
+
 .env
 .venv/
 **/.venv/

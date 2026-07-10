@@ -6,8 +6,12 @@ from typing import Callable
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlmodel import Session
+from sqlmodel.pool import StaticPool
 
-from app.main import app as fastapi_app
+from app.db.engine import create_db_engine, init_db
+from app.main import create_app
+from app.routers import deps
 from app.services import llm_client as llm_client_module
 from app.services import streaming as streaming_module
 from app.services import generation_service as generation_service_module
@@ -77,8 +81,33 @@ def write_profile(isolated_data_env: Path) -> Callable[[dict], Path]:
 
 
 @pytest.fixture
-async def client():
-    transport = ASGITransport(app=fastapi_app)
+def test_db_engine():
+    """A fresh in-memory SQLite engine per test (StaticPool keeps the single in-memory DB
+    alive across the multiple connections a Session/request cycle can open)."""
+    engine = create_db_engine("sqlite://", poolclass=StaticPool)
+    init_db(engine)
+    return engine
+
+
+@pytest.fixture
+async def client(test_db_engine):
+    """Builds a fresh app per test (not the module-level ``app.main.app`` singleton) and
+    overrides ``deps.get_session`` to yield from an in-memory engine (B5). The legacy
+    generate/refine/profile endpoints exercised by most of this suite don't depend on
+    get_session at all yet (B6's chat routes are the first real consumer) -- this fixture
+    exists so DB-backed tests and B6's future ones get the same isolated-per-test setup
+    without needing their own client fixture, and so ASGITransport never touches the real
+    on-disk data/app.db.
+    """
+    app = create_app()
+
+    def _override_get_session():
+        with Session(test_db_engine) as session:
+            yield session
+
+    app.dependency_overrides[deps.get_session] = _override_get_session
+
+    transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
