@@ -144,6 +144,10 @@ export interface UploadSourceDocumentResponse {
   status: SourceDocumentStatus
   proposedPatch?: PatchOp[]
   diffSummary?: string[]
+  /** Part of the wire contract (spec item 3) and expected from the backend,
+   * but no frontend consumer surfaces it yet — ProfileUpdatedCard only
+   * renders diffSummary/opsCount today. Deliberately deferred (ticket 07);
+   * see useFileUpload's mapping to SettledUpload, which drops this field. */
   extractedPreview?: unknown
   error?: string
 }

@@ -77,6 +77,8 @@ export function useFileUpload(options: UseFileUploadOptions = {}): UseFileUpload
           diffSummary: response.diffSummary ?? [],
           opsCount: response.proposedPatch?.length ?? 0,
           error: response.error,
+          // response.extractedPreview is deliberately dropped here — no
+          // consumer renders it yet (see its docstring in lib/api/dto.ts).
         })
       })
       .catch((e: unknown) => {

@@ -121,3 +121,23 @@ describe('ProfileUpdatedCard — settled states', () => {
     expect(screen.getByText(/nothing new/i)).toBeInTheDocument()
   })
 })
+
+describe('ProfileUpdatedCard — pre-merge states (stored/extracted)', () => {
+  it.each(['stored', 'extracted'] as const)(
+    'renders an honest "processing" state for status=%s — never "proposed" or "nothing new", no action buttons',
+    (status) => {
+      render(
+        <ProfileUpdatedCard
+          card={makeCard({ status, diffSummary: [], opsCount: 0 })}
+          onApprove={vi.fn()}
+          onReject={vi.fn()}
+        />,
+      )
+
+      expect(screen.queryByText(/profile update proposed/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/nothing new/i)).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /reject/i })).not.toBeInTheDocument()
+    },
+  )
+})
