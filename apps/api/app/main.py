@@ -1,6 +1,5 @@
 import asyncio
 import json
-import re
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
@@ -16,8 +15,11 @@ from app.config import (
     PROMPTS_DIR,
     resolve_profile_json_path,
 )
-from app.services.ollama_client import list_installed_models
-from app.models import (
+from app.domain.keywords import _extract_jd_keywords, _normalize_token
+from app.domain.locale import _detect_locale, _resolve_locale
+from app.domain.prompts_builder import _build_generation_user_msg, _build_refine_user_msg
+from app.domain.quality import _quality_issues
+from app.domain.schemas import (
     GenerateRequest,
     GitHubRepoInfo,
     PdfExportRequest,
@@ -25,6 +27,7 @@ from app.models import (
     RefineRequest,
     ResumeDocument,
 )
+from app.services.ollama_client import list_installed_models
 from app.prompt_loader import load_generate_system_prompt, load_prompt
 from app.services.github_client import fetch_user_repos
 from app.services.llm.resume_json_parser import parse_resume_json
@@ -119,184 +122,6 @@ def _resolve_requested_model(model: str | None) -> str | None:
     return normalized or None
 
 
-def _normalize_token(s: str) -> str:
-    return re.sub(r"[^a-z0-9.+#-]+", "", s.lower())
-
-
-# Weak bullet openers that signal generic, low-impact writing (checked case-insensitively).
-_WEAK_BULLET_OPENERS = (
-    "responsible for",
-    "responsável por",
-    "responsavel por",
-    "worked on",
-    "worked with",
-    "helped",
-    "assisted",
-    "tasked with",
-    "duties included",
-    "in charge of",
-    "participated in",
-    "i ",
-    "we ",
-    "my ",
-    "atuei",
-    "trabalhei",
-    "ajudei",
-    "fui responsável",
-)
-
-# Broad (not exhaustive) technology vocabulary used to spot job-description keywords.
-_TECH_VOCAB = frozenset(
-    _normalize_token(t)
-    for t in (
-        "javascript", "typescript", "python", "java", "kotlin", "swift", "go", "golang", "rust",
-        "ruby", "php", "c", "c++", "c#", "scala", "elixir", "dart", "r", "matlab", "bash", "shell",
-        "react", "react native", "next.js", "vue", "nuxt", "angular", "svelte", "solid", "astro",
-        "redux", "tailwind", "bootstrap", "jquery", "html", "css", "sass", "webpack", "vite",
-        "node.js", "node", "express", "nestjs", "fastapi", "flask", "django", "spring", "spring boot",
-        ".net", "asp.net", "laravel", "rails", "graphql", "rest", "grpc", "websocket",
-        "postgresql", "postgres", "mysql", "mariadb", "sqlite", "mongodb", "redis", "cassandra",
-        "dynamodb", "elasticsearch", "kafka", "rabbitmq", "sql", "nosql", "prisma", "sqlalchemy",
-        "aws", "azure", "gcp", "google cloud", "lambda", "s3", "ec2", "eks", "ecs", "cloudformation",
-        "terraform", "ansible", "docker", "kubernetes", "k8s", "helm", "jenkins", "gitlab",
-        "github actions", "ci/cd", "cicd", "linux", "nginx", "serverless",
-        "git", "jira", "agile", "scrum", "kanban", "microservices", "tdd", "oauth", "jwt",
-        "pandas", "numpy", "pytorch", "tensorflow", "scikit-learn", "spark", "airflow", "dbt",
-        "machine learning", "deep learning", "nlp", "llm", "openai", "langchain",
-        "playwright", "cypress", "jest", "pytest", "selenium", "storybook", "figma",
-    )
-)
-
-_JD_STOPWORDS = frozenset(
-    {
-        "the", "and", "for", "with", "you", "your", "our", "will", "are", "have", "has", "that",
-        "this", "from", "who", "what", "when", "where", "how", "all", "any", "not", "but", "can",
-        "team", "work", "role", "job", "experience", "years", "year", "strong", "good", "great",
-        "para", "com", "que", "uma", "dos", "das", "por", "como", "seu", "sua", "mais", "nossa",
-    }
-)
-
-# --- Locale auto-detection (pt-BR vs en) ---------------------------------------------------------
-# The app only writes resumes in Portuguese or English, so a dependency-free, deterministic
-# heuristic (distinctive function words + Portuguese diacritics) is preferred over a heavier
-# language-detection library that would add non-determinism and an offline-unfriendly dependency.
-_DEFAULT_LOCALE = "pt-BR"
-_SUPPORTED_LOCALES = frozenset({"pt-BR", "en"})
-_PT_DIACRITICS = frozenset("ãõáéíóúâêôàçÃÕÁÉÍÓÚÂÊÔÀÇ")
-# Highly Portuguese-specific tokens (avoid forms that are also common English words).
-_PT_LANG_WORDS = frozenset(
-    {
-        "de", "da", "do", "das", "dos", "para", "com", "uma", "que", "voce", "você", "não", "nao",
-        "experiência", "experiencia", "desenvolvimento", "vaga", "requisitos", "conhecimento",
-        "conhecimentos", "trabalho", "equipe", "habilidades", "ferramentas", "responsável",
-        "responsavel", "desejável", "desejavel", "atuar", "sólidos", "solidos", "área", "area",
-        "empresa", "atividades", "diferencial", "salário", "salario", "benefícios", "beneficios",
-    }
-)
-# Highly English-specific tokens.
-_EN_LANG_WORDS = frozenset(
-    {
-        "the", "and", "with", "for", "you", "your", "our", "are", "have", "will", "role",
-        "experience", "development", "requirements", "skills", "work", "team", "ability",
-        "knowledge", "strong", "must", "we", "responsibilities", "proficiency", "familiarity",
-        "such", "including", "features", "code", "applications", "best", "practices",
-    }
-)
-
-
-def _detect_locale(text: str) -> str | None:
-    """Detect whether free-form text is Portuguese or English.
-
-    Returns "pt-BR", "en", or None when there is not enough signal to decide.
-    """
-    if not text or not text.strip():
-        return None
-    lowered = text.lower()
-    tokens = re.findall(r"[a-zà-ÿ]+", lowered)
-    if not tokens:
-        return None
-    pt_hits = sum(1 for t in tokens if t in _PT_LANG_WORDS)
-    en_hits = sum(1 for t in tokens if t in _EN_LANG_WORDS)
-    # Diacritics are a near-certain Portuguese signal; weight them but do not let them dominate.
-    diacritics = sum(1 for ch in text if ch in _PT_DIACRITICS)
-    pt_score = pt_hits + min(diacritics, 8) * 0.5
-    en_score = float(en_hits)
-    if pt_score == en_score:
-        return None
-    return "pt-BR" if pt_score > en_score else "en"
-
-
-def _resolve_locale(requested: str | None, job_description: str, profile_locale: str | None) -> str:
-    """Resolve the output locale.
-
-    Explicit "pt-BR"/"en" always win. "auto" (or empty) triggers job-description language
-    detection, falling back to the profile locale and finally the app default.
-    """
-    if requested in _SUPPORTED_LOCALES:
-        return requested  # explicit manual override
-    detected = _detect_locale(job_description)
-    if detected:
-        return detected
-    if profile_locale in _SUPPORTED_LOCALES:
-        return profile_locale
-    return _DEFAULT_LOCALE
-
-
-def _extract_jd_keywords(job_description: str) -> list[str]:
-    """Extract likely technology/skill keywords from a job description, stack-agnostically.
-
-    Heuristics: known-tech vocabulary, tokens with tech punctuation (Node.js, C#, CI/CD),
-    and acronyms/PascalCase identifiers (API, AWS, GraphQL, PostgreSQL).
-    """
-    raw_tokens = re.findall(r"[A-Za-z][A-Za-z0-9.+#/-]*", job_description)
-    counts: dict[str, int] = {}
-    order: list[str] = []
-    for raw_tok in raw_tokens:
-        # Drop sentence punctuation glued to the edges (e.g. "scalability." or "libraries,").
-        tok = raw_tok.strip(".,;:/-")
-        if not tok:
-            continue
-        norm = _normalize_token(tok)
-        if len(norm) < 2 or norm in _JD_STOPWORDS:
-            continue
-        # Only treat punctuation as a tech signal when it is INTERNAL (Node.js, CI/CD) or a known
-        # trailing form (C++, C#) — never a trailing sentence period.
-        has_tech_punct = bool(re.search(r"[A-Za-z0-9][.+#/][A-Za-z0-9]", tok)) or tok.endswith(("++", "#"))
-        is_acronym = tok.isupper() and len(tok) >= 2
-        is_pascal = tok[0].isupper() and any(c.isupper() for c in tok[1:])
-        looks_tech = norm in _TECH_VOCAB or has_tech_punct or is_acronym or is_pascal
-        if not looks_tech:
-            continue
-        if norm not in counts:
-            order.append(norm)
-        counts[norm] = counts.get(norm, 0) + 1
-    index_of = {n: i for i, n in enumerate(order)}
-    order.sort(key=lambda n: (-counts[n], index_of[n]))
-    return order
-
-
-def _resume_keyword_blob(resume: ResumeDocument) -> set[str]:
-    parts: list[str] = [resume.headline or "", resume.summary or "", *resume.skills]
-    for e in resume.experience:
-        parts.extend(e.highlights or [])
-    for p in resume.projects:
-        parts.append(p.description or "")
-        parts.append(p.name or "")
-    tokens = re.findall(r"[A-Za-z][A-Za-z0-9.+#/]*", " ".join(parts))
-    return {_normalize_token(t) for t in tokens if _normalize_token(t)}
-
-
-def _has_weak_bullets(resume: ResumeDocument) -> bool:
-    for e in resume.experience:
-        for h in e.highlights or []:
-            plain = re.sub(r"<[^>]+>", "", (h or "")).strip().lower()
-            if not plain:
-                continue
-            if any(plain.startswith(op) for op in _WEAK_BULLET_OPENERS):
-                return True
-    return False
-
-
 def _short_project_desc(text: str) -> str:
     cleaned = " ".join((text or "").split()).strip()
     if not cleaned:
@@ -357,112 +182,6 @@ def _enrich_projects_from_sources(
         if replacement:
             p["description"] = replacement
     return ResumeDocument.model_validate(patched)
-
-
-def _quality_issues(resume: ResumeDocument, job_description: str) -> list[str]:
-    issues: list[str] = []
-
-    summary_words = len((resume.summary or "").split())
-    if summary_words < 25:
-        issues.append(
-            "Write a stronger 2-4 sentence professional summary (role, seniority, "
-            "domain, and top job-relevant strengths)."
-        )
-
-    if resume.experience:
-        first = resume.experience[0]
-        if len(first.highlights or []) < 3:
-            issues.append(
-                "Add 3-5 achievement bullets to the most recent role "
-                "(action verb + what + how + outcome)."
-            )
-        short_bullets = any(
-            len(re.sub(r"<[^>]+>", "", h or "").strip()) < 30
-            for e in resume.experience
-            for h in (e.highlights or [])
-        )
-        if short_bullets:
-            issues.append("Expand thin experience bullets into concrete, one-line achievements.")
-
-    if _has_weak_bullets(resume):
-        issues.append(
-            "Rewrite bullets that start with weak openers (e.g. 'Responsible for', "
-            "'Worked on', pronouns) using strong action verbs."
-        )
-
-    if len(resume.skills) < 6:
-        issues.append("List the relevant technologies the candidate actually has (aim for 8-16).")
-
-    jd_keywords = _extract_jd_keywords(job_description)
-    if jd_keywords:
-        blob = _resume_keyword_blob(resume)
-        top = jd_keywords[:12]
-        missing = [k for k in top if k not in blob]
-        if top and len(missing) > max(2, len(top) // 2):
-            issues.append(
-                "Align skills, summary, and bullets with key job terms where the candidate "
-                f"has real evidence: {', '.join(missing[:8])}."
-            )
-
-    if len(resume.links) < 2:
-        issues.append("Include at least two useful links (preferably LinkedIn + GitHub/Portfolio).")
-    has_github_or_portfolio = any(
-        ("github" in (l.label or "").lower())
-        or ("github.com" in (l.url or "").lower())
-        or ("portfolio" in (l.label or "").lower())
-        for l in resume.links
-    )
-    if resume.links and not has_github_or_portfolio:
-        issues.append("Include GitHub or Portfolio link when available.")
-
-    weak_projects = [p for p in resume.projects if len((p.description or "").strip()) < 35]
-    if resume.projects and weak_projects:
-        issues.append("Expand project descriptions with concrete impact, stack, and scope.")
-    return issues
-
-
-def _build_generation_user_msg(
-    *,
-    job_description: str,
-    profile: ResumeDocument,
-    pdf_block: str,
-    project_notes: str,
-    locale: str,
-) -> str:
-    """Compose a lean, directive generation prompt.
-
-    Supporting sources are appended only when they carry content: empty placeholder blocks and
-    a raw GitHub dump were observed to derail smaller local models into emitting a generic
-    template resume. The profile stays the single authoritative source.
-    """
-    sources: list[str] = []
-    if pdf_block and pdf_block.strip():
-        sources.append(pdf_block.strip())
-    if project_notes and project_notes.strip():
-        sources.append("Project notes:\n" + project_notes.strip())
-    sources_block = ""
-    if sources:
-        sources_block = (
-            "\n\nSupporting sources (use ONLY to choose wording and which real facts to emphasize; "
-            "never introduce employers, roles, projects, or numbers that are not in the profile):\n"
-            + "\n\n".join(sources)
-        )
-    return f"""Job description:
----
-{job_description.strip()}
----
-
-Tailor a resume for the candidate described in the CANDIDATE PROFILE below. Hard rules:
-- Use ONLY facts present in the profile (and supporting sources). Do NOT invent employers, job titles, dates, schools, certifications, projects, or metrics.
-- Keep the candidate's name and contact details EXACTLY as in the profile.
-- Keep the same set of experience entries, education, and projects; you may rewrite their wording (bullets/descriptions) and reorder/select skills from the profile.
-- If the profile lacks something the job wants, omit it — never fabricate it.
-
-CANDIDATE PROFILE (authoritative JSON — the single source of truth):
-{profile.model_dump_json(indent=2)}{sources_block}
-
-Target locale for labels and prose: {locale}
-Return the tailored resume as JSON only, using the same schema as the profile."""
 
 
 async def _auto_improve_if_needed(
@@ -851,13 +570,7 @@ async def refine(body: RefineRequest):
 
     system = load_prompt("system/refine.md", PROMPTS_DIR)
     model = _resolve_requested_model(body.model)
-    user_msg = f"""Current resume JSON:
-{body.resume.model_dump_json(indent=2)}
-
-{pdf_block}User instruction:
-{body.message.strip()}
-
-Return the full updated resume JSON only."""
+    user_msg = _build_refine_user_msg(resume=body.resume, pdf_block=pdf_block, message=body.message)
     try:
         raw = await chat_json(system, user_msg, model=model)
         resume = parse_resume_json(raw, body.resume, refine=True)
@@ -886,13 +599,7 @@ async def refine_stream(body: RefineRequest):
 
             system = load_prompt("system/refine.md", PROMPTS_DIR)
             model = _resolve_requested_model(body.model)
-            user_msg = f"""Current resume JSON:
-{body.resume.model_dump_json(indent=2)}
-
-{pdf_block}User instruction:
-{body.message.strip()}
-
-Return the full updated resume JSON only."""
+            user_msg = _build_refine_user_msg(resume=body.resume, pdf_block=pdf_block, message=body.message)
             yield _sse(
                 "stage",
                 {
