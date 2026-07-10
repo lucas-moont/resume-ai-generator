@@ -171,6 +171,21 @@ class TestChatMessageStreamGenerateIntent:
         assert body["session"]["locale"] == "en"
         assert body["session"]["jobDescription"] == GENERIC_JOB_DESCRIPTION
 
+    async def test_generate_confirmation_follows_the_resulting_resume_locale(
+        self, client, fake_llm, write_profile, parse_sse
+    ):
+        write_profile(make_profile())
+        fake_llm.queue(json.dumps(make_resume_payload(locale="pt-BR")))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        message_event = next(data for e, data in parse_sse(resp.text) if e == "message")
+        assert message_event["content"] == "Currículo gerado com base na vaga."
+
 
 class TestChatMessageStreamRefineIntent:
     async def test_a_short_instruction_refines_the_active_resume(
@@ -203,6 +218,35 @@ class TestChatMessageStreamRefineIntent:
         after = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
         assert after["session"]["activeResumeVersionId"] == resume_event["resumeVersionId"]
         assert after["activeResume"]["summary"] == updated["summary"]
+
+    async def test_refine_confirmation_follows_the_resulting_resume_locale_not_the_session_locale(
+        self, client, fake_llm, write_profile, parse_sse
+    ):
+        # Real QA-found bug: pt-BR resume, user asks to translate it to English. The document
+        # correctly flips to locale="en", but the confirmation bubble used to stay in
+        # Portuguese because it derived its language from the session/request locale (still
+        # unset/pt-BR here) instead of the resulting resume's own locale field.
+        write_profile(make_profile())
+        fake_llm.queue(json.dumps(make_resume_payload(locale="pt-BR")))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},  # no explicit locale in the request
+        )
+
+        translated = make_resume_payload(locale="en", summary="An English-language summary.")
+        fake_llm.queue(json.dumps(translated))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Translate the resume to English."},
+        )
+
+        events = parse_sse(resp.text)
+        resume_event = next(data for e, data in events if e == "resume")
+        assert resume_event["resume"]["locale"] == "en"
+        message_event = next(data for e, data in events if e == "message")
+        assert message_event["content"] == "Updated your resume."
 
     async def test_refine_folds_recent_history_into_the_llm_instruction(
         self, client, fake_llm, write_profile

@@ -34,7 +34,7 @@ from sqlmodel import Session
 
 from app.db.tables import ChatSession
 from app.domain.keywords import extract_jd_keywords
-from app.domain.locale import resolve_locale
+from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, resolve_locale
 from app.domain.schemas import ResumeDocument
 from app.repositories import chat_repo, profile_repo, resume_repo
 from app.services.generation_service import generate_resume_events
@@ -83,8 +83,10 @@ def looks_like_job_description(message: str) -> bool:
     return False
 
 
-def _reply_text(intent: str, locale: str | None, sample_text: str) -> str:
-    resolved = resolve_locale(locale, sample_text, None)
+def _reply_text_for_locale(intent: str, locale: str) -> str:
+    """``locale`` must already be a concrete language, not run through resolve_locale here --
+    see the two call sites below for why."""
+    resolved = locale if locale in SUPPORTED_LOCALES else DEFAULT_LOCALE
     return _REPLY_TEXT[intent][resolved]
 
 
@@ -128,7 +130,9 @@ async def handle_chat_turn(
         intent = "question"
 
     if intent == "question":
-        content = _reply_text("question", locale, user_message)
+        # No resume is involved in this turn, so the session/request locale (falling back to
+        # auto-detection from the user's own message) is the only signal available.
+        content = _reply_text_for_locale("question", resolve_locale(locale, user_message, None))
         assistant_msg = chat_repo.append_message(
             session, session_id=chat_session.id, role="assistant", content=content, intent="question"
         )
@@ -198,7 +202,10 @@ async def handle_chat_turn(
     chat_session.active_resume_version_id = resume_row.id
     session.add(chat_session)
 
-    content = _reply_text(intent, locale, resume_doc.locale)
+    # Follows the RESULTING resume's own locale, not the session/request locale: a refine
+    # turn can itself change the document's language (e.g. "translate this to English"),
+    # which would otherwise leave the confirmation bubble in the stale, pre-turn language.
+    content = _reply_text_for_locale(intent, resume_doc.locale)
     assistant_msg = chat_repo.append_message(
         session,
         session_id=chat_session.id,
