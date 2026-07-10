@@ -1,9 +1,9 @@
 """Test doubles for the LLM boundary (``app.services.llm_client.chat_json``).
 
-``app/main.py`` imports ``chat_json`` directly (``from app.services.llm_client import
-chat_json``), so the name is bound in ``app.main``'s own module namespace and is looked up
-there at call time. Patching ``app.services.llm_client.chat_json`` would therefore NOT affect
-the endpoints — tests must monkeypatch ``app.main.chat_json`` instead (see
+As of B3, every LLM call in the app (main.py's endpoints pre-B4, now generation_service.py /
+refine_service.py / extraction_service.py) calls ``llm_client.chat_json(...)``
+module-qualified rather than importing the bare name, so a single monkeypatch on
+``app.services.llm_client.chat_json`` intercepts all of them (see
 ``tests.conftest.fake_llm``).
 """
 
@@ -15,8 +15,9 @@ class FakeLlm:
 
     Some endpoints (``/api/generate`` and its stream) can call the LLM more than once in a
     single request — a first pass to draft the resume, and a second "quality guard" pass
-    when ``_quality_issues`` finds something to fix. Queue one response per expected call,
-    in order; queuing an exception instance makes that call raise instead of returning.
+    when ``app.domain.quality.quality_issues`` finds something to fix. Queue one response per
+    expected call, in order; queuing an exception instance makes that call raise instead of
+    returning.
     """
 
     def __init__(self, responses: list[object] | None = None) -> None:

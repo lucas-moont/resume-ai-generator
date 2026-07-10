@@ -2,8 +2,8 @@
 
 The shape here is deliberately a "strong" resume (long summary, 3+ substantial highlights on
 the first role, 6+ skills, 2+ links including GitHub) so that it produces zero
-``app.main._quality_issues`` by default — see ``test_generate_endpoints_compat.py`` for the
-happy-path vs. auto-refine-triggering scenarios that build on top of it.
+``app.domain.quality.quality_issues`` by default — see ``test_generate_endpoints_compat.py``
+for the happy-path vs. auto-refine-triggering scenarios that build on top of it.
 """
 
 from __future__ import annotations

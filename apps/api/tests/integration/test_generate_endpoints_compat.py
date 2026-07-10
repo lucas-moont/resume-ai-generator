@@ -1,11 +1,14 @@
-"""Characterization tests for the legacy endpoints in app/main.py.
+"""Characterization tests for the legacy /api/generate, /api/refine, /api/models etc.
+endpoints (originally all defined inline in app/main.py; as of B4 they live in
+app/routers/*.py + app/services/*.py, but the observable HTTP/SSE contract this file freezes
+is unchanged).
 
 These tests capture what the current implementation DOES (not an idealized spec) and act as
 the oracle across the B2->B6 refactor: any divergence in path, status code, event sequence, or
 payload shape here is a blocking regression. Nothing in this file calls a real LLM or hits the
-network -- the LLM boundary (`app.main.chat_json`) is replaced with `tests.fakes.FakeLlm`, and
-profile/PDF/project-markdown resolution is sandboxed by the autouse `isolated_data_env` fixture
-in `tests/conftest.py`.
+network -- the LLM boundary (`app.services.llm_client.chat_json`) is replaced with
+`tests.fakes.FakeLlm`, and profile/PDF/project-markdown resolution is sandboxed by the autouse
+`isolated_data_env` fixture in `tests/conftest.py`.
 
 NOTE -- a genuine quirk of the current heartbeat implementation, discovered while writing
 these tests (not something B1 fixes, just documented here): `/api/generate/stream` and
@@ -27,6 +30,7 @@ assertions target real pipeline transitions instead of the incidental repeat cou
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -61,14 +65,14 @@ class TestHealthAndModels:
         assert resp.json() == {"status": "ok"}
 
     async def test_list_models_returns_default_and_deduplicated_model_list(self, client, monkeypatch):
-        from app import main as main_module
+        from app.services import model_catalog as model_catalog_module
 
         async def fake_list_installed_models() -> list[str]:
             # "claude-sonnet-5" collides on purpose with a built-in suggestion, to pin down
             # the endpoint's dedup behavior.
             return ["llama3.2:latest", "claude-sonnet-5"]
 
-        monkeypatch.setattr(main_module, "list_installed_models", fake_list_installed_models)
+        monkeypatch.setattr(model_catalog_module, "list_installed_models", fake_list_installed_models)
 
         resp = await client.get("/api/models")
 
@@ -219,6 +223,80 @@ class TestGenerateStreamEndpoint:
         events = parse_sse(resp.text)
         assert events[-1][0] == "error"
         assert "«redacted»" in events[-1][1]["message"]
+
+
+class TestGeneratePlaceholderExtraction:
+    """The B4 refactor split /api/generate's "profile looks like the placeholder -> extract
+    from Profile.pdf" branch across profile_service.py and generation_service.py. These tests
+    exercise that branch specifically: an earlier version of the B4 refactor pre-formatted the
+    extraction-error message inside generation_service.py AND let the router's generic
+    except-Exception wrap it a second time, producing a doubled "LLM error (...): LLM error
+    (...) extracting Profile.pdf: ..." message -- a real bug the B1-era tests (which only ever
+    use a populated, non-placeholder profile) could not have caught. These tests would fail
+    against that regression.
+    """
+
+    def _write_placeholder_profile(self, write_profile) -> None:
+        write_profile(
+            make_profile(fullName="Alex Sample", summary="Replace this text with your real summary.")
+        )
+
+    def _mock_pdf_excerpt(self, monkeypatch, text: str = "Real PDF text about the candidate.") -> None:
+        from app.services import profile_service as profile_service_module
+
+        monkeypatch.setattr(
+            profile_service_module,
+            "load_profile_pdf_excerpt",
+            lambda: (text, Path("/fake/Profile.pdf"), None),
+        )
+
+    async def test_extracts_profile_and_generates_normally(
+        self, client, fake_llm, write_profile, monkeypatch
+    ):
+        self._write_placeholder_profile(write_profile)
+        self._mock_pdf_excerpt(monkeypatch)
+        extracted = make_resume_payload()
+        fake_llm.queue(json.dumps(extracted), json.dumps(extracted))  # extraction, then generate
+
+        resp = await client.post("/api/generate", json={"job_description": GENERIC_JOB_DESCRIPTION})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["fullName"] == extracted["fullName"]
+        assert fake_llm.call_count == 2
+
+    async def test_extraction_failure_is_a_single_wrapped_502(
+        self, client, fake_llm, write_profile, monkeypatch
+    ):
+        self._write_placeholder_profile(write_profile)
+        self._mock_pdf_excerpt(monkeypatch)
+        fake_llm.queue(RuntimeError("upstream boom"))
+
+        resp = await client.post("/api/generate", json={"job_description": GENERIC_JOB_DESCRIPTION})
+
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail.count("LLM error (") == 1  # would be 2 under the double-wrap regression
+        assert "extracting Profile.pdf" in detail
+        assert "upstream boom" in detail
+
+    async def test_extraction_failure_stream_error_is_a_single_wrapped_message(
+        self, client, fake_llm, write_profile, parse_sse, monkeypatch
+    ):
+        self._write_placeholder_profile(write_profile)
+        self._mock_pdf_excerpt(monkeypatch)
+        fake_llm.queue(RuntimeError("upstream boom"))
+
+        resp = await client.post(
+            "/api/generate/stream", json={"job_description": GENERIC_JOB_DESCRIPTION}
+        )
+
+        events = parse_sse(resp.text)
+        assert events[-1][0] == "error"
+        message = events[-1][1]["message"]
+        assert message.count("LLM error (") == 1
+        assert "extracting Profile.pdf" in message
+        assert "upstream boom" in message
 
 
 class TestRefineEndpoint:

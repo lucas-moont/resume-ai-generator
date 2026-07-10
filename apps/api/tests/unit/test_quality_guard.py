@@ -1,7 +1,9 @@
 import unittest
 
-from app.main import _enrich_projects_from_sources, _extract_jd_keywords, _quality_issues
+from app.domain.keywords import extract_jd_keywords as _extract_jd_keywords
+from app.domain.quality import quality_issues as _quality_issues
 from app.models import ResumeDocument
+from app.services.generation_service import enrich_projects_from_sources as _enrich_projects_from_sources
 
 
 def _strong_resume() -> ResumeDocument:

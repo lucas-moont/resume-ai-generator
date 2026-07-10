@@ -7,9 +7,10 @@ from typing import Callable
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app import main as main_module
 from app.main import app as fastapi_app
 from app.services import llm_client as llm_client_module
+from app.services import streaming as streaming_module
+from app.services import generation_service as generation_service_module
 
 from tests.fakes import FakeLlm
 
@@ -24,8 +25,13 @@ def _fast_stream_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
     ``tests/integration/test_generate_endpoints_compat.py`` for that history). This fixture is
     kept anyway as headroom for any test that simulates a slow LLM (multiple ticks before
     completion, or an actual timeout) so it still runs fast.
+
+    As of B4, generation_service.py and refine_service.py both read the interval as
+    ``streaming.HEARTBEAT_SECONDS`` (module-qualified), so patching it once on
+    ``app.services.streaming`` shrinks it for both -- there is no longer a
+    ``app.main.STREAM_HEARTBEAT_SECONDS`` (main.py is now just the app factory).
     """
-    monkeypatch.setattr(main_module, "STREAM_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(streaming_module, "HEARTBEAT_SECONDS", 0.01)
 
 
 @pytest.fixture
@@ -54,7 +60,9 @@ def isolated_data_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("PROFILE_JSON_PATH", str(tmp_path / "resume.json"))
     # A PDF path that does not exist makes load_profile_pdf_excerpt() return ("", None, None).
     monkeypatch.setenv("PROFILE_PDF_PATH", str(tmp_path / "no-profile.pdf"))
-    monkeypatch.setattr(main_module, "PROJECTS_DIR", tmp_path / "projects")
+    # PROJECTS_DIR is read (module-qualified, at call time) only inside generation_service.py
+    # as of B4 -- main.py no longer touches project markdown files at all.
+    monkeypatch.setattr(generation_service_module, "PROJECTS_DIR", tmp_path / "projects")
     return tmp_path
 
 

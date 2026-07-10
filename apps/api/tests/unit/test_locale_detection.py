@@ -1,6 +1,6 @@
 import unittest
 
-from app.main import _detect_locale, _resolve_locale
+from app.domain.locale import detect_locale as _detect_locale, resolve_locale as _resolve_locale
 
 _EN_JD = (
     "We are hiring a JavaScript Frontend Developer. Develop and maintain applications "

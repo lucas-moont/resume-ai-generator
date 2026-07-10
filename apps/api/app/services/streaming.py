@@ -20,6 +20,15 @@ heartbeat ticks and returns immediately.
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
+from typing import TypeVar
+
+# The default heartbeat interval, in seconds, for any endpoint that polls a slow LLM task.
+# Referenced by callers as ``streaming.HEARTBEAT_SECONDS`` (module-qualified, not imported as a
+# bare name) so a single test monkeypatch on this module shrinks it everywhere (B4:
+# generation_service and refine_service both poll through this constant).
+HEARTBEAT_SECONDS = 5
+
+T = TypeVar("T")
 
 
 def sse(event: str, data: dict) -> str:
@@ -32,10 +41,15 @@ async def run_with_heartbeat(
     *,
     heartbeat_seconds: float,
     timeout_seconds: float,
-    tick: Callable[[float], str],
-    on_timeout: Callable[[float], str],
-) -> AsyncIterator[tuple[bool, str]]:
-    """Poll ``task``, yielding ``(is_timeout, sse_frame)`` pairs until it settles.
+    tick: Callable[[float], T],
+    on_timeout: Callable[[float], T],
+) -> AsyncIterator[tuple[bool, T]]:
+    """Poll ``task``, yielding ``(is_timeout, value)`` pairs until it settles.
+
+    ``tick``/``on_timeout`` may build a raw SSE string (B3's original use, in main.py) or a
+    plain data dict (B4's use in generation_service/refine_service, transport-agnostic so the
+    same pipeline can serve both a sync JSON response and an SSE stream) -- this function
+    itself never touches transport framing.
 
     - Every full ``heartbeat_seconds`` interval that ``task`` is still pending, yields
       ``(False, tick(elapsed))`` so the caller can forward a progress frame to the client.
