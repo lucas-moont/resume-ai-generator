@@ -8,19 +8,27 @@ JSON columns are plain TEXT with (de)serialization done in the repository layer 
 SQLite's JSON1 extension) -- keeps the roundtrip explicit and testable against the actual
 pydantic models (ProfileMaster/ResumeDocument) rather than trusting a DB-side JSON type.
 
-Two FK-shaped columns are deliberately declared as plain nullable ints WITHOUT a real
-ForeignKey constraint, to avoid circular foreign-key dependencies that SQLite cannot resolve
-at CREATE TABLE time (SQLAlchemy's usual `use_alter=True` escape hatch for FK cycles relies on
-ALTER TABLE ADD CONSTRAINT, which SQLite's ALTER TABLE does not support):
+Three FK-shaped columns are deliberately declared as plain nullable ints WITHOUT a real
+ForeignKey constraint:
   - `ProfileVersion.chat_message_id` -- a real FK here would close the cycle
-    profile_versions -> chat_messages -> resume_versions -> profile_versions.
+    profile_versions -> chat_messages -> resume_versions -> profile_versions (SQLite cannot
+    resolve FK cycles at CREATE TABLE time; SQLAlchemy's usual `use_alter=True` escape hatch
+    relies on ALTER TABLE ADD CONSTRAINT, which SQLite's ALTER TABLE does not support).
   - `ChatSession.active_resume_version_id` -- a real FK here would close the classic
     "current pointer" mutual-reference cycle chat_sessions <-> resume_versions
     (chat_sessions.active_resume_version_id -> resume_versions.id and
     resume_versions.session_id -> chat_sessions.id).
-Referential integrity for these two is enforced by the repository layer, not the schema --
-the same treatment already agreed for `source_document_id` (a real FK deferred to v2, when
-the source_documents table exists).
+  - `ProfileVersion.source_document_id` (v2 ticket 03: the `source_documents` table below) --
+    no cycle here, but the same soft-ref treatment is deliberate anyway: a Profile Version is
+    permanent, append-only history (CONTEXT.md: Profile Version), while its originating
+    Source Document is disposable (a user may delete an upload for privacy, or a future
+    retention policy may prune old files). A real FK would either block that deletion or
+    (with ON DELETE SET NULL) erase the provenance link entirely; leaving it a soft ref lets
+    the Source Document go away while the Profile Version keeps the id as a historical
+    breadcrumb, dangling but harmless -- see
+    tests/unit/test_source_document_repo.py::TestSourceDocumentSoftRefOrphan for the
+    characterization test.
+Referential integrity for all three is enforced by the repository layer, not the schema.
 """
 
 from __future__ import annotations
@@ -42,9 +50,33 @@ class ProfileVersion(SQLModel, table=True):
     data: str  # JSON-serialized ProfileMaster
     patch: str | None = None  # JSON-serialized patch, when source_kind implies one (e.g. chat)
     source_kind: str  # 'seed_disk' | 'upload' | 'chat' | 'manual' | 'revert'
-    source_document_id: int | None = None  # FK deferred to v2's source_documents table
+    source_document_id: int | None = None  # soft ref -- see module docstring
     chat_message_id: int | None = None  # soft ref -- see module docstring
     change_summary: str | None = None
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class SourceDocument(SQLModel, table=True):
+    """An uploaded `.json`/`.md`/`.pdf` file carrying professional information (CONTEXT.md:
+    Source Document). Lifecycle: stored -> extracted -> proposed -> applied | rejected |
+    failed. v2 ticket 03 produces rows up to `extracted` (with `extracted_json` as the
+    preview) or `failed` (with an actionable `error`); `proposed`/`applied`/`rejected` and
+    `proposed_patch` are populated by ticket 04's merge-proposal flow -- the column exists
+    here, nullable, so that ticket doesn't need its own migration.
+    """
+
+    __tablename__ = "source_documents"
+
+    id: int | None = Field(default=None, primary_key=True)
+    filename: str
+    media_type: str  # 'json' | 'md' | 'pdf'
+    sha256: str = Field(unique=True, index=True)  # dedup: re-uploading the same bytes is a no-op
+    size_bytes: int
+    stored_path: str  # data/uploads/<sha256>.<ext>
+    extracted_json: str | None = None  # JSON-serialized ResumeDocument preview
+    proposed_patch: str | None = None  # JSON-serialized list[PatchOp] -- ticket 04
+    status: str = "stored"  # 'stored' | 'extracted' | 'proposed' | 'applied' | 'rejected' | 'failed'
+    error: str | None = None  # actionable message when status == 'failed'
     created_at: datetime = Field(default_factory=_utcnow)
 
 
