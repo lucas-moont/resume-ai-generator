@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useResume, useTemplate } from '../store/resumeStore'
+import { useIsEditing } from '../store/editModeStore'
 import { A4_WIDTH_PX, computeFitScale } from '../previewScale'
 import { PreviewToolbar } from './PreviewToolbar'
 import { ResumePreview } from './ResumePreview'
@@ -7,6 +8,7 @@ import { ResumePreview } from './ResumePreview'
 export function PreviewPanel() {
   const resume = useResume()
   const template = useTemplate()
+  const editable = useIsEditing()
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
 
@@ -41,7 +43,7 @@ export function PreviewPanel() {
               className="print-scale origin-top-left rounded-sm shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] ring-1 ring-black/5 dark:shadow-[0_24px_60px_-12px_rgba(0,0,0,0.55)] dark:ring-white/10"
               style={{ transform: `scale(${scale})`, width: `${A4_WIDTH_PX}px` }}
             >
-              <ResumePreview resume={resume} template={template} />
+              <ResumePreview resume={resume} template={template} editable={editable} />
             </div>
           </div>
         ) : (
