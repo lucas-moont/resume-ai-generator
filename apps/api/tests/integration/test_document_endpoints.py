@@ -61,6 +61,37 @@ class TestUploadJsonDocument:
         assert resp.status_code == 415
 
 
+class TestUploadMarkdownDocument:
+    async def test_valid_markdown_upload_is_extracted_via_the_llm(self, client, fake_llm):
+        fake_llm.queue(
+            json.dumps(
+                {
+                    "fullName": "Bruno Reis",
+                    "headline": "Data Engineer",
+                    "summary": "Extracted from markdown.",
+                }
+            )
+        )
+        raw = b"""---
+name: Bruno Reis
+title: Data Engineer
+---
+## Experience
+Some markdown body about data engineering.
+"""
+
+        resp = await client.post(
+            "/api/profile/documents",
+            files={"file": ("notes.md", raw, "text/markdown")},
+        )
+
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["status"] == "extracted"
+        assert body["extractedPreview"]["fullName"] == "Bruno Reis"
+        assert fake_llm.call_count == 1
+
+
 class TestListDocuments:
     async def test_list_is_empty_when_no_uploads_yet(self, client):
         resp = await client.get("/api/profile/documents")

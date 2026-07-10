@@ -13,17 +13,18 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlmodel import Session
 
 from app.config import max_upload_bytes
 from app.db.tables import ProfileVersion, SourceDocument
 from app.domain.schemas import RevertProfileRequest
 from app.repositories import profile_repo, source_document_repo
-from app.routers.deps import get_session
+from app.routers.deps import get_session, resolve_requested_model
 from app.services.errors import http_error
 from app.services.github_client import fetch_user_repos
 from app.services.ingestion.ingest_json import JsonIngestionError, ingest_json
+from app.services.ingestion.ingest_markdown import ingest_markdown
 from app.services.ingestion.storage import compute_sha256, store_upload
 from app.services.profile_resolution import ProfileValidationError, resolve_active_profile
 
@@ -113,14 +114,18 @@ async def revert_profile(body: RevertProfileRequest, session: Session = Depends(
 
 @router.post("/api/profile/documents", status_code=202)
 async def upload_document(
-    file: UploadFile = File(...), session: Session = Depends(get_session)
+    file: UploadFile = File(...),
+    model: str | None = Form(None),
+    session: Session = Depends(get_session),
 ):
     """Accepts a `.json`/`.md`/`.pdf` Source Document upload (CONTEXT.md: Source Document,
     Ingestion). `.json` is validated deterministically (no LLM) -- a malformed or
     schema-invalid file is a request error (422) and no row is persisted for it, same
     treatment as the >max-size case (413): both are rejected before they ever become a Source
-    Document. `.md`/`.pdf` ingestion (LLM-based) is added in a later slice of this ticket;
-    for now those extensions are recognized but not yet processed.
+    Document. `.md`/`.pdf` go through LLM extraction instead (``model`` optionally overrides
+    the configured model, same convention as /api/generate and /api/chat); `.pdf` and its
+    failure handling (e.g. a scanned PDF with no extractable text) are added in a later slice
+    of this ticket -- for now `.pdf` is recognized but not yet processed.
     """
     content = await file.read()
     limit = max_upload_bytes()
@@ -136,27 +141,45 @@ async def upload_document(
     if existing is not None:
         return _upload_response(existing)
 
-    if media_type != "json":
-        raise http_error(415, f"{media_type} uploads are not supported yet")
+    if media_type == "json":
+        try:
+            resume = ingest_json(content)
+        except JsonIngestionError as e:
+            raise http_error(422, str(e)) from e
 
-    try:
-        resume = ingest_json(content)
-    except JsonIngestionError as e:
-        raise http_error(422, str(e)) from e
+        stored_path = store_upload(content, sha256=sha256, ext="json")
+        row = source_document_repo.insert(
+            session,
+            filename=file.filename or "upload.json",
+            media_type="json",
+            sha256=sha256,
+            size_bytes=len(content),
+            stored_path=stored_path,
+            status="extracted",
+            extracted_json=resume.model_dump_json(),
+        )
+        session.commit()
+        return _upload_response(row)
 
-    stored_path = store_upload(content, sha256=sha256, ext="json")
-    row = source_document_repo.insert(
-        session,
-        filename=file.filename or "upload.json",
-        media_type="json",
-        sha256=sha256,
-        size_bytes=len(content),
-        stored_path=stored_path,
-        status="extracted",
-        extracted_json=resume.model_dump_json(),
-    )
-    session.commit()
-    return _upload_response(row)
+    if media_type == "md":
+        stored_path = store_upload(content, sha256=sha256, ext="md")
+        row = source_document_repo.insert(
+            session,
+            filename=file.filename or "upload.md",
+            media_type="md",
+            sha256=sha256,
+            size_bytes=len(content),
+            stored_path=stored_path,
+            status="stored",
+        )
+        session.commit()
+
+        resume = await ingest_markdown(content, model=resolve_requested_model(model))
+        row = source_document_repo.mark_extracted(session, row, extracted_json=resume.model_dump_json())
+        session.commit()
+        return _upload_response(row)
+
+    raise http_error(415, f"{media_type} uploads are not supported yet")
 
 
 @router.get("/api/profile/documents")
