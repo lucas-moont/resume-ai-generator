@@ -36,10 +36,12 @@ from app.domain.schemas import (
 )
 from app.services.ollama_client import list_installed_models
 from app.prompt_loader import load_generate_system_prompt, load_prompt
+from app.services import llm_client
+from app.services.extraction_service import extract_profile_from_text
 from app.services.github_client import fetch_user_repos
 from app.services.llm.resume_json_parser import parse_resume_json
 from app.services.merge_projects import merge_github_with_markdown
-from app.services.llm_client import chat_json, llm_backend_label
+from app.services.llm_client import llm_backend_label
 from app.services.secret_redaction import redact_secrets
 from app.services.pdf_export import render_resume_pdf
 from app.services.profile_pdf import format_profile_pdf_prompt_block, load_profile_pdf_excerpt
@@ -48,6 +50,9 @@ from app.services.projects_loader import (
     looks_like_placeholder_profile,
     load_project_markdown_files,
 )
+# _sse aliased to its historical private name (main.py's own body uses it as a bare `_sse(...)`
+# call throughout); run_with_heartbeat is new, no historical name to preserve.
+from app.services.streaming import sse as _sse, run_with_heartbeat
 
 app = FastAPI(title="Resume Agent API", version="0.1.0")
 STREAM_LLM_TIMEOUT_SECONDS = LLM_TIMEOUT_SECONDS
@@ -115,11 +120,6 @@ async def list_models():
         "default": _default_model_for_active_backend(),
         "models": models,
     }
-
-
-def _sse(event: str, data: dict) -> str:
-    payload = json.dumps(data, ensure_ascii=False)
-    return f"event: {event}\ndata: {payload}\n\n"
 
 
 def _resolve_requested_model(model: str | None) -> str | None:
@@ -214,7 +214,7 @@ Job description:
 ---
 
 Revise the resume to address issues without inventing facts. Return full JSON only."""
-    raw = await chat_json(system, user_msg, model=model)
+    raw = await llm_client.chat_json(system, user_msg, model=model)
     # Anchor to the profile (refine=False) so a hallucinated improvement pass cannot
     # reintroduce fabricated identity/structure; only prose/bullets are adopted.
     improved = parse_resume_json(raw, profile, refine=False)
@@ -274,36 +274,10 @@ async def generate(body: GenerateRequest):
                     "data/profile/resume.json or provide data/profile/Profile.pdf for extraction."
                 ),
             ) from None
-        extraction_system = """Extract a professional resume JSON from the provided PDF text.
-Output JSON only with this schema:
-{
-  "fullName": string,
-  "headline": string,
-  "location": string or null,
-  "email": string or null,
-  "phone": string or null,
-  "links": [ { "label": string, "url": string } ],
-  "summary": string,
-  "experience": [ { "company": string, "title": string, "location": string or null, "start": string, "end": string or null, "highlights": string[] } ],
-  "projects": [ { "name": string, "description": string } ],
-  "skills": string[],
-  "education": [ { "institution": string, "degree": string, "end": string or null, "details": string or null } ],
-  "locale": "pt-BR" or "en"
-}
-Do not invent facts. Use empty arrays/strings only when data is unavailable."""
-        extraction_user = f"""Extract from this PDF text:
----
-{pdf_text}
----
-Return JSON only."""
         try:
-            extracted_raw = await chat_json(
-                extraction_system,
-                extraction_user,
-                model=_resolve_requested_model(body.model),
+            extracted_profile = await extract_profile_from_text(
+                pdf_text, model=_resolve_requested_model(body.model)
             )
-            seed = ResumeDocument(fullName="", headline="", summary="", locale="pt-BR")
-            extracted_profile = parse_resume_json(extracted_raw, seed, refine=False)
         except Exception as e:
             raise HTTPException(
                 status_code=502,
@@ -343,7 +317,7 @@ Return JSON only."""
     )
 
     try:
-        raw = await chat_json(system, user_msg, model=model)
+        raw = await llm_client.chat_json(system, user_msg, model=model)
         resume = parse_resume_json(raw, profile, refine=False)
         resume = _enrich_projects_from_sources(resume, md_entries, repos)
         resume = await _auto_improve_if_needed(
@@ -398,63 +372,38 @@ async def generate_stream(body: GenerateRequest):
                     "stage",
                     {"step": "extracting_profile_pdf", "progress": 25, "message": "Extracting profile data from PDF"},
                 )
-                extraction_system = """Extract a professional resume JSON from the provided PDF text.
-Output JSON only with this schema:
-{
-  "fullName": string,
-  "headline": string,
-  "location": string or null,
-  "email": string or null,
-  "phone": string or null,
-  "links": [ { "label": string, "url": string } ],
-  "summary": string,
-  "experience": [ { "company": string, "title": string, "location": string or null, "start": string, "end": string or null, "highlights": string[] } ],
-  "projects": [ { "name": string, "description": string } ],
-  "skills": string[],
-  "education": [ { "institution": string, "degree": string, "end": string or null, "details": string or null } ],
-  "locale": "pt-BR" or "en"
-}
-Do not invent facts. Use empty arrays/strings only when data is unavailable."""
-                extraction_user = f"""Extract from this PDF text:
----
-{pdf_text}
----
-Return JSON only."""
                 try:
                     extract_task = asyncio.create_task(
-                        chat_json(
-                            extraction_system,
-                            extraction_user,
-                            model=_resolve_requested_model(body.model),
-                        )
+                        extract_profile_from_text(pdf_text, model=_resolve_requested_model(body.model))
                     )
-                    elapsed = 0
-                    while not extract_task.done():
-                        await asyncio.sleep(STREAM_HEARTBEAT_SECONDS)
-                        elapsed += STREAM_HEARTBEAT_SECONDS
-                        if elapsed >= STREAM_LLM_TIMEOUT_SECONDS:
-                            extract_task.cancel()
-                            yield _sse(
-                                "error",
-                                {
-                                    "message": (
-                                        "Timed out while extracting Profile.pdf "
-                                        f"after {STREAM_LLM_TIMEOUT_SECONDS}s."
-                                    )
-                                },
-                            )
-                            return
-                        yield _sse(
+                    timed_out = False
+                    async for is_timeout, frame in run_with_heartbeat(
+                        extract_task,
+                        heartbeat_seconds=STREAM_HEARTBEAT_SECONDS,
+                        timeout_seconds=STREAM_LLM_TIMEOUT_SECONDS,
+                        tick=lambda elapsed: _sse(
                             "stage",
                             {
                                 "step": "extracting_profile_pdf",
                                 "progress": 25,
                                 "message": f"Extracting profile data from PDF... ({elapsed}s)",
                             },
-                        )
-                    extracted_raw = await extract_task
-                    seed = ResumeDocument(fullName="", headline="", summary="", locale="pt-BR")
-                    extracted_profile = parse_resume_json(extracted_raw, seed, refine=False)
+                        ),
+                        on_timeout=lambda elapsed: _sse(
+                            "error",
+                            {
+                                "message": (
+                                    "Timed out while extracting Profile.pdf "
+                                    f"after {STREAM_LLM_TIMEOUT_SECONDS}s."
+                                )
+                            },
+                        ),
+                    ):
+                        yield frame
+                        timed_out = is_timeout
+                    if timed_out:
+                        return
+                    extracted_profile = extract_task.result()
                 except Exception as e:
                     yield _sse(
                         "error",
@@ -509,34 +458,30 @@ Return JSON only."""
                     "message": f"Generating tailored resume with {llm_backend_label()}",
                 },
             )
-            llm_task = asyncio.create_task(chat_json(system, user_msg, model=model))
-            elapsed = 0
-            while not llm_task.done():
-                await asyncio.sleep(STREAM_HEARTBEAT_SECONDS)
-                elapsed += STREAM_HEARTBEAT_SECONDS
-                if elapsed >= STREAM_LLM_TIMEOUT_SECONDS:
-                    llm_task.cancel()
-                    yield _sse(
-                        "error",
-                        {
-                            "message": (
-                                "Timed out waiting for LLM response "
-                                f"after {STREAM_LLM_TIMEOUT_SECONDS}s."
-                            )
-                        },
-                    )
-                    return
-                yield _sse(
+            llm_task = asyncio.create_task(llm_client.chat_json(system, user_msg, model=model))
+            timed_out = False
+            async for is_timeout, frame in run_with_heartbeat(
+                llm_task,
+                heartbeat_seconds=STREAM_HEARTBEAT_SECONDS,
+                timeout_seconds=STREAM_LLM_TIMEOUT_SECONDS,
+                tick=lambda elapsed: _sse(
                     "stage",
                     {
                         "step": "calling_ai",
                         "progress": 60,
-                        "message": (
-                            f"Generating tailored resume with {llm_backend_label()}... ({elapsed}s)"
-                        ),
+                        "message": f"Generating tailored resume with {llm_backend_label()}... ({elapsed}s)",
                     },
-                )
-            raw = await llm_task
+                ),
+                on_timeout=lambda elapsed: _sse(
+                    "error",
+                    {"message": f"Timed out waiting for LLM response after {STREAM_LLM_TIMEOUT_SECONDS}s."},
+                ),
+            ):
+                yield frame
+                timed_out = is_timeout
+            if timed_out:
+                return
+            raw = llm_task.result()
             yield _sse("stage", {"step": "validating_response", "progress": 85, "message": "Validating AI response"})
             resume = parse_resume_json(raw, profile, refine=False)
             resume = _enrich_projects_from_sources(resume, md_entries, repos)
@@ -579,7 +524,7 @@ async def refine(body: RefineRequest):
     model = _resolve_requested_model(body.model)
     user_msg = _build_refine_user_msg(resume=body.resume, pdf_block=pdf_block, message=body.message)
     try:
-        raw = await chat_json(system, user_msg, model=model)
+        raw = await llm_client.chat_json(system, user_msg, model=model)
         resume = parse_resume_json(raw, body.resume, refine=True)
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=502, detail=f"LLM returned invalid JSON: {e}") from e
@@ -615,32 +560,30 @@ async def refine_stream(body: RefineRequest):
                     "message": f"Applying refinement with {llm_backend_label()}",
                 },
             )
-            llm_task = asyncio.create_task(chat_json(system, user_msg, model=model))
-            elapsed = 0
-            while not llm_task.done():
-                await asyncio.sleep(STREAM_HEARTBEAT_SECONDS)
-                elapsed += STREAM_HEARTBEAT_SECONDS
-                if elapsed >= STREAM_LLM_TIMEOUT_SECONDS:
-                    llm_task.cancel()
-                    yield _sse(
-                        "error",
-                        {
-                            "message": (
-                                "Timed out waiting for LLM response "
-                                f"after {STREAM_LLM_TIMEOUT_SECONDS}s."
-                            )
-                        },
-                    )
-                    return
-                yield _sse(
+            llm_task = asyncio.create_task(llm_client.chat_json(system, user_msg, model=model))
+            timed_out = False
+            async for is_timeout, frame in run_with_heartbeat(
+                llm_task,
+                heartbeat_seconds=STREAM_HEARTBEAT_SECONDS,
+                timeout_seconds=STREAM_LLM_TIMEOUT_SECONDS,
+                tick=lambda elapsed: _sse(
                     "stage",
                     {
                         "step": "calling_ai",
                         "progress": 60,
                         "message": f"Applying refinement with {llm_backend_label()}... ({elapsed}s)",
                     },
-                )
-            raw = await llm_task
+                ),
+                on_timeout=lambda elapsed: _sse(
+                    "error",
+                    {"message": f"Timed out waiting for LLM response after {STREAM_LLM_TIMEOUT_SECONDS}s."},
+                ),
+            ):
+                yield frame
+                timed_out = is_timeout
+            if timed_out:
+                return
+            raw = llm_task.result()
             yield _sse("stage", {"step": "validating_response", "progress": 85, "message": "Validating refinement"})
             resume = parse_resume_json(raw, body.resume, refine=True)
             yield _sse("done", {"progress": 100, "resume": resume.model_dump()})

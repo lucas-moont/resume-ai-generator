@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app import main as main_module
 from app.main import app as fastapi_app
+from app.services import llm_client as llm_client_module
 
 from tests.fakes import FakeLlm
 
@@ -17,13 +18,12 @@ from tests.fakes import FakeLlm
 def _fast_stream_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
     """Shrink the SSE heartbeat interval so streaming tests stay fast.
 
-    ``/api/generate/stream`` and ``/api/refine/stream`` poll an LLM task with
-    ``while not task.done(): await asyncio.sleep(STREAM_HEARTBEAT_SECONDS)``. Because the
-    first check always happens before the task has had a chance to run, every streamed
-    request blocks for at least one full heartbeat interval (5s in production) regardless of
-    how fast the LLM actually responds — see the NOTE in
-    ``tests/integration/test_generate_endpoints_compat.py``. Patching the module constant
-    keeps this characterization suite fast without touching ``app/main.py``.
+    As of B3, ``app.services.streaming.run_with_heartbeat`` checks task completion
+    immediately (``asyncio.wait({task}, timeout=heartbeat_seconds)``), so an instant FakeLlm
+    response no longer pays the ~5s-per-call tax the pre-B3 inline loops had (see the NOTE in
+    ``tests/integration/test_generate_endpoints_compat.py`` for that history). This fixture is
+    kept anyway as headroom for any test that simulates a slow LLM (multiple ticks before
+    completion, or an actual timeout) so it still runs fast.
     """
     monkeypatch.setattr(main_module, "STREAM_HEARTBEAT_SECONDS", 0.01)
 
@@ -32,11 +32,13 @@ def _fast_stream_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
 def fake_llm(monkeypatch: pytest.MonkeyPatch) -> FakeLlm:
     """Replace the LLM call used by the endpoints under test with a scripted fake.
 
-    ``app/main.py`` does ``from app.services.llm_client import chat_json`` and calls it as a
-    bare name, so the name lives in ``app.main``'s module namespace and must be patched there.
+    As of B3, every LLM call in the app (main.py's direct calls and
+    extraction_service.extract_profile_from_text) goes through the module-qualified
+    ``llm_client.chat_json(...)`` rather than a bare name bound per-importer, so patching the
+    attribute on ``app.services.llm_client`` intercepts all of them from this single place.
     """
     fake = FakeLlm()
-    monkeypatch.setattr(main_module, "chat_json", fake)
+    monkeypatch.setattr(llm_client_module, "chat_json", fake)
     return fake
 
 

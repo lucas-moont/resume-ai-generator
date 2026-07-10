@@ -15,3 +15,7 @@ def load_generate_system_prompt(prompts_dir: Path) -> str:
             load_prompt("skills/tailored-resume-generator.md", prompts_dir),
         ]
     )
+
+
+def load_extract_profile_system_prompt(prompts_dir: Path) -> str:
+    return load_prompt("system/extract_profile.md", prompts_dir)
