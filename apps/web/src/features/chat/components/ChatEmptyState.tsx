@@ -23,14 +23,14 @@ export function ChatEmptyState({
         <button
           type="button"
           onClick={() => onSuggestion('')}
-          className="rounded-xl border border-stone-200 bg-white px-3.5 py-2 text-sm font-medium text-stone-800 shadow-sm hover:border-stone-300 hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600 dark:hover:bg-zinc-800"
+          className="rounded-xl border border-stone-200 bg-white px-3.5 py-2 text-sm font-medium text-stone-800 shadow-sm hover:border-stone-300 hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:focus-visible:ring-zinc-500"
         >
           Paste a job description
         </button>
         <button
           type="button"
           onClick={() => onSuggestion(EXAMPLE_JOB_DESCRIPTION)}
-          className="rounded-xl border border-stone-200 bg-white px-3.5 py-2 text-sm font-medium text-stone-800 shadow-sm hover:border-stone-300 hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600 dark:hover:bg-zinc-800"
+          className="rounded-xl border border-stone-200 bg-white px-3.5 py-2 text-sm font-medium text-stone-800 shadow-sm hover:border-stone-300 hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:focus-visible:ring-zinc-500"
         >
           Generate with an example
         </button>

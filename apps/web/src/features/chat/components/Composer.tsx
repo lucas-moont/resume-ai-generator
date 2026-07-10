@@ -79,7 +79,7 @@ export function Composer({
           onKeyDown={handleKeyDown}
           placeholder="Paste a job description, or ask for a change…"
           rows={1}
-          className="min-h-10 flex-1 resize-none rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-[0.9375rem] text-stone-900 shadow-sm placeholder:text-stone-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus-visible:ring-zinc-500 dark:focus-visible:ring-offset-zinc-950"
+          className="min-h-10 flex-1 resize-none rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-[0.9375rem] text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus-visible:ring-zinc-500 dark:focus-visible:ring-offset-zinc-950"
         />
 
         <div className="relative shrink-0">
@@ -95,7 +95,7 @@ export function Composer({
             role="combobox"
             aria-expanded={modelSuggestOpen}
             aria-controls="composer-model-suggestions"
-            className="w-24 rounded-xl border border-stone-200 bg-white px-2.5 py-2.5 text-xs text-stone-900 shadow-sm placeholder:text-stone-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-500 sm:w-32"
+            className="w-24 rounded-xl border border-stone-200 bg-white px-2.5 py-2.5 text-xs text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus-visible:ring-zinc-500 sm:w-32"
           />
           {modelSuggestOpen && (
             <ul

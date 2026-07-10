@@ -8,7 +8,7 @@ import { AppHeader } from './AppHeader'
 type MobileTab = 'sessions' | 'chat' | 'preview'
 
 function tabButtonClass(selected: boolean): string {
-  return `rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 ${
+  return `rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:focus-visible:ring-zinc-500 ${
     selected
       ? 'bg-stone-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
       : 'text-stone-600 hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800'

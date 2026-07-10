@@ -21,7 +21,11 @@ export function ProgressCard({ streaming }: { streaming: StreamingState }) {
       </div>
       <div
         className="mb-4 h-2 overflow-hidden rounded-full bg-stone-100 dark:bg-zinc-800"
-        aria-hidden="true"
+        role="progressbar"
+        aria-label="Progress"
+        aria-valuenow={progress}
+        aria-valuemin={0}
+        aria-valuemax={100}
       >
         <div
           className="h-full rounded-full bg-stone-800 transition-[width] duration-300 ease-out motion-reduce:transition-none dark:bg-zinc-200"
