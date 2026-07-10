@@ -85,6 +85,47 @@ test.describe('Upload a profile document (Living Profile)', () => {
     await expect(page.getByText(/discarded/i)).toBeVisible()
   })
 
+  // Ticket 12 (QA gate v2 finding): approve/reject used to 409 with a generic
+  // "Something went wrong -- couldn't save that. Try again." whenever the document was already
+  // settled elsewhere (the other stale duplicate card from the pre-fix bug, a concurrent tab,
+  // ...) -- live buttons on a card claiming "proposed" invited retrying forever. It must resync
+  // to the real state on its own, with an honest message, and never need a reload.
+  test('approving a document that 409s (already applied elsewhere) syncs the card to applied without a reload', async ({
+    page,
+  }) => {
+    await mockBaseline(page)
+
+    await page.route('**/api/profile/documents', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback()
+      await route.fulfill({
+        status: 202,
+        json: { documentId: 21, status: 'proposed', proposedPatch: [], diffSummary: ['1 new skill: Go'] },
+      })
+    })
+    await page.route('**/api/profile/documents/*/apply', async (route) => {
+      await route.fulfill({
+        status: 409,
+        json: { detail: "Source Document 21 is 'applied', not 'proposed' -- nothing to apply" },
+      })
+    })
+
+    await page.goto('/')
+
+    await page.getByTestId('attachment-input').setInputFiles({
+      name: 'profile.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from('{"fullName":"Ada Lovelace"}'),
+    })
+
+    await expect(page.getByText(/1 new skill: go/i)).toBeVisible()
+    await page.getByRole('button', { name: 'Approve', exact: true }).click()
+
+    await expect(page.getByText('Applied to your profile', { exact: true })).toBeVisible()
+    await expect(page.getByRole('alert')).toContainText(/already applied/i)
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).not.toBeVisible()
+    await expect(page.getByText(/something went wrong/i)).not.toBeVisible()
+  })
+
   test('an unsupported file type is rejected client-side with no request made', async ({ page }) => {
     await mockBaseline(page)
 

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { ProfileUpdatedCard as ProfileUpdatedCardData } from '../../store/chatStore'
+import { ProfileDocumentConflictError } from '../../profileDocumentConflict'
 
 const GENERIC_ACTION_ERROR = "Something went wrong — couldn't save that. Try again."
 
@@ -64,16 +65,22 @@ export function ProfileUpdatedCard({
   const [pending, setPending] = useState<'approve' | 'reject' | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
-  /** Both actions are the same shape (set pending, run it, show a generic
-   * error on failure, always clear pending) — approve/reject only differ in
-   * which async call they run, so that's the one thing each button passes in. */
+  /** Both actions are the same shape (set pending, run it, show an error on
+   * failure, always clear pending) — approve/reject only differ in which
+   * async call they run, so that's the one thing each button passes in.
+   *
+   * A ProfileDocumentConflictError (409: already settled elsewhere) carries
+   * an honest, specific message — by the time this rejects, ChatPanel's
+   * settleProfileDocument has already synced `card` to the real status, so
+   * the buttons below are gone too; any other error is a transient failure
+   * worth retrying, so it gets the generic message instead. */
   const runAction = async (kind: 'approve' | 'reject', action: (documentId: number) => Promise<void>) => {
     setPending(kind)
     setActionError(null)
     try {
       await action(card.documentId)
-    } catch {
-      setActionError(GENERIC_ACTION_ERROR)
+    } catch (e) {
+      setActionError(e instanceof ProfileDocumentConflictError ? e.message : GENERIC_ACTION_ERROR)
     } finally {
       setPending(null)
     }
