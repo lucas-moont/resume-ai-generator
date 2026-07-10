@@ -155,3 +155,116 @@ def build_skill_lookup(base_skills: list[str]) -> dict[str, str]:
         if tok:
             lookup.setdefault(tok, s)
     return lookup
+
+
+def link_key(value: object) -> str:
+    """Identity key for a link's ``url`` -- scheme/``www.``/trailing-slash-insensitive (v2
+    ticket 04, "Merge incremental"). Deferred from ticket 02: the anchor never compared links
+    at all (links are only adopted in bulk on the seed/extraction path, never matched against a
+    "patch" of links -- see this module's original docstring), so there was no existing
+    behavior to preserve when this module was first extracted. The Deterministic Diff is the
+    first real caller: it needs "same link, different casing/scheme" to count as one identity,
+    not a new link plus a stale one.
+    """
+    s = str(value or "").strip().lower()
+    s = re.sub(r"^https?://", "", s)
+    s = re.sub(r"^www\.", "", s)
+    return s.rstrip("/")
+
+
+def match_links_entries(base: list[dict], candidates: list[object]) -> list[dict | None]:
+    """Identity match for ``links``: key is ``link_key`` of the ``url`` field alone -- a URL is
+    already a unique identity, unlike experience/education there is no fuzzy fallback pass.
+    Same claim-once shape as ``match_experience_entries``: each candidate claimed at most once.
+    Returns one entry per ``base`` item, in order; ``None`` when unmatched.
+    """
+    valid = [c for c in candidates if isinstance(c, dict)]
+    used = [False] * len(valid)
+    by_url: dict[str, list[int]] = {}
+    for idx, c in enumerate(valid):
+        k = link_key(c.get("url"))
+        if k:
+            by_url.setdefault(k, []).append(idx)
+
+    matched: list[dict | None] = [None] * len(base)
+    for i, b in enumerate(base):
+        k = link_key(b.get("url"))
+        if k:
+            idx = _claim_first_unused(by_url.get(k, []), used)
+            if idx is not None:
+                matched[i] = valid[idx]
+    return matched
+
+
+def _degree_compatible(a: object, b: object) -> bool:
+    """Two degree labels are compatible enough to plausibly be "the same real degree, just
+    reworded" -- normalized (``entity_key``), one is a substring of the other (e.g.
+    "Bacharelado" is a literal prefix of "Bacharelado em Ciencia da Computacao"), or either
+    side simply left the degree blank (no information to contradict a match). Plain fuzzy
+    similarity (``title_similarity``) was tried and rejected here: on short degree labels like
+    "Bacharelado" vs "Mestrado" it scores nearly as high as "Bacharelado" vs its own expanded
+    form (both ~0.42-0.47 in practice -- the strings simply share enough individual letters),
+    so a similarity threshold could not reliably tell a rewrite from a genuinely different
+    degree. Substring containment has no such false positive for these two."""
+    ak, bk = entity_key(a), entity_key(b)
+    if not ak or not bk:
+        return True
+    return ak in bk or bk in ak
+
+
+def match_education_entries_for_diff(base: list[dict], candidates: list[object]) -> list[dict | None]:
+    """Identity match for ``education``, specialized for the Deterministic Diff (v2 ticket 04).
+
+    ``match_education_entries`` above keys on ``institution`` alone -- correct for the anchor,
+    where a tailored resume's profile is characterized with at most one entry per institution
+    and ``degree`` is exactly the field the LLM legitimately rewords/translates (ticket 02's
+    review). The Diff has a different job: telling apart two REAL, distinct degrees from the
+    same institution (e.g. a Bachelor's and a Master's from the same university) so a genuinely
+    new degree is never misclassified as a divergent rewrite of an existing, unrelated one.
+
+    Two-pass, like the other matchers here (claim-once over ``candidates``):
+
+    1. Primary key: ``(institution, degree)`` via ``entity_key`` on both parts -- catches an
+       exact (post-normalization) match outright.
+    2. Fallback: institution-only, but a pool entry is only claimable when its degree is
+       ``_degree_compatible`` with the item being matched. When more than one *remaining*
+       pool entry at that institution is degree-compatible, the match is genuinely ambiguous
+       and is left unmatched rather than guessed -- the Diff then classifies it as new, which
+       is always the safe failure mode (a human reviews an extra proposed entry) versus
+       silently overwriting the wrong sibling degree. This is what makes a genuinely new
+       degree at an institution that already has one or more entries land as "new" instead of
+       "divergent": it is never degree-compatible with an unrelated existing entry.
+    """
+    valid = [c for c in candidates if isinstance(c, dict)]
+    used = [False] * len(valid)
+    by_institution_degree: dict[str, list[int]] = {}
+    by_institution: dict[str, list[int]] = {}
+    for idx, c in enumerate(valid):
+        ik = entity_key(c.get("institution"))
+        if not ik:
+            continue
+        by_institution.setdefault(ik, []).append(idx)
+        dk = entity_key(c.get("degree"))
+        if dk:
+            by_institution_degree.setdefault(f"{ik}|{dk}", []).append(idx)
+
+    matched: list[dict | None] = [None] * len(base)
+    for i, b in enumerate(base):
+        ik, dk = entity_key(b.get("institution")), entity_key(b.get("degree"))
+        if ik and dk:
+            idx = _claim_first_unused(by_institution_degree.get(f"{ik}|{dk}", []), used)
+            if idx is not None:
+                matched[i] = valid[idx]
+    for i, b in enumerate(base):
+        if matched[i] is not None:
+            continue
+        ik = entity_key(b.get("institution"))
+        if not ik:
+            continue
+        remaining = [idx for idx in by_institution.get(ik, []) if not used[idx]]
+        compatible = [idx for idx in remaining if _degree_compatible(b.get("degree"), valid[idx].get("degree"))]
+        if len(compatible) == 1:
+            idx = compatible[0]
+            used[idx] = True
+            matched[i] = valid[idx]
+    return matched

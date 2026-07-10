@@ -10,8 +10,11 @@ from __future__ import annotations
 from app.domain.entity_identity import (
     build_skill_lookup,
     entity_key,
+    link_key,
     match_education_entries,
+    match_education_entries_for_diff,
     match_experience_entries,
+    match_links_entries,
     match_projects_by_name,
     skill_token,
     title_similarity,
@@ -170,3 +173,99 @@ class TestBuildSkillLookup:
     def test_first_occurrence_wins(self) -> None:
         lookup = build_skill_lookup(["React", "react"])
         assert lookup[skill_token("react")] == "React"
+
+
+class TestLinkKey:
+    def test_scheme_insensitive(self) -> None:
+        assert link_key("http://github.com/lucas") == link_key("https://github.com/lucas")
+
+    def test_www_insensitive(self) -> None:
+        assert link_key("https://www.github.com/lucas") == link_key("https://github.com/lucas")
+
+    def test_trailing_slash_insensitive(self) -> None:
+        assert link_key("https://github.com/lucas/") == link_key("https://github.com/lucas")
+
+    def test_case_insensitive(self) -> None:
+        assert link_key("https://GitHub.com/Lucas") == link_key("https://github.com/lucas")
+
+    def test_none_and_blank(self) -> None:
+        assert link_key(None) == ""
+        assert link_key("") == ""
+
+
+class TestMatchLinksEntries:
+    def test_matches_by_normalized_url(self) -> None:
+        base = [{"label": "GitHub", "url": "https://github.com/lucas"}]
+        candidates = [{"label": "My GitHub", "url": "http://www.github.com/lucas/"}]
+        assert match_links_entries(base, candidates) == [candidates[0]]
+
+    def test_no_match_when_url_differs(self) -> None:
+        base = [{"label": "GitHub", "url": "https://github.com/lucas"}]
+        candidates = [{"label": "LinkedIn", "url": "https://linkedin.com/in/lucas"}]
+        assert match_links_entries(base, candidates) == [None]
+
+    def test_claims_each_candidate_at_most_once(self) -> None:
+        base = [
+            {"label": "A", "url": "https://x.com/a"},
+            {"label": "B", "url": "https://x.com/a"},
+        ]
+        candidates = [{"label": "dup", "url": "https://x.com/a"}]
+        result = match_links_entries(base, candidates)
+        assert result[0] is candidates[0]
+        assert result[1] is None
+
+    def test_no_match_when_url_missing(self) -> None:
+        assert match_links_entries([{"label": "no url"}], [{"label": "x", "url": ""}]) == [None]
+
+
+class TestMatchEducationEntriesForDiff:
+    """The Diff calls this as ``match_education_entries_for_diff(extracted, profile)`` --
+    ``base`` (first arg) is the newly extracted document's education list (iterated), and
+    ``candidates`` (second arg) is the ACTIVE PROFILE's education list (the claim-once pool
+    whose per-institution entry count drives the fallback-ambiguity check below)."""
+
+    def test_matches_by_institution_when_unambiguous_even_if_degree_reworded(self) -> None:
+        extracted = [{"institution": "usp", "degree": "Bacharelado em Ciencia da Computacao"}]
+        profile = [{"institution": "USP", "degree": "Bacharelado"}]
+        assert match_education_entries_for_diff(extracted, profile) == [profile[0]]
+
+    def test_exact_institution_and_degree_key_wins_primary_pass(self) -> None:
+        extracted = [{"institution": "USP", "degree": "Mestrado"}]
+        profile = [
+            {"institution": "USP", "degree": "Bacharelado"},
+            {"institution": "USP", "degree": "Mestrado"},
+        ]
+        result = match_education_entries_for_diff(extracted, profile)
+        assert result == [profile[1]]
+
+    def test_new_degree_at_an_institution_with_one_existing_entry_is_not_matched(self) -> None:
+        # The ticket 04 nuance: two distinct degrees at the same institution are two distinct
+        # entries -- a genuinely new degree must never be matched onto (and so silently
+        # overwrite) the one already on file, even though it is the institution's only entry.
+        extracted = [{"institution": "USP", "degree": "Mestrado"}]
+        profile = [{"institution": "USP", "degree": "Bacharelado"}]
+        assert match_education_entries_for_diff(extracted, profile) == [None]
+
+    def test_reworded_degree_still_matches_when_profile_has_two_entries(self) -> None:
+        # Degree-compatibility (not just "only one entry") is what disambiguates: a reworded
+        # match for ONE of two existing entries is still found correctly...
+        extracted = [{"institution": "USP", "degree": "Bacharelado em Direito"}]
+        profile = [
+            {"institution": "USP", "degree": "Bacharelado"},
+            {"institution": "USP", "degree": "Mestrado"},
+        ]
+        assert match_education_entries_for_diff(extracted, profile) == [profile[0]]
+
+    def test_new_degree_at_an_institution_with_two_existing_entries_is_not_matched(self) -> None:
+        # ...while a THIRD, genuinely new degree at that same institution matches neither.
+        extracted = [{"institution": "USP", "degree": "Doutorado"}]
+        profile = [
+            {"institution": "USP", "degree": "Bacharelado"},
+            {"institution": "USP", "degree": "Mestrado"},
+        ]
+        assert match_education_entries_for_diff(extracted, profile) == [None]
+
+    def test_no_match_when_institution_missing(self) -> None:
+        extracted = [{"degree": "no institution"}]
+        profile = [{"institution": "USP", "degree": "Bacharelado"}]
+        assert match_education_entries_for_diff(extracted, profile) == [None]
