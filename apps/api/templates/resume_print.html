@@ -4,7 +4,28 @@
   <meta charset="utf-8" />
   <title>{{ resume.fullName }} — Resume</title>
   <style>
+    /* Playwright renders this HTML in isolation (no other app chrome), so
+       these page-level resets are PDF-only and deliberately kept out of the
+       shared packages/resume-templates/resume.css — that file is also
+       imported into the live web app, where a global `body` rule here would
+       leak into the surrounding UI. */
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #f1f5f9;
+    }
 {% include "resume.css" %}
+    @media print {
+      html, body {
+        background: #fff;
+      }
+      .resume-doc .page {
+        padding-left: 0;
+        padding-right: 0;
+        max-width: none;
+        min-height: 0;
+      }
+    }
   </style>
 </head>
 <body>
@@ -20,6 +41,7 @@
   {% set t_links = 'Links' %}
   {% set t_contact = 'Contato' if is_pt else 'Contact' %}
   {% set t_present = 'Atual' if is_pt else 'Present' %}
+  <div class="resume-doc">
   <div class="page tpl-{{ template }}">
     <header class="doc-header">
       <div class="doc-header-main">
@@ -133,6 +155,7 @@
         {% endif %}
       </aside>
     </div>
+  </div>
   </div>
 </body>
 </html>

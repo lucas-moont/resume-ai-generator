@@ -39,6 +39,9 @@ body {
     padding: 0 !important;
     overflow: visible !important;
   }
+  .print-scale-wrapper {
+    width: auto !important;
+  }
   .print-scale {
     transform: none !important;
     box-shadow: none !important;

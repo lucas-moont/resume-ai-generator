@@ -24,7 +24,8 @@ export interface EducationItem {
   details?: string | null
 }
 
-export type TemplateId = 'modern' | 'classic' | 'minimal' | 'compact'
+// Derived from the templates registry — see features/resume/templates/registry.ts.
+export type { TemplateId } from '../features/resume/templates/registry'
 
 export interface ResumeDocument {
   fullName: string

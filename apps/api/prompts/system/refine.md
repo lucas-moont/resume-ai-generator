@@ -10,7 +10,8 @@ Rules:
 
 Writing quality (keep the resume strong):
 - `summary`: 2–4 sentences, no first-person pronouns, concrete and role-specific.
-- `highlights`: each bullet starts with a strong action verb (never "Responsible for" or a pronoun), one idea per line (~12–26 words), naming concrete technologies; keep 3–5 bullets for recent roles.
+- `highlights`: each bullet starts with a strong action verb (never "Responsible for" or a subject pronoun), one idea per line (~12–26 words), naming concrete technologies; keep 3–5 bullets for recent roles.
+- **Language & voice**: keep the whole document in **one language** (the resume's `locale`), including job `title`s and `degree`s — never mix (e.g. an English title above pt-BR bullets); translate a `title`/`degree` stored in another language. Keep only company, product, brand and technology names in original form. Write bullets in the **first-person singular** for languages that inflect person (pt-BR: `Desenvolvi`, `Liderei`), and **person-neutral** action verbs in English (`Led`, `Built`) — never explicit subject pronouns. Keep `summary` as an impersonal noun-phrase.
 - `skills`: real technologies only, ordered by relevance, deduplicated, canonical casing.
 - Keep length reasonable for 1–2 pages A4.
 

@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "e2e: slow/opt-in tests that exercise a real external process (e.g. Playwright/Chromium for PDF export). Excluded by default; run explicitly with `-m e2e`, or run everything else with `-m \"not e2e\"`.",
+]
