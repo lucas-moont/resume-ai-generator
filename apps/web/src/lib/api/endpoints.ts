@@ -1,4 +1,5 @@
 import type {
+  ApplySourceDocumentResponse,
   ChatMessageStreamRequest,
   ChatSessionDetailResponse,
   ChatSessionListResponse,
@@ -9,8 +10,17 @@ import type {
   GithubReposResponse,
   ModelsResponse,
   RefineRequest,
+  UploadSourceDocumentResponse,
 } from './dto'
-import { postInit, requestBlob, requestJson, requestStream, requestVoid } from './client'
+import {
+  postInit,
+  requestBlob,
+  requestJson,
+  requestMultipart,
+  requestStream,
+  requestVoid,
+  type MultipartOptions,
+} from './client'
 import { parseSseStream, type SseEvent } from './sse'
 
 export { ApiError } from './client'
@@ -73,4 +83,29 @@ export async function chatMessageStream(
     postInit(payload, signal),
   )
   return parseSseStream(response)
+}
+
+// --- Living Profile: Source Documents (v2, F7) ---
+
+export function uploadSourceDocument(
+  file: File,
+  options: MultipartOptions = {},
+): Promise<UploadSourceDocumentResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return requestMultipart<UploadSourceDocumentResponse>('/api/profile/documents', formData, options)
+}
+
+export function applySourceDocument(
+  documentId: number,
+  ops?: number[],
+): Promise<ApplySourceDocumentResponse> {
+  return requestJson<ApplySourceDocumentResponse>(
+    `/api/profile/documents/${documentId}/apply`,
+    postInit({ ops }),
+  )
+}
+
+export function rejectSourceDocument(documentId: number): Promise<void> {
+  return requestVoid(`/api/profile/documents/${documentId}/reject`, { method: 'POST' })
 }

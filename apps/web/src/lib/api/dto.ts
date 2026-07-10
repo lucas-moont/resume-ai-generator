@@ -114,3 +114,42 @@ export interface ChatDoneEventPayload {
   messageId: number
   resumeVersionId: number | null
 }
+
+// --- Living Profile: Source Documents (v2, F7 — ticket 07) ---
+// Contract per docs/v2-living-profile.md item 3 + ticket 04's addendum
+// (proposedPatch/diffSummary land in the same 202 response once the merge
+// step exists server-side — no polling).
+
+export type SourceDocumentMediaType = 'json' | 'md' | 'pdf'
+
+export type SourceDocumentStatus =
+  | 'stored'
+  | 'extracted'
+  | 'proposed'
+  | 'applied'
+  | 'rejected'
+  | 'failed'
+
+export interface PatchOp {
+  op: 'add' | 'replace' | 'remove'
+  path: string
+  value?: unknown
+  reason: string
+  confidence: number
+  sourceExcerpt: string
+}
+
+export interface UploadSourceDocumentResponse {
+  documentId: number
+  status: SourceDocumentStatus
+  proposedPatch?: PatchOp[]
+  diffSummary?: string[]
+  extractedPreview?: unknown
+  error?: string
+}
+
+export interface ApplySourceDocumentResponse {
+  profileVersion: number
+  applied: number
+  skipped: number
+}

@@ -1,4 +1,5 @@
 import type { ResumeDocument } from '../types/resume'
+import type { PatchOp, UploadSourceDocumentResponse } from '../lib/api/dto'
 import type { MockSseEvent } from './msw/sse'
 
 export function makeResume(overrides: Partial<ResumeDocument> = {}): ResumeDocument {
@@ -92,4 +93,31 @@ export function makeChatTurnEvents(
     { event: 'message', data: { content: options.content ?? "I've updated your resume." } },
     { event: 'done', data: { progress: 100, messageId: options.messageId ?? 1, resumeVersionId } },
   ]
+}
+
+// --- Living Profile: Source Documents (v2, F7) ---
+
+export function makePatchOp(overrides: Partial<PatchOp> = {}): PatchOp {
+  return {
+    op: 'add',
+    path: '/skills/-',
+    value: 'Rust',
+    reason: 'New skill found in the uploaded document.',
+    confidence: 0.92,
+    sourceExcerpt: 'Proficient in Rust and systems programming.',
+    ...overrides,
+  }
+}
+
+export function makeUploadResponse(
+  overrides: Partial<UploadSourceDocumentResponse> = {},
+): UploadSourceDocumentResponse {
+  return {
+    documentId: 1,
+    status: 'proposed',
+    proposedPatch: [makePatchOp()],
+    diffSummary: ['1 new skill: Rust'],
+    extractedPreview: { skills: ['Rust'] },
+    ...overrides,
+  }
 }
