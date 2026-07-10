@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../../lib/api/client'
 import { uploadSourceDocument } from '../../lib/api/endpoints'
 import type { SourceDocumentStatus } from '../../lib/api/dto'
+import { useChatStore } from '../chat/store/chatStore'
 import { validateFile } from './fileMeta'
 
 export interface UploadAttachment {
@@ -62,6 +63,9 @@ export function useFileUpload(options: UseFileUploadOptions = {}): UseFileUpload
 
     uploadSourceDocument(file, {
       signal: controller.signal,
+      // v2 ticket 10: links the upload to the active chat session (if any) so its
+      // ProfileUpdatedCard survives a reload -- see lib/api/endpoints.ts's docstring.
+      sessionId: useChatStore.getState().sessionId ?? undefined,
       onProgress: (pct) => {
         setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, progress: pct } : a)))
       },

@@ -1,13 +1,18 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/setup'
 import { makeUploadResponse } from '../../test/factories'
+import { useChatStore } from '../chat/store/chatStore'
 import { useFileUpload } from './useFileUpload'
 
 function makeFile(name: string, content = 'content'): File {
   return new File([content], name)
 }
+
+beforeEach(() => {
+  useChatStore.getState().reset()
+})
 
 describe('useFileUpload — validation (no network)', () => {
   it('rejects an unsupported file type without ever uploading it', () => {
@@ -82,6 +87,58 @@ describe('useFileUpload — happy path', () => {
 
     expect(result.current.attachments).toHaveLength(2)
     await waitFor(() => expect(onSettled).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('useFileUpload — links the upload to the active chat session (v2 ticket 10)', () => {
+  // Reads the raw multipart body as text (rather than `request.formData()`, which trips an
+  // unrelated undici/MSW parser assertion in this Node test environment against File parts
+  // with no MIME type) -- a multipart field still shows up as
+  // `Content-Disposition: form-data; name="sessionId"` followed by its value on the next line.
+  function hasMultipartField(body: string, name: string, value?: string): boolean {
+    const marker = `name="${name}"`
+    const idx = body.indexOf(marker)
+    if (idx === -1) return false
+    if (value === undefined) return true
+    const after = body.slice(idx + marker.length)
+    return after.includes(`\r\n\r\n${value}`) || after.includes(`\n\n${value}`)
+  }
+
+  it('sends the active chatStore sessionId as a multipart field', async () => {
+    useChatStore.getState().setSessionId(42)
+    let capturedBody = ''
+    server.use(
+      http.post('/api/profile/documents', async ({ request }) => {
+        capturedBody = await request.text()
+        return HttpResponse.json(makeUploadResponse(), { status: 202 })
+      }),
+    )
+    const { result } = renderHook(() => useFileUpload({ onSettled: vi.fn() }))
+
+    act(() => {
+      result.current.addFiles([makeFile('profile.json')])
+    })
+    await waitFor(() => expect(result.current.attachments).toHaveLength(0))
+
+    expect(hasMultipartField(capturedBody, 'sessionId', '42')).toBe(true)
+  })
+
+  it('omits sessionId entirely when there is no active chat session', async () => {
+    let capturedBody = ''
+    server.use(
+      http.post('/api/profile/documents', async ({ request }) => {
+        capturedBody = await request.text()
+        return HttpResponse.json(makeUploadResponse(), { status: 202 })
+      }),
+    )
+    const { result } = renderHook(() => useFileUpload({ onSettled: vi.fn() }))
+
+    act(() => {
+      result.current.addFiles([makeFile('profile.json')])
+    })
+    await waitFor(() => expect(result.current.attachments).toHaveLength(0))
+
+    expect(hasMultipartField(capturedBody, 'sessionId')).toBe(false)
   })
 })
 

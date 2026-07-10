@@ -87,13 +87,22 @@ export async function chatMessageStream(
 
 // --- Living Profile: Source Documents (v2, F7) ---
 
+export interface UploadSourceDocumentOptions extends MultipartOptions {
+  /** v2 ticket 10: the active chat session this upload came from, if any -- lets the backend
+   * persist a durable link (chat_messages.meta) so the ProfileUpdatedCard survives a session
+   * reload. Omitted (not sent as a field at all) when there is no active session. */
+  sessionId?: number
+}
+
 export function uploadSourceDocument(
   file: File,
-  options: MultipartOptions = {},
+  options: UploadSourceDocumentOptions = {},
 ): Promise<UploadSourceDocumentResponse> {
+  const { sessionId, ...multipartOptions } = options
   const formData = new FormData()
   formData.append('file', file)
-  return requestMultipart<UploadSourceDocumentResponse>('/api/profile/documents', formData, options)
+  if (sessionId !== undefined) formData.append('sessionId', String(sessionId))
+  return requestMultipart<UploadSourceDocumentResponse>('/api/profile/documents', formData, multipartOptions)
 }
 
 export function applySourceDocument(
