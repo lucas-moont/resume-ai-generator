@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.config import max_upload_bytes
 from app.db.tables import ProfileVersion, SourceDocument
+from app.domain.profile_patch import PatchOp, PatchValidationFailed, apply_patch
 from app.domain.schemas import RevertProfileRequest
 from app.repositories import profile_repo, source_document_repo
 from app.routers.deps import get_session, resolve_requested_model
@@ -27,11 +29,41 @@ from app.services.github_client import fetch_user_repos
 from app.services.ingestion.ingest_json import JsonIngestionError, ingest_json
 from app.services.ingestion.ingest_markdown import ingest_markdown
 from app.services.ingestion.ingest_pdf import ingest_pdf
+from app.services.ingestion.merge_service import propose_merge, resolve_profile_for_merge
 from app.services.ingestion.storage import compute_sha256, store_upload
-from app.services.profile_resolution import ProfileValidationError, resolve_active_profile
+from app.services.profile_resolution import (
+    ProfileValidationError,
+    ResolvedProfile,
+    resolve_active_profile,
+)
 from app.services.secret_redaction import redact_secrets
 
 router = APIRouter()
+
+
+class ApplyDocumentRequest(BaseModel):
+    ops: list[int] | None = None
+
+
+class PatchProfileRequest(BaseModel):
+    ops: list[PatchOp]
+
+
+def _resolve_active_profile_or_error(session: Session) -> ResolvedProfile:
+    """Shared by every reader of "the active profile" in this router (``GET /api/profile``,
+    ``GET /api/github/repos``) -- extracted from two near-identical
+    ``try/except FileNotFoundError/ProfileValidationError`` blocks (ticket 01 review) that had
+    drifted into different styles (one used ``http_error``, the other a bare
+    ``HTTPException`` with a custom message). The v2 ticket 04 ``PATCH /api/profile`` endpoint
+    is the third consumer -- extracting here pays for itself immediately.
+    """
+    try:
+        return resolve_active_profile(session)
+    except FileNotFoundError as e:
+        raise http_error(404, str(e)) from e
+    except ProfileValidationError as e:
+        raise http_error(400, str(e)) from e
+
 
 _MEDIA_TYPE_BY_EXT = {"json": "json", "md": "md", "markdown": "md", "pdf": "pdf"}
 
@@ -47,9 +79,43 @@ def _upload_response(row: SourceDocument) -> dict:
     return {
         "documentId": row.id,
         "status": row.status,
+        "proposedPatch": json.loads(row.proposed_patch) if row.proposed_patch else None,
+        "diffSummary": json.loads(row.diff_summary) if row.diff_summary else None,
         "extractedPreview": json.loads(row.extracted_json) if row.extracted_json else None,
         "error": row.error,
     }
+
+
+async def _propose_merge_or_fail(
+    session: Session, row: SourceDocument, resume, model_override: str | None
+) -> SourceDocument:
+    """Runs the Incremental Merge pipeline (``services/ingestion/merge_service.py``) for a
+    just-extracted Source Document, for ALL THREE formats -- unlike ingestion (json is
+    LLM-free, md/pdf are not), Adjudication is a separate call gated purely by whether the
+    Deterministic Diff found anything new or divergent. Any failure here (a broken active
+    profile, an unreachable LLM) marks the document 'failed' with an actionable, redacted
+    message rather than ever surfacing as a 500 -- the same non-fatal treatment ticket 03
+    established for extraction failures; the file and its ``extractedPreview`` are already
+    safely persisted by the time this runs.
+    """
+    try:
+        profile = resolve_profile_for_merge(session)
+        proposal = await propose_merge(profile, resume, model=model_override)
+    except Exception as e:
+        row = source_document_repo.mark_failed(
+            session, row, error=redact_secrets(f"Could not build a merge proposal: {e}")
+        )
+        session.commit()
+        return row
+
+    row = source_document_repo.mark_proposed(
+        session,
+        row,
+        proposed_patch=json.dumps([op.model_dump() for op in proposal.ops]),
+        diff_summary=json.dumps(proposal.diff_summary),
+    )
+    session.commit()
+    return row
 
 
 def _document_list_dict(row: SourceDocument) -> dict:
@@ -75,13 +141,39 @@ def _version_dict(row: ProfileVersion) -> dict:
 
 @router.get("/api/profile")
 async def get_profile(session: Session = Depends(get_session)):
+    resolved = _resolve_active_profile_or_error(session)
+    return resolved.profile.model_dump()
+
+
+@router.patch("/api/profile")
+async def patch_profile(body: PatchProfileRequest, session: Session = Depends(get_session)):
+    """Manual/direct profile edit (docs/v2-living-profile.md item 5): the same Patch Validator
+    every other write path goes through, with ``source_kind="manual"`` (so, unlike an upload,
+    a ``remove`` op is allowed -- CONTEXT.md: Upload-never-removes only restricts uploads).
+    """
     try:
-        resolved = resolve_active_profile(session)
-    except FileNotFoundError as e:
-        raise http_error(404, str(e)) from e
+        profile = resolve_profile_for_merge(session)
     except ProfileValidationError as e:
         raise http_error(400, str(e)) from e
-    return resolved.profile.model_dump()
+    try:
+        result = apply_patch(profile, body.ops, source_kind="manual")
+    except PatchValidationFailed as e:
+        raise http_error(422, f"Patch produced an invalid profile: {e}") from e
+
+    new_version = profile_repo.insert_version(
+        session,
+        data=result.profile.model_dump_json(),
+        source_kind="manual",
+        patch=json.dumps([op.model_dump() for op in result.applied]),
+        change_summary=f"Manual edit: {len(result.applied)} change(s)",
+    )
+    session.commit()
+    session.refresh(new_version)
+    return {
+        "profileVersion": new_version.version,
+        "applied": len(result.applied),
+        "skipped": len(result.skipped),
+    }
 
 
 @router.get("/api/profile/versions")
@@ -147,6 +239,8 @@ async def upload_document(
     if existing is not None:
         return _upload_response(existing)
 
+    model_override = resolve_requested_model(model)
+
     if media_type == "json":
         try:
             resume = ingest_json(content)
@@ -165,6 +259,7 @@ async def upload_document(
             extracted_json=resume.model_dump_json(),
         )
         session.commit()
+        row = await _propose_merge_or_fail(session, row, resume, model_override)
         return _upload_response(row)
 
     # .md / .pdf: persist first (status='stored'), then attempt LLM-based extraction --
@@ -181,7 +276,6 @@ async def upload_document(
     )
     session.commit()
 
-    model_override = resolve_requested_model(model)
     try:
         if media_type == "md":
             resume = await ingest_markdown(content, model=model_override)
@@ -194,6 +288,7 @@ async def upload_document(
 
     row = source_document_repo.mark_extracted(session, row, extracted_json=resume.model_dump_json())
     session.commit()
+    row = await _propose_merge_or_fail(session, row, resume, model_override)
     return _upload_response(row)
 
 
@@ -203,17 +298,74 @@ async def list_documents(session: Session = Depends(get_session)):
     return {"documents": [_document_list_dict(r) for r in rows]}
 
 
-@router.get("/api/github/repos")
-async def github_repos(username: str | None = None, session: Session = Depends(get_session)):
+@router.post("/api/profile/documents/{document_id}/apply")
+async def apply_source_document(
+    document_id: int, body: ApplyDocumentRequest, session: Session = Depends(get_session)
+):
+    """Approves a proposed merge -- in full, or a ``{ops: [indices]}`` subset into the STORED
+    ``proposedPatch`` (the already Patch-Validator-vetted ops from proposal time, never the raw
+    LLM output -- see merge_service.py). Re-runs the Patch Validator against the CURRENT active
+    profile (robust to anything that changed since the proposal was made) and appends a new
+    Profile Version with ``source_kind="upload"``.
+    """
+    row = source_document_repo.get(session, document_id)
+    if row is None:
+        raise http_error(404, f"Source Document {document_id} not found")
+    if row.status != "proposed":
+        raise http_error(
+            409, f"Source Document {document_id} is '{row.status}', not 'proposed' -- nothing to apply"
+        )
+
+    all_ops = [PatchOp.model_validate(op) for op in json.loads(row.proposed_patch or "[]")]
+    ops_to_apply = all_ops
+    if body.ops is not None:
+        wanted = set(body.ops)
+        ops_to_apply = [op for i, op in enumerate(all_ops) if i in wanted]
+
     try:
-        resolved = resolve_active_profile(session)
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail="Profile JSON not found — see README (data/profile/resume.json).",
-        ) from None
+        profile = resolve_profile_for_merge(session)
     except ProfileValidationError as e:
         raise http_error(400, str(e)) from e
+    try:
+        result = apply_patch(profile, ops_to_apply, source_kind="upload")
+    except PatchValidationFailed as e:
+        raise http_error(422, f"Patch produced an invalid profile: {e}") from e
+
+    new_version = profile_repo.insert_version(
+        session,
+        data=result.profile.model_dump_json(),
+        source_kind="upload",
+        patch=json.dumps([op.model_dump() for op in result.applied]),
+        source_document_id=row.id,
+        change_summary=f"Applied upload: {row.filename}",
+    )
+    row = source_document_repo.mark_applied(session, row)
+    session.commit()
+    session.refresh(new_version)
+    return {
+        "profileVersion": new_version.version,
+        "applied": len(result.applied),
+        "skipped": len(result.skipped),
+    }
+
+
+@router.post("/api/profile/documents/{document_id}/reject", status_code=204)
+async def reject_source_document(document_id: int, session: Session = Depends(get_session)):
+    row = source_document_repo.get(session, document_id)
+    if row is None:
+        raise http_error(404, f"Source Document {document_id} not found")
+    if row.status != "proposed":
+        raise http_error(
+            409, f"Source Document {document_id} is '{row.status}', not 'proposed' -- nothing to reject"
+        )
+    source_document_repo.mark_rejected(session, row)
+    session.commit()
+    return Response(status_code=204)
+
+
+@router.get("/api/github/repos")
+async def github_repos(username: str | None = None, session: Session = Depends(get_session)):
+    resolved = _resolve_active_profile_or_error(session)
     user = username or resolved.profile.githubUsername
     if not user:
         return {"repos": [], "warning": "No githubUsername in profile and no username query"}

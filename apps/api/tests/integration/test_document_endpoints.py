@@ -1,7 +1,17 @@
 """Integration tests for POST/GET /api/profile/documents (v2 ticket 03 -- "Ingestao e
 Source Documents"). Multipart bodies are sent via httpx's ``files=`` kwarg against the
-ASGITransport-backed ``client`` fixture (tests/conftest.py); the LLM boundary is never called
-for `.json` uploads (deterministic ingestion, docs/v2-living-profile.md item 2).
+ASGITransport-backed ``client`` fixture (tests/conftest.py); ingestion's own LLM boundary is
+never called for `.json` uploads (deterministic ingestion, docs/v2-living-profile.md item 2).
+
+As of v2 ticket 04 ("Merge incremental"), every successful extraction is immediately followed,
+in the SAME request, by the Incremental Merge pipeline (Deterministic Diff -> Adjudication ->
+Patch Validator -- see ``services/ingestion/merge_service.py``): a document's TERMINAL status
+is never `extracted` anymore, always `proposed` (possibly empty), `applied`, `rejected`, or
+`failed`. Because these tests upload into an EMPTY profile (no ``write_profile`` fixture call),
+the Deterministic Diff always finds the whole extracted document "new", so Adjudication always
+runs -- every test that upload real resume content here now needs `fake_llm` queued for BOTH
+the extraction call (md/pdf only) and the merge's adjudication call (all three formats). See
+``test_document_merge_endpoints.py`` for the merge/apply/reject pipeline's own dedicated tests.
 """
 
 from __future__ import annotations
@@ -35,7 +45,12 @@ VALID_JSON_BYTES = json.dumps(
 
 
 class TestUploadJsonDocument:
-    async def test_valid_json_upload_returns_202_with_extracted_preview(self, client):
+    async def test_valid_json_upload_returns_202_with_extracted_preview(self, client, fake_llm):
+        # JSON ingestion itself is LLM-free (docs/v2-living-profile.md item 2); the merge step
+        # that now always follows it (ticket 04) still calls the LLM for Adjudication, since
+        # this uploads into an empty profile (everything classifies as new).
+        fake_llm.queue("[]")
+
         resp = await client.post(
             "/api/profile/documents",
             files={"file": ("resume.json", VALID_JSON_BYTES, "application/json")},
@@ -44,7 +59,7 @@ class TestUploadJsonDocument:
         assert resp.status_code == 202
         body = resp.json()
         assert isinstance(body["documentId"], int)
-        assert body["status"] == "extracted"
+        assert body["status"] == "proposed"
         assert body["extractedPreview"]["fullName"] == "Ana Costa"
         assert body["extractedPreview"]["skills"] == ["Python", "FastAPI"]
 
@@ -109,6 +124,9 @@ class TestUploadJsonDocument:
 
 class TestUploadMarkdownDocument:
     async def test_valid_markdown_upload_is_extracted_via_the_llm(self, client, fake_llm):
+        # Two LLM calls now: extraction (this doc's own content), then the merge step's
+        # Adjudication (ticket 04) -- this upload lands on an empty profile, so the
+        # Deterministic Diff always finds something new and always calls the LLM.
         fake_llm.queue(
             json.dumps(
                 {
@@ -116,7 +134,8 @@ class TestUploadMarkdownDocument:
                     "headline": "Data Engineer",
                     "summary": "Extracted from markdown.",
                 }
-            )
+            ),
+            "[]",
         )
         raw = b"""---
 name: Bruno Reis
@@ -133,9 +152,9 @@ Some markdown body about data engineering.
 
         assert resp.status_code == 202
         body = resp.json()
-        assert body["status"] == "extracted"
+        assert body["status"] == "proposed"
         assert body["extractedPreview"]["fullName"] == "Bruno Reis"
-        assert fake_llm.call_count == 1
+        assert fake_llm.call_count == 2
 
     async def test_llm_extraction_failure_is_a_failed_status_not_a_500(self, client, fake_llm):
         fake_llm.queue(ValueError("LLM backend unreachable"))
@@ -172,8 +191,11 @@ class TestUploadPdfDocument:
         monkeypatch.setattr(
             ingest_pdf_module, "extract_pdf_plain_text", lambda path: "Diana Melo\nPrincipal Engineer"
         )
+        # Extraction call, then the merge step's Adjudication call (ticket 04) -- see the
+        # markdown test above for why a second call is now always expected here.
         fake_llm.queue(
-            json.dumps({"fullName": "Diana Melo", "headline": "Principal Engineer", "summary": "S."})
+            json.dumps({"fullName": "Diana Melo", "headline": "Principal Engineer", "summary": "S."}),
+            "[]",
         )
 
         resp = await client.post(
@@ -183,9 +205,9 @@ class TestUploadPdfDocument:
 
         assert resp.status_code == 202
         body = resp.json()
-        assert body["status"] == "extracted"
+        assert body["status"] == "proposed"
         assert body["extractedPreview"]["fullName"] == "Diana Melo"
-        assert fake_llm.call_count == 1
+        assert fake_llm.call_count == 2
 
 
 class TestUploadSizeAndDedup:
@@ -211,7 +233,9 @@ class TestUploadSizeAndDedup:
         listing = (await client.get("/api/profile/documents")).json()["documents"]
         assert listing == []
 
-    async def test_reuploading_the_same_bytes_does_not_duplicate(self, client):
+    async def test_reuploading_the_same_bytes_does_not_duplicate(self, client, fake_llm):
+        fake_llm.queue("[]")  # the first upload's merge step (empty profile -> everything new)
+
         first = await client.post(
             "/api/profile/documents",
             files={"file": ("resume.json", VALID_JSON_BYTES, "application/json")},
@@ -224,13 +248,16 @@ class TestUploadSizeAndDedup:
         assert first.status_code == 202
         assert second.status_code == 202
         assert first.json()["documentId"] == second.json()["documentId"]
-        assert second.json()["status"] == "extracted"
+        assert second.json()["status"] == "proposed"
+        assert fake_llm.call_count == 1  # the resend never re-ran the merge step either
 
         listing = (await client.get("/api/profile/documents")).json()["documents"]
         assert len(listing) == 1  # the resend is a no-op, not a second row
 
     async def test_dedup_also_applies_across_md_and_pdf(self, client, fake_llm):
-        fake_llm.queue(json.dumps({"fullName": "Once", "headline": "Only", "summary": "S."}))
+        # Extraction + Adjudication for the first upload only -- the second (deduped) upload
+        # re-runs neither.
+        fake_llm.queue(json.dumps({"fullName": "Once", "headline": "Only", "summary": "S."}), "[]")
         raw = b"# Body with no frontmatter, unique to this test"
 
         first = await client.post(
@@ -241,7 +268,9 @@ class TestUploadSizeAndDedup:
         )
 
         assert first.json()["documentId"] == second.json()["documentId"]
-        assert fake_llm.call_count == 1  # the second upload never re-ran extraction
+        assert first.json()["status"] == "proposed"
+        assert second.json()["status"] == "proposed"
+        assert fake_llm.call_count == 2  # the second upload never re-ran extraction OR merge
 
 
 class TestListDocuments:
@@ -251,7 +280,9 @@ class TestListDocuments:
         assert resp.status_code == 200
         assert resp.json()["documents"] == []
 
-    async def test_list_returns_the_uploaded_document(self, client):
+    async def test_list_returns_the_uploaded_document(self, client, fake_llm):
+        fake_llm.queue("[]")  # the merge step's Adjudication call (empty profile -> new data)
+
         await client.post(
             "/api/profile/documents",
             files={"file": ("resume.json", VALID_JSON_BYTES, "application/json")},
@@ -264,6 +295,6 @@ class TestListDocuments:
         assert len(docs) == 1
         assert docs[0]["filename"] == "resume.json"
         assert docs[0]["mediaType"] == "json"
-        assert docs[0]["status"] == "extracted"
+        assert docs[0]["status"] == "proposed"
         assert "documentId" in docs[0]
         assert "createdAt" in docs[0]

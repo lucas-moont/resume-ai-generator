@@ -9,10 +9,12 @@ POST /api/profile/revert appends a new version instead of rewriting history.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from sqlmodel import Session
 
 from app.repositories import profile_repo
+from app.services import profile_resolution as profile_resolution_module
 from tests.factories import make_profile
 
 
@@ -129,3 +131,155 @@ class TestRevertProfile:
         resp = await client.post("/api/profile/revert", json={"toVersion": 999})
 
         assert resp.status_code == 404
+
+
+class TestGithubReposProfileErrors:
+    """Herdado da revisao do ticket 01 (ticket 04): GET /api/github/repos now goes through the
+    same ``_resolve_active_profile_or_error`` helper as GET /api/profile (both routes share the
+    extracted try/except -- see routers/profile.py). The v1-era migration (ticket 01) already
+    changed an invalid on-disk profile from an unhandled 500 to a handled 400 here, but no test
+    pinned it until now."""
+
+    async def test_invalid_disk_profile_and_empty_db_is_400(self, client, isolated_data_env):
+        (isolated_data_env / "resume.json").write_text("not valid json", encoding="utf-8")
+
+        resp = await client.get("/api/github/repos")
+
+        assert resp.status_code == 400
+
+    async def test_missing_disk_profile_and_empty_db_is_404(self, client, isolated_data_env):
+        resp = await client.get("/api/github/repos")
+
+        assert resp.status_code == 404
+
+
+class TestGetProfileWithCorruptedPdfAndActiveDbVersion:
+    """Herdado da revisao do ticket 01 (ticket 04): a Profile.pdf present but unreadable is
+    ALWAYS a hard error -- deliberately, even when the DB has an active version to serve (see
+    profile_resolution.py's module docstring). This was only characterized at the module level
+    (tests/unit/test_profile_resolution.py::TestResolveActiveProfilePdfErrors) -- this pins the
+    same behavior through the real GET /api/profile endpoint."""
+
+    async def test_broken_pdf_returns_400_even_with_an_active_db_version(
+        self, client, test_db_engine, monkeypatch
+    ):
+        monkeypatch.setattr(
+            profile_resolution_module,
+            "load_profile_pdf_excerpt",
+            lambda: ("", Path("/fake/Profile.pdf"), "could not decode PDF"),
+        )
+        with Session(test_db_engine) as session:
+            profile_repo.insert_version(
+                session, data=json.dumps(make_profile()), source_kind="seed_disk"
+            )
+            session.commit()
+
+        resp = await client.get("/api/profile")
+
+        assert resp.status_code == 400
+        assert "could not decode PDF" in resp.json()["detail"]
+
+
+class TestPatchProfileManualEdit:
+    """v2 ticket 04: ``PATCH /api/profile {ops}`` is the manual/direct edit path -- same Patch
+    Validator as upload/chat, ``source_kind="manual"`` (the one source_kind allowed to remove,
+    per CONTEXT.md's Upload-never-removes)."""
+
+    async def test_patch_creates_a_new_manual_version(self, client, test_db_engine):
+        with Session(test_db_engine) as session:
+            profile_repo.insert_version(session, data=json.dumps(make_profile()), source_kind="seed_disk")
+            session.commit()
+
+        resp = await client.patch(
+            "/api/profile",
+            json={
+                "ops": [
+                    {
+                        "op": "replace",
+                        "path": "/phone",
+                        "value": "+55 11 90000-0000",
+                        "reason": "user edited their phone number",
+                        "confidence": 1.0,
+                        "sourceExcerpt": "manual edit",
+                    }
+                ]
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"profileVersion": 2, "applied": 1, "skipped": 0}
+
+        active = (await client.get("/api/profile")).json()
+        assert active["phone"] == "+55 11 90000-0000"
+
+        versions = (await client.get("/api/profile/versions")).json()["versions"]
+        assert versions[0]["sourceKind"] == "manual"
+
+    async def test_patch_allows_remove_unlike_upload(self, client, test_db_engine):
+        with Session(test_db_engine) as session:
+            profile_repo.insert_version(session, data=json.dumps(make_profile()), source_kind="seed_disk")
+            session.commit()
+
+        resp = await client.patch(
+            "/api/profile",
+            json={
+                "ops": [
+                    {
+                        "op": "remove",
+                        "path": "/experience/0",
+                        "reason": "left the company",
+                        "confidence": 1.0,
+                        "sourceExcerpt": "manual edit",
+                    }
+                ]
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["applied"] == 1
+        active = (await client.get("/api/profile")).json()
+        assert active["experience"] == []
+
+    async def test_patch_against_an_empty_profile_bootstraps_version_one(self, client, isolated_data_env):
+        resp = await client.patch(
+            "/api/profile",
+            json={
+                "ops": [
+                    {
+                        "op": "replace",
+                        "path": "/fullName",
+                        "value": "Someone New",
+                        "reason": "first manual edit, no profile yet",
+                        "confidence": 1.0,
+                        "sourceExcerpt": "manual edit",
+                    }
+                ]
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["profileVersion"] == 1
+        assert (await client.get("/api/profile")).json()["fullName"] == "Someone New"
+
+    async def test_patch_with_a_structurally_invalid_op_is_422(self, client, test_db_engine):
+        with Session(test_db_engine) as session:
+            profile_repo.insert_version(session, data=json.dumps(make_profile()), source_kind="seed_disk")
+            session.commit()
+
+        resp = await client.patch(
+            "/api/profile",
+            json={
+                "ops": [
+                    {
+                        "op": "replace",
+                        "path": "/summary",
+                        "value": {"not": "a string"},
+                        "reason": "bad value type",
+                        "confidence": 1.0,
+                        "sourceExcerpt": "n/a",
+                    }
+                ]
+            },
+        )
+
+        assert resp.status_code == 422
