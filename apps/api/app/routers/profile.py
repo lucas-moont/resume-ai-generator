@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.config import resolve_profile_json_path
+from app.services.errors import http_error
 from app.services.github_client import fetch_user_repos
 from app.services.projects_loader import load_profile
 
@@ -12,9 +13,9 @@ async def get_profile():
     try:
         profile = load_profile(resolve_profile_json_path())
     except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise http_error(404, str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid profile JSON: {e}") from e
+        raise http_error(400, f"Invalid profile JSON: {e}") from e
     return profile.model_dump()
 
 

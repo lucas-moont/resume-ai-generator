@@ -234,6 +234,10 @@ class TestGeneratePlaceholderExtraction:
     (...) extracting Profile.pdf: ..." message -- a real bug the B1-era tests (which only ever
     use a populated, non-placeholder profile) could not have caught. These tests would fail
     against that regression.
+
+    Also covers the team-lead-authorized B4 fix: /api/generate/stream's extraction-error path
+    used to be the one error path in the whole app that skipped redact_secrets (found in B3's
+    report). It is now redacted uniformly via the single choke point in streaming.sse().
     """
 
     def _write_placeholder_profile(self, write_profile) -> None:
@@ -297,6 +301,31 @@ class TestGeneratePlaceholderExtraction:
         assert message.count("LLM error (") == 1
         assert "extracting Profile.pdf" in message
         assert "upstream boom" in message
+
+    async def test_extraction_failure_with_secret_is_redacted_in_stream_and_sync(
+        self, client, fake_llm, write_profile, parse_sse, monkeypatch
+    ):
+        secret = "sk-ant-fake-extraction-secret-abcdef0123456789"  # pragma: allowlist secret
+        monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
+
+        self._write_placeholder_profile(write_profile)
+        self._mock_pdf_excerpt(monkeypatch)
+        fake_llm.queue(RuntimeError(f"upstream rejected the request: {secret}"))
+
+        resp = await client.post(
+            "/api/generate/stream", json={"job_description": GENERIC_JOB_DESCRIPTION}
+        )
+        events = parse_sse(resp.text)
+        message = events[-1][1]["message"]
+        assert secret not in message
+        assert "«redacted»" in message
+
+        # Same scenario through the sync endpoint (a fresh FakeLlm call queued again).
+        fake_llm.queue(RuntimeError(f"upstream rejected the request: {secret}"))
+        resp = await client.post("/api/generate", json={"job_description": GENERIC_JOB_DESCRIPTION})
+        detail = resp.json()["detail"]
+        assert secret not in detail
+        assert "«redacted»" in detail
 
 
 class TestRefineEndpoint:

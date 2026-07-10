@@ -22,6 +22,8 @@ import json
 from collections.abc import AsyncIterator, Callable
 from typing import TypeVar
 
+from app.services.secret_redaction import redact_secrets
+
 # The default heartbeat interval, in seconds, for any endpoint that polls a slow LLM task.
 # Referenced by callers as ``streaming.HEARTBEAT_SECONDS`` (module-qualified, not imported as a
 # bare name) so a single test monkeypatch on this module shrinks it everywhere (B4:
@@ -32,6 +34,11 @@ T = TypeVar("T")
 
 
 def sse(event: str, data: dict) -> str:
+    """Format an SSE frame. Every ``"error"`` event has its ``message`` redacted here --
+    the single choke point (see app/services/errors.py) so a caller can never forget to
+    scrub a secret out of an error message before it reaches the client."""
+    if event == "error" and isinstance(data.get("message"), str):
+        data = {**data, "message": redact_secrets(data["message"])}
     payload = json.dumps(data, ensure_ascii=False)
     return f"event: {event}\ndata: {payload}\n\n"
 
