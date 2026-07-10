@@ -1,9 +1,10 @@
+import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useResumeStore, STORAGE_KEY } from './resumeStore'
+import { useResumeStore, useResumeTemporal, useValidationIssues, STORAGE_KEY } from './resumeStore'
 import { makeResume } from '../../../test/factories'
 
 function resetStore() {
-  useResumeStore.setState({ resume: null, template: 'modern', locale: 'auto' })
+  useResumeStore.setState({ resume: null, template: 'modern', locale: 'auto', validationIssues: [] })
   useResumeStore.temporal.getState().clear()
   localStorage.clear()
 }
@@ -99,6 +100,65 @@ describe('resumeStore', () => {
       // Undoing should only ever roll back `resume`; template/locale stay put.
       expect(useResumeStore.getState().template).toBe('compact')
       expect(useResumeStore.getState().locale).toBe('pt-BR')
+    })
+
+    it('useResumeTemporal exposes reactive past/future state and undo/redo', () => {
+      const { result } = renderHook(() => useResumeTemporal())
+      expect(result.current.pastStates).toEqual([])
+      expect(result.current.futureStates).toEqual([])
+
+      act(() => {
+        useResumeStore.getState().setResume(makeResume({ fullName: 'Ada Lovelace' }))
+        useResumeStore.getState().setResume(makeResume({ fullName: 'Grace Hopper' }))
+      })
+
+      expect(result.current.pastStates.length).toBeGreaterThan(0)
+      expect(result.current.futureStates).toEqual([])
+
+      act(() => {
+        result.current.undo()
+      })
+      expect(useResumeStore.getState().resume?.fullName).toBe('Ada Lovelace')
+    })
+  })
+
+  describe('validationIssues (zod, non-blocking)', () => {
+    it('is empty for a well-formed resume', () => {
+      useResumeStore.getState().setResume(makeResume())
+      expect(useResumeStore.getState().validationIssues).toEqual([])
+    })
+
+    it('is populated (but the resume still commits) for an invalid resume', () => {
+      const invalid = makeResume({ fullName: '' })
+      useResumeStore.getState().setResume(invalid)
+
+      // Non-blocking: the document is set regardless of validation result.
+      expect(useResumeStore.getState().resume).toEqual(invalid)
+      expect(useResumeStore.getState().validationIssues.length).toBeGreaterThan(0)
+    })
+
+    it('clears back to empty once the resume is fixed', () => {
+      useResumeStore.getState().setResume(makeResume({ fullName: '' }))
+      expect(useResumeStore.getState().validationIssues.length).toBeGreaterThan(0)
+
+      useResumeStore.getState().setResume(makeResume({ fullName: 'Ada Lovelace' }))
+      expect(useResumeStore.getState().validationIssues).toEqual([])
+    })
+
+    it('is empty when the resume is cleared to null', () => {
+      useResumeStore.getState().setResume(makeResume({ fullName: '' }))
+      useResumeStore.getState().clearResume()
+      expect(useResumeStore.getState().validationIssues).toEqual([])
+    })
+
+    it('useValidationIssues exposes the same array reactively', () => {
+      const { result } = renderHook(() => useValidationIssues())
+      expect(result.current).toEqual([])
+
+      act(() => {
+        useResumeStore.getState().setResume(makeResume({ fullName: '' }))
+      })
+      expect(result.current.length).toBeGreaterThan(0)
     })
   })
 })
