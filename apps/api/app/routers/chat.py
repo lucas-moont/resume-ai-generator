@@ -19,11 +19,25 @@ router = APIRouter()
 
 
 def _session_dict(row: ChatSession) -> dict:
+    """Compact shape for GET /api/chat/sessions (the list endpoint) -- matches
+    docs/v1-chat-experience.md exactly: {id, title, updatedAt, activeResumeVersionId}."""
     return {
         "id": row.id,
         "title": row.title,
         "updatedAt": row.updated_at.isoformat(),
         "activeResumeVersionId": row.active_resume_version_id,
+    }
+
+
+def _session_detail_dict(row: ChatSession) -> dict:
+    """Fuller shape for GET /api/chat/sessions/{id} -- adds locale, jobDescription and
+    createdAt, which the frontend's composer needs (e.g. to default the session's input
+    language) and which the list endpoint deliberately omits per the frozen contract."""
+    return {
+        **_session_dict(row),
+        "locale": row.locale,
+        "jobDescription": row.job_description,
+        "createdAt": row.created_at.isoformat(),
     }
 
 
@@ -54,7 +68,7 @@ async def get_chat_session(session_id: int, session: Session = Depends(get_sessi
             active_resume = json.loads(resume_row.data)
 
     return {
-        "session": _session_dict(chat_session),
+        "session": _session_detail_dict(chat_session),
         "messages": [
             {
                 "id": m.id,

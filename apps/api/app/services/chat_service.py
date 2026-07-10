@@ -108,6 +108,12 @@ async def handle_chat_turn(
 ) -> AsyncIterator[tuple[str, dict]]:
     _, prior_messages = chat_repo.get_session_with_messages(session, chat_session.id)
     chat_repo.append_message(session, session_id=chat_session.id, role="user", content=user_message)
+    if locale is not None:
+        # Persisted regardless of intent so GET /api/chat/sessions/{id} can feed the
+        # frontend's composer (e.g. defaulting the input language) even before any resume
+        # has been generated.
+        chat_session.locale = locale
+        session.add(chat_session)
     session.commit()
 
     active_resume_row = None

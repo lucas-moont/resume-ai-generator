@@ -66,6 +66,22 @@ class TestChatSessionCrud:
         assert body["messages"] == []
         assert body["activeResume"] is None
 
+    async def test_get_session_detail_includes_locale_job_description_and_created_at(self, client):
+        # The single-session GET is a SUPERSET of the list endpoint's compact shape (frozen
+        # contract): {id, title, updatedAt, activeResumeVersionId} plus locale, jobDescription,
+        # createdAt -- the frontend composer needs these (e.g. to default the input language).
+        created = (await client.post("/api/chat/sessions", json={"title": "Fresh"})).json()
+
+        resp = await client.get(f"/api/chat/sessions/{created['id']}")
+
+        session_obj = resp.json()["session"]
+        assert set(session_obj.keys()) == {
+            "id", "title", "updatedAt", "activeResumeVersionId", "locale", "jobDescription", "createdAt",
+        }
+        assert session_obj["createdAt"] == created["createdAt"]
+        assert session_obj["locale"] is None
+        assert session_obj["jobDescription"] is None
+
     async def test_get_missing_session_is_404(self, client):
         resp = await client.get("/api/chat/sessions/999999")
         assert resp.status_code == 404
@@ -138,6 +154,22 @@ class TestChatMessageStreamGenerateIntent:
         assert roles == ["user", "assistant"]
         assert body["messages"][0]["content"] == GENERIC_JOB_DESCRIPTION
         assert body["messages"][1]["resumeVersionId"] == body["session"]["activeResumeVersionId"]
+
+    async def test_generate_turn_persists_locale_and_job_description_on_the_session(
+        self, client, fake_llm, write_profile
+    ):
+        write_profile(make_profile())
+        fake_llm.queue(json.dumps(make_resume_payload()))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+
+        await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION, "locale": "en"},
+        )
+
+        body = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
+        assert body["session"]["locale"] == "en"
+        assert body["session"]["jobDescription"] == GENERIC_JOB_DESCRIPTION
 
 
 class TestChatMessageStreamRefineIntent:
