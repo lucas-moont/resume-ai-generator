@@ -158,6 +158,62 @@ class TestUploadPdfDocument:
         assert fake_llm.call_count == 1
 
 
+class TestUploadSizeAndDedup:
+    async def test_oversize_upload_is_rejected_with_413(self, client, monkeypatch):
+        monkeypatch.setenv("MAX_UPLOAD_BYTES", "1024")  # clamped minimum -- see config.max_upload_bytes
+        big_content = b"x" * 2000
+
+        resp = await client.post(
+            "/api/profile/documents",
+            files={"file": ("big.json", big_content, "application/json")},
+        )
+
+        assert resp.status_code == 413
+
+    async def test_oversize_upload_is_not_persisted(self, client, monkeypatch):
+        monkeypatch.setenv("MAX_UPLOAD_BYTES", "1024")
+
+        await client.post(
+            "/api/profile/documents",
+            files={"file": ("big.json", b"x" * 2000, "application/json")},
+        )
+
+        listing = (await client.get("/api/profile/documents")).json()["documents"]
+        assert listing == []
+
+    async def test_reuploading_the_same_bytes_does_not_duplicate(self, client):
+        first = await client.post(
+            "/api/profile/documents",
+            files={"file": ("resume.json", VALID_JSON_BYTES, "application/json")},
+        )
+        second = await client.post(
+            "/api/profile/documents",
+            files={"file": ("resume-again.json", VALID_JSON_BYTES, "application/json")},
+        )
+
+        assert first.status_code == 202
+        assert second.status_code == 202
+        assert first.json()["documentId"] == second.json()["documentId"]
+        assert second.json()["status"] == "extracted"
+
+        listing = (await client.get("/api/profile/documents")).json()["documents"]
+        assert len(listing) == 1  # the resend is a no-op, not a second row
+
+    async def test_dedup_also_applies_across_md_and_pdf(self, client, fake_llm):
+        fake_llm.queue(json.dumps({"fullName": "Once", "headline": "Only", "summary": "S."}))
+        raw = b"# Body with no frontmatter, unique to this test"
+
+        first = await client.post(
+            "/api/profile/documents", files={"file": ("a.md", raw, "text/markdown")}
+        )
+        second = await client.post(
+            "/api/profile/documents", files={"file": ("b.md", raw, "text/markdown")}
+        )
+
+        assert first.json()["documentId"] == second.json()["documentId"]
+        assert fake_llm.call_count == 1  # the second upload never re-ran extraction
+
+
 class TestListDocuments:
     async def test_list_is_empty_when_no_uploads_yet(self, client):
         resp = await client.get("/api/profile/documents")
