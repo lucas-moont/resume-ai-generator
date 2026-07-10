@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { ResumePreview } from './components/ResumePreview'
 import type { ResumeDocument, TemplateId } from './types/resume'
 import { ApiError, exportPdf, fetchGithubRepos, fetchModels, generateStream, refineStream } from './lib/api/endpoints'
@@ -9,6 +10,8 @@ import type {
   StreamErrorPayload,
   StreamStagePayload,
 } from './lib/api/dto'
+import { ThemeToggle } from './app/theme/ThemeToggle'
+import { useLocale, useResume, useResumeStore, useTemplate } from './features/resume/store/resumeStore'
 
 const DEFAULT_MODEL = ''
 const TEMPLATE_OPTIONS: { value: TemplateId; label: string; description: string }[] = [
@@ -38,71 +41,19 @@ const WORK_STEPS = [
 ]
 type WorkType = 'generate' | 'refine' | null
 
-type Theme = 'light' | 'dark'
-
-function readStoredTheme(): Theme {
-  try {
-    const s = localStorage.getItem('theme')
-    if (s === 'light' || s === 'dark') return s
-  } catch {
-    /* ignore */
-  }
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-function ThemeToggle({ theme, onChange }: { theme: Theme; onChange: (t: Theme) => void }) {
-  const isDark = theme === 'dark'
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(isDark ? 'light' : 'dark')}
-      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-700 shadow-sm transition-[color,background-color,border-color,box-shadow] hover:border-stone-300 hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:focus-visible:ring-zinc-500 dark:focus-visible:ring-offset-zinc-950"
-      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-    >
-      {isDark ? (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path
-            d="M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12Z"
-            stroke="currentColor"
-            strokeWidth="1.75"
-          />
-          <path
-            d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-          />
-        </svg>
-      ) : (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path
-            d="M21 14.5A8.5 8.5 0 0 1 9.5 3a8.5 8.5 0 1 0 12 11.5Z"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinejoin="round"
-          />
-        </svg>
-      )}
-    </button>
-  )
-}
-
 function App() {
-  const [theme, setTheme] = useState<Theme>(() =>
-    typeof window !== 'undefined' ? readStoredTheme() : 'light',
-  )
   const [jobDescription, setJobDescription] = useState('')
   const [model, setModel] = useState(DEFAULT_MODEL)
-  const [locale, setLocale] = useState('auto')
-  const [template, setTemplate] = useState<TemplateId>('modern')
-  const [resume, setResume] = useState<ResumeDocument | null>(null)
+  const locale = useLocale()
+  const template = useTemplate()
+  const resume = useResume()
+  const setLocale = useResumeStore((s) => s.setLocale)
+  const setTemplate = useResumeStore((s) => s.setTemplate)
+  const setResume = useResumeStore((s) => s.setResume)
   const [refineText, setRefineText] = useState('')
   const [loading, setLoading] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
   const [modelSuggestOpen, setModelSuggestOpen] = useState(false)
-  const [modelSuggestions, setModelSuggestions] = useState<ModelSuggestion[]>(
-    FALLBACK_MODEL_SUGGESTIONS,
-  )
   const [workType, setWorkType] = useState<WorkType>(null)
   const [workStep, setWorkStep] = useState(0)
   const [workProgress, setWorkProgress] = useState(0)
@@ -110,35 +61,11 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [ghInfo, setGhInfo] = useState<string | null>(null)
 
-  useLayoutEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
-  }, [theme])
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const data = await fetchModels()
-        if (!cancelled && Array.isArray(data.models) && data.models.length > 0) {
-          setModelSuggestions(data.models)
-        }
-      } catch {
-        /* keep fallback list */
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const applyTheme = useCallback((next: Theme) => {
-    setTheme(next)
-    try {
-      localStorage.setItem('theme', next)
-    } catch {
-      /* ignore */
-    }
-  }, [])
+  const modelsQuery = useQuery({ queryKey: ['models'], queryFn: fetchModels })
+  const modelSuggestions: ModelSuggestion[] =
+    modelsQuery.data?.models && modelsQuery.data.models.length > 0
+      ? modelsQuery.data.models
+      : FALLBACK_MODEL_SUGGESTIONS
 
   const progressPct = useMemo(() => (loading ? workProgress : 0), [loading, workProgress])
 
@@ -277,7 +204,7 @@ function App() {
               Local AI API · FastAPI · ATS-friendly layout
             </p>
           </div>
-          <ThemeToggle theme={theme} onChange={applyTheme} />
+          <ThemeToggle />
         </div>
       </header>
 

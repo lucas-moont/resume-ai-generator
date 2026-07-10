@@ -1,15 +1,23 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import App from './App'
 import { server } from './test/setup'
+import { renderApp } from './test/render'
 import { sseResponse } from './test/msw/sse'
 import { makeResume, makeStageEvents } from './test/factories'
+import { STORAGE_KEY, useResumeStore } from './features/resume/store/resumeStore'
+
+beforeEach(() => {
+  localStorage.clear()
+  useResumeStore.setState({ resume: null, template: 'modern', locale: 'auto' })
+  useResumeStore.temporal.getState().clear()
+})
 
 describe('App', () => {
   it('renders the main heading and the core generation controls', () => {
-    render(<App />)
+    renderApp(<App />)
 
     expect(screen.getByRole('heading', { name: /resume agent/i })).toBeInTheDocument()
     expect(screen.getByLabelText(/job description/i)).toBeInTheDocument()
@@ -24,7 +32,7 @@ describe('App', () => {
     )
 
     const user = userEvent.setup()
-    render(<App />)
+    renderApp(<App />)
 
     await user.type(
       screen.getByLabelText(/job description/i),
@@ -35,5 +43,21 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByText('Grace Hopper')).toBeInTheDocument()
     })
+  })
+
+  it('restores a previously generated resume from localStorage after a reload', async () => {
+    const resume = makeResume({ fullName: 'Marie Curie' })
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ state: { resume, template: 'classic', locale: 'en' }, version: 1 }),
+    )
+    await useResumeStore.persist.rehydrate()
+
+    renderApp(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Marie Curie')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/preview — classic/i)).toBeInTheDocument()
   })
 })
