@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import json
 
+from sqlmodel import Session
+
+from app.repositories import profile_repo, resume_repo
 from tests.factories import make_profile, make_resume_payload
 
 GENERIC_JOB_DESCRIPTION = (
@@ -185,6 +188,48 @@ class TestChatMessageStreamGenerateIntent:
 
         message_event = next(data for e, data in parse_sse(resp.text) if e == "message")
         assert message_event["content"] == "Currículo gerado com base na vaga."
+
+
+class TestChatGenerateProfileProvenance:
+    """v2 ticket 01: the profile actually fed into the LLM prompt must be the SAME
+    profile_versions row stamped as provenance on the resulting ResumeVersion -- in v1 this
+    was a best-effort, separately-fetched ``profile_repo.get_active(session)`` call made
+    AFTER generation, with no guarantee it matched whatever generation_service had
+    independently read from disk (see chat_service.py's module docstring, pre-v2)."""
+
+    async def test_generate_uses_the_db_active_profile_not_the_disk_decoy(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile(fullName="Disk Decoy Person"))  # must NOT be used
+        with Session(test_db_engine) as session:
+            db_version = profile_repo.insert_version(
+                session,
+                data=json.dumps(make_profile(fullName="DB Active Person")),
+                source_kind="seed_disk",
+            )
+            session.commit()
+            db_version_id = db_version.id
+
+        fake_llm.queue(json.dumps(make_resume_payload()))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        assert resp.status_code == 200
+        # The LLM prompt was built from the DB's active profile, not the disk decoy.
+        prompt = fake_llm.calls[-1]["user"]
+        assert "DB Active Person" in prompt
+        assert "Disk Decoy Person" not in prompt
+
+        resume_event = next(data for e, data in parse_sse(resp.text) if e == "resume")
+        with Session(test_db_engine) as session:
+            resume_row = resume_repo.get(session, resume_event["resumeVersionId"])
+            assert resume_row is not None
+            # The stamped provenance link is the EXACT row the prompt was built from.
+            assert resume_row.profile_version_id == db_version_id
 
 
 class TestChatMessageStreamRefineIntent:

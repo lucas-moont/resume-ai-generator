@@ -17,12 +17,13 @@ resume routes to refine, folding the last few chat turns in as context; anything
 resume, message doesn't look like a JD -- e.g. a greeting) is a "question" intent: a canned,
 locale-aware reply with no LLM call at all. No token-by-token streaming in v1.
 
-Known v1 limitation: the generate pipeline's profile still comes from disk (see
-generation_service.py / profile_service.py, unchanged by B6 -- switching that to the DB is a
-v2 change), so the ``profile_version_id`` linked onto the resulting ResumeVersion is simply
-whichever profile_versions row happens to be active in the DB (usually the B5 disk seed); it
-is a best-effort provenance link in v1, not a guarantee that it is byte-identical to what the
-LLM actually saw.
+As of v2 ticket 01, the "generate" branch resolves the profile ONCE via
+``profile_resolution.resolve_active_profile(session)`` and threads that same
+``ResolvedProfile`` into both ``generate_resume_events`` (what the LLM prompt is built from)
+and the ``profile_version_id`` stamped on the resulting ``ResumeVersion`` -- closing the v1
+gap where that link was a best-effort, separately-fetched ``profile_repo.get_active(session)``
+call that was not guaranteed to match whatever generation_service had independently read from
+disk.
 """
 
 from __future__ import annotations
@@ -36,8 +37,9 @@ from app.db.tables import ChatSession
 from app.domain.keywords import extract_jd_keywords
 from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, resolve_locale
 from app.domain.schemas import ResumeDocument
-from app.repositories import chat_repo, profile_repo, resume_repo
+from app.repositories import chat_repo, resume_repo
 from app.services.generation_service import generate_resume_events
+from app.services.profile_resolution import resolve_active_profile
 from app.services.refine_service import refine_resume_events
 from app.services.secret_redaction import redact_secrets
 
@@ -145,21 +147,25 @@ async def handle_chat_turn(
     try:
         if intent == "generate":
             jd_text = job_description or user_message
+            resolved_profile = resolve_active_profile(session)
             resume_doc: ResumeDocument | None = None
             async for event, data in generate_resume_events(
-                job_description=jd_text, model=model, locale=locale, backend_label=backend_label
+                resolved_profile=resolved_profile,
+                job_description=jd_text,
+                model=model,
+                locale=locale,
+                backend_label=backend_label,
             ):
                 if event == "done":
                     resume_doc = data["resume"]
                 else:
                     yield event, data
             assert resume_doc is not None
-            active_profile = profile_repo.get_active(session)
             resume_row = resume_repo.insert_version(
                 session,
                 data=resume_doc.model_dump_json(),
                 session_id=chat_session.id,
-                profile_version_id=active_profile.id if active_profile else None,
+                profile_version_id=resolved_profile.profile_version_id,
                 model_used=model,
                 provider_used=backend_label,
             )

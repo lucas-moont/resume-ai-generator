@@ -12,7 +12,7 @@ from app.services.chat_service import handle_chat_turn
 from app.services.errors import http_error
 from app.services.generation_service import ExtractionError
 from app.services.llm_client import llm_backend_label
-from app.services.profile_service import ProfileValidationError
+from app.services.profile_resolution import ProfileValidationError
 from app.services.streaming import sse
 
 router = APIRouter()
