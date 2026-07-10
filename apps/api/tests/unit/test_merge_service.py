@@ -124,6 +124,34 @@ class TestAdjudicationBuildsValidatedOps:
         proposal = await propose_merge(profile, extracted)
         assert len(proposal.ops) == 1
 
+    async def test_ops_wrapped_in_a_top_level_ops_object_are_parsed(self, fake_llm) -> None:
+        # _parse_patch_ops tolerates {"ops": [...]} as well as a bare JSON array -- some models
+        # wrap the array in an object even when told "JSON array only" (same defensive
+        # unwrapping style as resume_json_parser's _unwrap_resume_dict).
+        profile = _profile(skills=["React"])
+        extracted = _doc(skills=["React", "Rust"])
+        fake_llm.queue(
+            json.dumps(
+                {
+                    "ops": [
+                        {
+                            "op": "add",
+                            "path": "/skills/-",
+                            "value": "Rust",
+                            "reason": "new skill",
+                            "confidence": 0.9,
+                            "sourceExcerpt": "Rust",
+                        }
+                    ]
+                }
+            )
+        )
+
+        proposal = await propose_merge(profile, extracted)
+
+        assert len(proposal.ops) == 1
+        assert proposal.ops[0].value == "Rust"
+
 
 class TestAdjudicationContainmentEndToEnd:
     """CONTEXT.md: Adjudication -- "the LLM never touches what the Deterministic Diff didn't

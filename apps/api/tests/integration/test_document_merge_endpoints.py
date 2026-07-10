@@ -177,7 +177,11 @@ class TestApplyProposedDocument:
             f"/api/profile/documents/{document_id}/apply", json={"ops": [0]}
         )
 
-        assert apply_resp.json()["applied"] == 1
+        body = apply_resp.json()
+        assert body["applied"] == 1
+        # The unselected op (index 1) counts as skipped -- applied + skipped == len(proposedPatch),
+        # it never just silently disappears.
+        assert body["skipped"] == 1
         active = (await client.get("/api/profile")).json()
         assert "Rust" in active["skills"]
         assert active["headline"] == make_profile()["headline"]  # NOT applied (index 1 excluded)

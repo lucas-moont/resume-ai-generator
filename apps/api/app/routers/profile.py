@@ -20,7 +20,7 @@ from sqlmodel import Session
 
 from app.config import max_upload_bytes
 from app.db.tables import ProfileVersion, SourceDocument
-from app.domain.profile_patch import PatchOp, PatchValidationFailed, apply_patch
+from app.domain.profile_patch import PatchOp, PatchResult, PatchValidationFailed, apply_patch
 from app.domain.schemas import RevertProfileRequest
 from app.repositories import profile_repo, source_document_repo
 from app.routers.deps import get_session, resolve_requested_model
@@ -50,12 +50,19 @@ class PatchProfileRequest(BaseModel):
 
 
 def _resolve_active_profile_or_error(session: Session) -> ResolvedProfile:
-    """Shared by every reader of "the active profile" in this router (``GET /api/profile``,
-    ``GET /api/github/repos``) -- extracted from two near-identical
+    """Shared by this router's two READ-ONLY consumers of "the active profile" --
+    ``GET /api/profile`` and ``GET /api/github/repos`` -- extracted from two near-identical
     ``try/except FileNotFoundError/ProfileValidationError`` blocks (ticket 01 review) that had
     drifted into different styles (one used ``http_error``, the other a bare
-    ``HTTPException`` with a custom message). The v2 ticket 04 ``PATCH /api/profile`` endpoint
-    is the third consumer -- extracting here pays for itself immediately.
+    ``HTTPException`` with a custom message).
+
+    NOT used by the write paths this ticket (04) adds (``PATCH /api/profile``,
+    ``POST .../{id}/apply``): those call ``resolve_profile_for_merge`` instead
+    (``services/ingestion/merge_service.py``), which additionally falls back to a blank
+    ``ProfileMaster`` when neither a DB version nor a disk profile exists yet (bootstrapping a
+    user's very first manual edit or upload) -- a fallback ``GET /api/profile`` deliberately
+    does NOT get, since serving a fabricated blank profile as if it were real data would be
+    wrong for a read.
     """
     try:
         return resolve_active_profile(session)
@@ -139,6 +146,40 @@ def _version_dict(row: ProfileVersion) -> dict:
     }
 
 
+def _persist_patch_result(
+    session: Session,
+    result: PatchResult,
+    *,
+    source_kind: str,
+    change_summary: str,
+    source_document_id: int | None = None,
+    skipped: int | None = None,
+) -> dict:
+    """Shared by ``PATCH /api/profile`` and ``POST .../{id}/apply``: appends the new Profile
+    Version a Patch Validator result produces and returns the ``{profileVersion, applied,
+    skipped}`` shape both endpoints respond with. ``skipped`` overrides the plain
+    ``len(result.skipped)`` count -- ``apply_source_document`` uses this to fold in ops a
+    ``{ops: [indices]}`` subset excluded before the Patch Validator ever saw them (see its own
+    docstring), so ``applied + skipped`` always equals the number of ops in the proposal it
+    started from, not just the ones actually submitted.
+    """
+    new_version = profile_repo.insert_version(
+        session,
+        data=result.profile.model_dump_json(),
+        source_kind=source_kind,
+        patch=json.dumps([op.model_dump() for op in result.applied]),
+        source_document_id=source_document_id,
+        change_summary=change_summary,
+    )
+    session.commit()
+    session.refresh(new_version)
+    return {
+        "profileVersion": new_version.version,
+        "applied": len(result.applied),
+        "skipped": len(result.skipped) if skipped is None else skipped,
+    }
+
+
 @router.get("/api/profile")
 async def get_profile(session: Session = Depends(get_session)):
     resolved = _resolve_active_profile_or_error(session)
@@ -160,20 +201,12 @@ async def patch_profile(body: PatchProfileRequest, session: Session = Depends(ge
     except PatchValidationFailed as e:
         raise http_error(422, f"Patch produced an invalid profile: {e}") from e
 
-    new_version = profile_repo.insert_version(
+    return _persist_patch_result(
         session,
-        data=result.profile.model_dump_json(),
+        result,
         source_kind="manual",
-        patch=json.dumps([op.model_dump() for op in result.applied]),
         change_summary=f"Manual edit: {len(result.applied)} change(s)",
     )
-    session.commit()
-    session.refresh(new_version)
-    return {
-        "profileVersion": new_version.version,
-        "applied": len(result.applied),
-        "skipped": len(result.skipped),
-    }
 
 
 @router.get("/api/profile/versions")
@@ -307,6 +340,12 @@ async def apply_source_document(
     LLM output -- see merge_service.py). Re-runs the Patch Validator against the CURRENT active
     profile (robust to anything that changed since the proposal was made) and appends a new
     Profile Version with ``source_kind="upload"``.
+
+    ``skipped`` in the response is honest about BOTH ways an op can fail to land: ops the Patch
+    Validator itself rejected (out-of-bounds target, etc. -- ``result.skipped``) AND ops that
+    were simply never selected by a ``{ops: [indices]}`` subset (excluded before the validator
+    ever saw them). Either way, ``applied + skipped`` always equals the number of ops in
+    ``proposedPatch``, never silently dropping the un-selected ones.
     """
     row = source_document_repo.get(session, document_id)
     if row is None:
@@ -317,10 +356,13 @@ async def apply_source_document(
         )
 
     all_ops = [PatchOp.model_validate(op) for op in json.loads(row.proposed_patch or "[]")]
-    ops_to_apply = all_ops
     if body.ops is not None:
         wanted = set(body.ops)
         ops_to_apply = [op for i, op in enumerate(all_ops) if i in wanted]
+        excluded_count = len(all_ops) - len(ops_to_apply)
+    else:
+        ops_to_apply = all_ops
+        excluded_count = 0
 
     try:
         profile = resolve_profile_for_merge(session)
@@ -331,22 +373,15 @@ async def apply_source_document(
     except PatchValidationFailed as e:
         raise http_error(422, f"Patch produced an invalid profile: {e}") from e
 
-    new_version = profile_repo.insert_version(
+    row = source_document_repo.mark_applied(session, row)
+    return _persist_patch_result(
         session,
-        data=result.profile.model_dump_json(),
+        result,
         source_kind="upload",
-        patch=json.dumps([op.model_dump() for op in result.applied]),
         source_document_id=row.id,
         change_summary=f"Applied upload: {row.filename}",
+        skipped=len(result.skipped) + excluded_count,
     )
-    row = source_document_repo.mark_applied(session, row)
-    session.commit()
-    session.refresh(new_version)
-    return {
-        "profileVersion": new_version.version,
-        "applied": len(result.applied),
-        "skipped": len(result.skipped),
-    }
 
 
 @router.post("/api/profile/documents/{document_id}/reject", status_code=204)
