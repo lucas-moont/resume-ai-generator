@@ -1,17 +1,22 @@
 # Resume agent (local)
 
-Web app to tailor your resume to a job description using a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Haiku, authenticated by the Claude login already on your machine or an API key), **Ollama** (local HTTP API) and/or **Google Gemini**, selected via `.env` (`AI_PROVIDER` and related keys). There is a live A4 preview and **one-click PDF** export (Playwright). Stack: **React + Vite** frontend, **FastAPI** backend, project sources as Markdown files under `data/projects/`.
+**Chat-based resume tailoring**: paste a job description into a conversation and watch an ATS-friendly resume come to life in the A4 preview beside it — then refine it by talking ("make the summary shorter", "translate to English"), switch layouts instantly, and download a pixel-faithful PDF. Conversations are **persisted sessions** (local SQLite): close the app, come back, resume where you left off.
+
+Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Haiku, authenticated by the Claude login already on your machine or an API key), **Ollama** (local HTTP API) and/or **Google Gemini**, selected via `.env` (`AI_PROVIDER` and related keys). Stack: **React + Vite** frontend (Zustand + TanStack Query), **FastAPI** backend (layered: `domain/` → `services/` → `routers/`), SQLite persistence, project sources as Markdown files under `data/projects/`.
 
 ## Features
 
-- Paste a job description → generate an ATS-friendly resume JSON rendered in the preview.
-- **Template picker** — 4 modern, ATS-friendly designs selectable in the UI and applied to both the live preview and the exported PDF: **Modern** (indigo sidebar), **Classic** (serif, single column), **Minimal** (airy, monochrome), **Compact** (dense, content-rich). All share one semantic structure and switch via CSS.
-- **Light / dark theme** in the UI (persisted in `localStorage`).
-- **Streaming** endpoints for generate and refine: the UI shows **step-by-step progress** while the model runs (`/api/generate/stream`, `/api/refine/stream`).
-- Refine with short natural-language instructions (non-streaming API still available).
-- Download PDF without using the browser print dialog (server-side Playwright).
+- **Chat UI** (left) + always-visible **live A4 preview** (right): message bubbles, step-by-step progress card while the model runs, retry on errors, Stop button, mobile tabs.
+- **Persisted chat sessions** (SQLite in `data/app.db`, created automatically): session sidebar to resume/delete conversations; the active session, resume, template and theme all survive a page reload.
+- **Template picker** — **6 ATS-friendly designs** applied to both the live preview and the exported PDF: **Modern** (indigo sidebar), **Classic** (serif, single column), **Minimal** (airy, monochrome), **Compact** (dense), **ATS Plain** (single column, system fonts — maximum parser compatibility) and **Two-Column ATS** (visual grid, linear DOM order preserved). One semantic structure; switching is instant CSS — never a regeneration. The CSS is a **single shared source** (`packages/resume-templates/resume.css`) consumed by both the web preview and the PDF renderer.
+- **Instant chat commands**: "switch to the classic layout" / "troca pro layout classic" and "export the pdf" are resolved locally — zero LLM/network round-trip.
+- **Deterministic intent routing** in the chat backend: a job-description-looking message generates; a follow-up on an active resume refines (with recent conversation as context); small talk gets a canned localized reply without spending an LLM call.
+- **Streaming** everywhere (SSE with heartbeat): generation and refinement show live progress.
+- Download PDF without the browser print dialog (server-side Playwright, same CSS as the preview).
 - Merge **GitHub public repos** (optional token) with **local project `.md` files** (including private work).
 - Generation system prompt includes a **tailored-resume** skill block (job analysis, honest keyword mapping, ATS-oriented structure) composed with `generate.md` — see `apps/api/prompts/skills/tailored-resume-generator.md`.
+- **Light / dark theme** (persisted in `localStorage`).
+- **Test suite + CI**: 122 pytest (unit + integration, LLM always faked) · 176 Vitest/Testing-Library/MSW · 6 Playwright e2e flows (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api.
 
 ## Prerequisites
 
@@ -31,7 +36,8 @@ These files are **gitignored** and must be created on each machine:
 | `data/profile/Profile.pdf` (optional) | **Plain text is extracted** ([pypdf](https://pypdf.readthedocs.io/)) and sent to the LLM together with your JSON; structured facts stay anchored in `resume.json`. Alternatives: `profile.pdf`, `resume.pdf`, or `PROFILE_PDF_PATH`. |
 | `data/profile_master.json` | **Legacy** path — still supported if `resume.json` does not exist. |
 | `data/projects/*.md` | One Markdown file per project (YAML frontmatter + narrative body). Copy samples from `data/examples/projects/` if helpful. |
-| `.env` | Optional `GITHUB_TOKEN`; **`AI_PROVIDER`** (`auto` \| `claude` \| `gemini` \| `ollama`); **`AI_DEFAULT_MODEL`** (optional global model override for the active provider); `ANTHROPIC_API_KEY` / `CLAUDE_MODEL`; `OLLAMA_BASE_URL` / `OLLAMA_MODEL`; `GEMINI_API_KEY` / `GEMINI_MODEL`; `PROFILE_JSON_PATH`, etc. Copy from `.env.example`. |
+| `data/app.db` (auto-created) | **Local SQLite database** for chat sessions, messages, resume versions and the seeded profile. Created on first API boot (WAL mode); gitignored. Override the location/URL with `DATABASE_URL`. Delete it to start fresh — the profile re-seeds from `data/profile/` on next boot. |
+| `.env` | Optional `GITHUB_TOKEN`; **`AI_PROVIDER`** (`auto` \| `claude` \| `gemini` \| `ollama`); **`AI_DEFAULT_MODEL`** (optional global model override for the active provider); `ANTHROPIC_API_KEY` / `CLAUDE_MODEL`; `OLLAMA_BASE_URL` / `OLLAMA_MODEL`; `GEMINI_API_KEY` / `GEMINI_MODEL`; `PROFILE_JSON_PATH`; `DATABASE_URL`, etc. Copy from `.env.example`. |
 
 **LLM routing (summary):**
 
@@ -108,7 +114,7 @@ cd apps/web
 npm run dev
 ```
 
-Open `http://localhost:5173`. The UI proxies `/api/*` to the FastAPI server on port **8000**.
+Open `http://localhost:5173`. The UI proxies `/api/*` to the FastAPI server on port **8000** (override the proxy target with the `VITE_API_PROXY_TARGET` env var when the API runs elsewhere).
 
 If the resolved backend is **Ollama** (`AI_PROVIDER=ollama`, or `auto` without `GEMINI_API_KEY`), ensure **Ollama** is running (`ollama serve` if needed).
 
@@ -131,19 +137,38 @@ Free-form markdown: problem, your role, stack, outcomes.
 
 ## API overview
 
+**Chat (the primary flow used by the UI):**
+
+- `POST /api/chat/sessions` — body: `{ "title?" }` → `201 { id, title, createdAt }`
+- `GET /api/chat/sessions` — list sessions (most recently updated first)
+- `GET /api/chat/sessions/{id}` — session detail: `{ session, messages, activeResume }`
+- `DELETE /api/chat/sessions/{id}` — delete a session (messages cascade; resume versions are kept)
+- `POST /api/chat/sessions/{id}/messages/stream` — body: `{ "message", "model?", "locale?", "jobDescription?" }` → **SSE** stream with `stage` (progress), `resume` (`{ resume, resumeVersionId }` when the turn changes the resume), `message` (assistant text for the chat bubble), `done` and `error` events. Intent (generate / refine / plain reply) is decided deterministically server-side.
+
+**Legacy/direct endpoints (still supported — the UI falls back to them if the chat API is absent):**
+
 - `GET /api/health` — health check
+- `GET /api/models` — model suggestions for the UI picker (`{ default, models: [{value,label}] }`)
 - `GET /api/profile` — loads the resolved profile JSON (same resolution order as [Personal data](#personal-data-not-in-this-repository); validates schema)
 - `GET /api/github/repos` — lists repos for `githubUsername` in profile
 - `POST /api/generate` — body: `{ "job_description", "model?", "locale?" }` → tailored `ResumeDocument`. `locale` accepts `"auto"` (default: detects the job description's language, pt-BR vs en), or `"pt-BR"`/`"en"` to force the output language.
 - `POST /api/generate/stream` — same body as generate; **SSE** stream with `stage` events (progress, message) and a final `done` event with the resume JSON
 - `POST /api/refine` — body: `{ "resume", "message", "model?" }`
 - `POST /api/refine/stream` — same as refine over **SSE**
-- `POST /api/export/pdf` — body: `{ "resume": { ... }, "template?": "modern" | "classic" | "minimal" | "compact" }` → PDF download (defaults to `modern`)
+- `POST /api/export/pdf` — body: `{ "resume": { ... }, "template?": "modern" | "classic" | "minimal" | "compact" | "ats-plain" | "two-column-ats" }` → PDF download (defaults to `modern`)
 
 ## Prompts
 
-- **System:** `apps/api/prompts/system/` — `generate.md`, `refine.md` (JSON-only resume output rules).
+- **System:** `apps/api/prompts/system/` — `generate.md`, `refine.md`, `extract_profile.md` (JSON-only resume output rules and PDF-profile extraction).
 - **Skills:** `apps/api/prompts/skills/` — extra behavior merged into generation (e.g. `tailored-resume-generator.md`). The API loads `generate.md` plus that skill via `load_generate_system_prompt()` in `app/prompt_loader.py`. Edit these files to change LLM behavior without touching the UI.
+
+## Tests
+
+**Backend** (from `apps/api`, venv active): `python -m pytest` — 122 tests. Fast unit + integration suites use a fake LLM and an in-memory SQLite (never a real network call); the 3 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
+
+**Web** (from `apps/web`): `npm run test:run` (176 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (6 Playwright flows against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`).
+
+**CI:** `.github/workflows/web.yml` and `api.yml` run lint/build/tests on every push touching each app.
 
 ## Security
 
