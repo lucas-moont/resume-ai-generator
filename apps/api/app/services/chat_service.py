@@ -5,17 +5,19 @@ endpoints use, with session/message/resume persistence via the B5 repositories.
 ``handle_chat_turn`` is an async generator yielding ``(event, data)`` tuples where ``event``
 is one of "stage" (forwarded as-is from generate/refine), "resume" ({"resume":
 ResumeDocument, "resumeVersionId": int}), "message" ({"content": str} -- the assistant's chat
-bubble text), or "done" ({"progress": 100, "messageId": int, "resumeVersionId": int | None}).
+bubble text), "profile_update" ({"profileVersion": int, "summary": str} -- v2 ticket 05, see
+below), or "done" ({"progress": 100, "messageId": int, "resumeVersionId": int | None}).
 Errors propagate as exceptions (FileNotFoundError / ProfileValidationError / ExtractionError
 / TimeoutError / json.JSONDecodeError / the raw LLM exception), same as generation_service and
 refine_service, for the router to translate into an SSE error frame.
 
-Intent routing (v1, deterministic -- see docs/v1-chat-experience.md): a session with no
-active resume whose message looks like a job description (heuristic: length + JD-keyword
-density, ``looks_like_job_description`` below) routes to generate; a session with an active
-resume routes to refine, folding the last few chat turns in as context; anything else (no
-resume, message doesn't look like a JD -- e.g. a greeting) is a "question" intent: a canned,
-locale-aware reply with no LLM call at all. No token-by-token streaming in v1.
+Intent routing (CONTEXT.md: Intent) is deterministic -- ``app.domain.chat_intent.classify_intent``
+is the single seam, no LLM call spent deciding it. Four intents: "generate" (a session with no
+active resume whose message looks like a job description), "refine" (an active resume exists --
+folds the last few chat turns in as context), "profile_update" (v2 ticket 05 -- the message names
+a Living Profile FACT change, e.g. "I changed my phone number"; checked BEFORE generate/refine so
+it wins even with an active resume), or "question" (a canned, locale-aware reply with no LLM
+call). No token-by-token streaming.
 
 As of v2 ticket 01, the "generate" branch resolves the profile ONCE via
 ``profile_resolution.resolve_active_profile(session)`` and threads that same
@@ -24,6 +26,18 @@ and the ``profile_version_id`` stamped on the resulting ``ResumeVersion`` -- clo
 gap where that link was a best-effort, separately-fetched ``profile_repo.get_active(session)``
 call that was not guaranteed to match whatever generation_service had independently read from
 disk.
+
+As of v2 ticket 05, "profile_update" turns an LLM-adjudicated ``PatchOp[]`` (reusing
+``merge_service.parse_patch_ops_from_llm_response``'s tolerant parsing -- no second, duplicate
+parser) into a new ``profile_versions`` row (``source_kind="chat"``, ``chat_message_id`` set to
+the triggering user message) via the SAME Patch Validator (``domain.profile_patch.apply_patch``)
+every other write path goes through, with ``source_kind="chat"`` -- the one source_kind besides
+"manual" allowed to ``remove`` (CONTEXT.md: Upload-never-removes only restricts uploads). It
+NEVER regenerates the active resume; the "message" event that follows only *offers* regeneration
+in natural language. An LLM response that yields no usable ops (garbage, or a patch that fails
+final schema validation) is not an error -- it is a friendly "nothing changed" reply, profile
+left untouched, exactly like a real error would leave it (the Patch Validator only ever mutates
+a copy).
 """
 
 from __future__ import annotations
@@ -34,7 +48,7 @@ from collections.abc import AsyncIterator
 from sqlmodel import Session
 
 from app.db.tables import ChatSession
-from app.domain.keywords import extract_jd_keywords
+from app.domain.chat_intent import classify_intent
 from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, resolve_locale
 from app.domain.schemas import ResumeDocument
 from app.repositories import chat_repo, resume_repo
@@ -42,13 +56,6 @@ from app.services.generation_service import generate_resume_events
 from app.services.profile_resolution import resolve_active_profile
 from app.services.refine_service import refine_resume_events
 from app.services.secret_redaction import redact_secrets
-
-# A message needs to be substantial to be treated as a pasted job description outright; a
-# shorter message can still count if it is dense with recognizable tech/role keywords (e.g.
-# someone pasting just the "Requirements" bullet list rather than the full posting).
-_JD_MIN_WORDS_STRONG_SIGNAL = 30
-_JD_MIN_WORDS_WEAK_SIGNAL = 12
-_JD_MIN_KEYWORDS_WEAK_SIGNAL = 3
 
 # How many of the most recent messages (user + assistant, combined) are folded into a refine
 # turn's instruction as context.
@@ -74,15 +81,6 @@ _REPLY_TEXT = {
         ),
     },
 }
-
-
-def looks_like_job_description(message: str) -> bool:
-    words = message.split()
-    if len(words) >= _JD_MIN_WORDS_STRONG_SIGNAL:
-        return True
-    if len(words) >= _JD_MIN_WORDS_WEAK_SIGNAL:
-        return len(extract_jd_keywords(message)) >= _JD_MIN_KEYWORDS_WEAK_SIGNAL
-    return False
 
 
 def _reply_text_for_locale(intent: str, locale: str) -> str:
@@ -111,7 +109,9 @@ async def handle_chat_turn(
     backend_label: str,
 ) -> AsyncIterator[tuple[str, dict]]:
     _, prior_messages = chat_repo.get_session_with_messages(session, chat_session.id)
-    chat_repo.append_message(session, session_id=chat_session.id, role="user", content=user_message)
+    user_msg_row = chat_repo.append_message(
+        session, session_id=chat_session.id, role="user", content=user_message
+    )
     if locale is not None:
         # Persisted regardless of intent so GET /api/chat/sessions/{id} can feed the
         # frontend's composer (e.g. defaulting the input language) even before any resume
@@ -124,12 +124,7 @@ async def handle_chat_turn(
     if chat_session.active_resume_version_id is not None:
         active_resume_row = resume_repo.get(session, chat_session.active_resume_version_id)
 
-    if active_resume_row is None and looks_like_job_description(user_message):
-        intent = "generate"
-    elif active_resume_row is not None:
-        intent = "refine"
-    else:
-        intent = "question"
+    intent = classify_intent(message=user_message, has_active_resume=active_resume_row is not None)
 
     if intent == "question":
         # No resume is involved in this turn, so the session/request locale (falling back to
