@@ -29,3 +29,6 @@ my-to-do.txt
 .agents/
 .claude/skills/
 skills-lock.json
+
+# Local planning docs / specs (v1/v2/v3, vision, linkedin brief)
+docs/
