@@ -102,6 +102,33 @@ describe('chatStore', () => {
     expect(state.streaming).toBeNull()
   })
 
+  it('updateMessageCard replaces the card of the matching message via an updater function', () => {
+    const msg = useChatStore.getState().appendAssistantMessage('Uploaded profile.json', {
+      type: 'profileUpdated',
+      documentId: 1,
+      filename: 'profile.json',
+      status: 'proposed',
+      diffSummary: ['1 new skill'],
+      opsCount: 1,
+    })
+
+    useChatStore.getState().updateMessageCard(msg.id, (card) =>
+      card.type === 'profileUpdated' ? { ...card, status: 'applied' } : card,
+    )
+
+    const updated = useChatStore.getState().messages.find((m) => m.id === msg.id)
+    expect(updated?.card).toMatchObject({ type: 'profileUpdated', status: 'applied', documentId: 1 })
+  })
+
+  it('updateMessageCard is a no-op for a message id that does not exist', () => {
+    useChatStore.getState().appendUserMessage('hello')
+    const before = useChatStore.getState().messages
+
+    useChatStore.getState().updateMessageCard('does-not-exist', (card) => card)
+
+    expect(useChatStore.getState().messages).toEqual(before)
+  })
+
   it('setSessionId sets only the session id, leaving messages/streaming untouched', () => {
     useChatStore.getState().appendUserMessage('first message, sent before the session existed')
     useChatStore.getState().updateStreaming({ step: 'preparing_context' })

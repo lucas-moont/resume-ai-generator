@@ -10,9 +10,13 @@ const BOTTOM_THRESHOLD_PX = 80
 export function MessageList({
   onRetry,
   onSuggestion,
+  onApproveDocument,
+  onRejectDocument,
 }: {
   onRetry: (message: string) => void
   onSuggestion: (message: string) => void
+  onApproveDocument: (documentId: number, messageId: string) => Promise<void>
+  onRejectDocument: (documentId: number, messageId: string) => Promise<void>
 }) {
   const messages = useChatStore((s) => s.messages)
   const streaming = useChatStore((s) => s.streaming)
@@ -53,7 +57,13 @@ export function MessageList({
         message.role === 'user' ? (
           <UserMessage key={message.id} message={message} />
         ) : (
-          <AssistantMessage key={message.id} message={message} onRetry={onRetry} />
+          <AssistantMessage
+            key={message.id}
+            message={message}
+            onRetry={onRetry}
+            onApproveDocument={onApproveDocument}
+            onRejectDocument={onRejectDocument}
+          />
         ),
       )}
       {streaming && (
