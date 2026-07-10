@@ -1,0 +1,29 @@
+# CONTEXT — Domain Glossary
+
+Canonical vocabulary for this project. Use these terms exactly — in code identifiers, test names, tickets, and conversation. Portuguese aliases (used in product docs) in parentheses.
+
+## Core concepts
+
+- **Profile** — the canonical professional profile of the single local user, validated by the `ProfileMaster` schema. The single source of truth every resume is generated from. _Avoid_: "master profile", "user data".
+- **Living Profile** _(Perfil Vivo)_ — the Profile as a persistent, versioned entity that evolves through uploads, chat requests, and manual edits. It is never overwritten wholesale: changes arrive as Patch Ops, and only what is new or divergent ever changes.
+- **Profile Version** — an immutable snapshot of the Profile produced by applying an approved patch. Every version records its **Provenance**. Reverting creates a new version; history is append-only.
+- **Provenance** _(Proveniência)_ — the traceable origin of a profile change: which Source Document, chat message, or manual edit produced it, down to the source excerpt that justifies each op.
+- **Resume** — a tailored `ResumeDocument` generated from the Profile for one job description. Derived data: refining or editing a Resume never mutates the Profile.
+- **Template** — one of the ATS-friendly visual layouts. A global sticky user preference (like theme), applied instantly as CSS; presentation only, never tied to a specific Resume version.
+
+## Ingestion & merge
+
+- **Source Document** — an uploaded `.json`, `.md`, or `.pdf` file carrying professional information. Moves through a lifecycle: stored → extracted → proposed → applied | rejected | failed.
+- **Ingestion** — turning a Source Document into candidate profile data. Structured JSON is validated directly (no LLM); markdown and PDF go through LLM extraction.
+- **Deterministic Diff** _(diff determinístico)_ — the LLM-free comparison that classifies extracted data against the Profile as **new**, **divergent**, or **equal** (equal is discarded). Runs first, always.
+- **Adjudication** _(adjudicação)_ — the LLM step that turns only new + divergent items into Patch Ops. Hard rule: the LLM never touches what the Deterministic Diff didn't flag.
+- **Patch Op** — one restricted JSON-Patch operation (`add` / `replace` / `remove`) proposing a single profile change, carrying a reason, a confidence score, and a source excerpt for Provenance.
+- **Patch Validator** — the deterministic gate that applies Patch Ops on a copy of the Profile, enforcing the path whitelist, schema validity, and the Upload-never-removes rule. Nothing reaches a Profile Version except through it.
+- **Incremental Merge** _(merge incremental)_ — the full pipeline: Deterministic Diff → Adjudication → Patch Validator → new Profile Version. The user approves or rejects the proposed patch before it applies.
+- **Upload-never-removes** — invariant: an upload can add or update profile data but never delete entities. Removal happens only via explicit chat request or manual edit.
+
+## Chat & editing
+
+- **Intent** — the deterministic server-side classification of a chat message: `generate` (job description), `refine` (change the active Resume), `profile_update` (change the Living Profile), or a plain reply. No LLM call is spent deciding it.
+- **Chat SSE contract** — the event stream (`stage`, `resume`, `message`, `profile_update`, `done`, `error`) between backend and frontend. It is the seam between the two workstreams: changes require agreement on both sides.
+- **Inline Editing** _(edição inline)_ — direct manual edits on the A4 preview, committed on blur/Enter, undoable, synchronized with chat refinements.
