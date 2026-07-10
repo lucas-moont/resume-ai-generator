@@ -89,6 +89,13 @@ export function requestMultipart<T>(
     }
 
     xhr.onload = () => {
+      // Some XHR mocks (incl. @mswjs/interceptors, used in this repo's tests)
+      // don't reliably suppress "load" after xhr.abort() the way a real
+      // browser does — guard explicitly rather than relying on that.
+      if (signal?.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'))
+        return
+      }
       let body: unknown = {}
       try {
         body = xhr.responseText ? JSON.parse(xhr.responseText) : {}

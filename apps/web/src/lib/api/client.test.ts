@@ -184,6 +184,28 @@ describe('requestMultipart', () => {
     expect((caught as ApiError).status).toBe(413)
   })
 
+  it('rejects with an AbortError if the signal was aborted mid-flight, even if the mock still delivers a response', async () => {
+    // @mswjs/interceptors' XHR mock doesn't reliably suppress "load" after
+    // xhr.abort() the way a real browser does — this proves requestMultipart
+    // guards against that itself rather than trusting the mock's abort semantics.
+    server.use(
+      http.post('/api/test-multipart-late-abort', async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        return HttpResponse.json({ documentId: 1, status: 'proposed' })
+      }),
+    )
+    const controller = new AbortController()
+    const formData = new FormData()
+    formData.append('file', new File(['x'], 'a.json'))
+
+    const pending = requestMultipart('/api/test-multipart-late-abort', formData, {
+      signal: controller.signal,
+    })
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
   it('rejects with an AbortError when the signal is already aborted, without sending a request', async () => {
     server.use(
       http.post('/api/test-multipart-abort', () => {
