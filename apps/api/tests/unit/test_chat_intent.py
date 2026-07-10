@@ -76,3 +76,97 @@ class TestLooksLikeJobDescriptionUnchanged:
 
     def test_short_message_is_not_a_job_description(self) -> None:
         assert looks_like_job_description("hi there") is False
+
+
+class TestProfileUpdateVsRefineBoundary:
+    """CONTEXT.md draws the line as "refine acts on the Resume, profile_update acts on facts
+    of the Profile". Every case below is a documented decision, not an assumption -- see the
+    inline comment on each for why it landed where it did."""
+
+    # -- The spec's own examples (pt-BR and en), both with and without an active resume:
+    # profile_update must win even when a resume is active (that's the entire point -- a user
+    # mid-session can still correct a personal fact without it being swallowed by refine).
+
+    def test_pt_changed_phone_number_is_profile_update_regardless_of_active_resume(self) -> None:
+        msg = "Mudei meu telefone para 11 91234-5678"
+        assert classify_intent(message=msg, has_active_resume=False) == "profile_update"
+        assert classify_intent(message=msg, has_active_resume=True) == "profile_update"
+
+    def test_pt_add_certification_is_profile_update(self) -> None:
+        msg = "Adiciona a certificação AWS Certified Developer no meu perfil"
+        assert classify_intent(message=msg, has_active_resume=True) == "profile_update"
+
+    def test_pt_remove_project_is_profile_update(self) -> None:
+        # Deliberately NOT named e.g. "Resume Agent" -- a project whose own name contains the
+        # word "resume" would collide with the resume-scope-word gate below (documented there);
+        # that is a real, accepted limitation, not something this test should paper over.
+        msg = "Remove o projeto Metrics Dashboard"
+        assert classify_intent(message=msg, has_active_resume=True) == "profile_update"
+
+    def test_en_changed_phone_number_is_profile_update(self) -> None:
+        msg = "I changed my phone number to 555-0100"
+        assert classify_intent(message=msg, has_active_resume=False) == "profile_update"
+        assert classify_intent(message=msg, has_active_resume=True) == "profile_update"
+
+    def test_en_add_certification_is_profile_update(self) -> None:
+        assert (
+            classify_intent(message="Add certification: AWS Certified Developer", has_active_resume=True)
+            == "profile_update"
+        )
+
+    def test_en_remove_project_is_profile_update(self) -> None:
+        assert classify_intent(message="Remove project Metrics Dashboard", has_active_resume=True) == "profile_update"
+
+    # -- The spec's refine counter-examples: these name the RESUME/document itself, not a
+    # profile fact, and must stay refine when a resume is active.
+
+    def test_shorter_summary_request_stays_refine(self) -> None:
+        assert classify_intent(message="resumo mais curto", has_active_resume=True) == "refine"
+
+    def test_translate_request_stays_refine(self) -> None:
+        assert classify_intent(message="traduz pra ingles", has_active_resume=True) == "refine"
+
+    # -- Explicit resume/document scoping always wins over an otherwise-matching add/remove +
+    # profile-noun pattern -- e.g. "add ... to my resume" is a refine, not a profile_update,
+    # even though "add" + "skill" alone would match below.
+
+    def test_add_skill_explicitly_scoped_to_the_resume_stays_refine(self) -> None:
+        msg = "Add a skill to my resume"
+        assert classify_intent(message=msg, has_active_resume=True) == "refine"
+
+    def test_translate_the_resume_mentions_resume_explicitly_stays_refine(self) -> None:
+        assert classify_intent(message="Translate the resume to English.", has_active_resume=True) == "refine"
+
+    # -- Documented boundary decision: a bare add/remove verb with NO recognized profile-fact
+    # noun (a technology name alone, a vague "bullet") defaults to refine, not profile_update.
+    # Rationale: a false negative here is cheap (the user can just ask again, more explicitly,
+    # and it costs nothing -- refine never touches the permanent profile); a false positive
+    # would silently mutate a permanent, cross-session fact from an under-specified message.
+    # This is the exact "mensagens curtas/ambiguas com resume ativo" risk boundary ticket 05
+    # calls out.
+
+    def test_bare_add_with_no_recognized_profile_noun_stays_refine(self) -> None:
+        assert classify_intent(message="adiciona React", has_active_resume=True) == "refine"
+
+    def test_bare_remove_with_no_recognized_profile_noun_stays_refine(self) -> None:
+        assert classify_intent(message="remove the bullet about Python", has_active_resume=True) == "refine"
+
+    # -- profile_update also fires with NO active resume at all (a user's very first message,
+    # before ever generating a resume) -- it must not fall into v1's "question" bucket.
+
+    def test_profile_update_fires_with_no_active_resume(self) -> None:
+        msg = "adiciona a certificacao Scrum Master"
+        assert classify_intent(message=msg, has_active_resume=False) == "profile_update"
+
+    # -- Collision guard: a genuine job-description paste must never be hijacked into
+    # profile_update just because it happens to contain an action-verb-shaped word plus a
+    # profile-fact noun somewhere in its prose (e.g. "update", "company").
+
+    def test_job_description_mentioning_update_and_company_is_not_hijacked(self) -> None:
+        jd = (
+            "We are a fast-growing company looking to update our engineering team with a "
+            "Senior Backend Engineer. You will design and build scalable APIs in Python, own "
+            "our PostgreSQL data layer, and help mentor junior engineers across the company. "
+            "Experience with Docker, Kubernetes, and CI/CD pipelines is a strong plus."
+        )
+        assert classify_intent(message=jd, has_active_resume=False) == "generate"

@@ -46,9 +46,84 @@ def looks_like_job_description(message: str) -> bool:
     return False
 
 
+# --- profile_update pattern (v2 ticket 05) -------------------------------------------------
+#
+# Deterministic, no LLM call spent deciding it. The question is never "is this a well-formed
+# instruction" but "does it name a PROFILE FACT (contact info, a credential, an entity to
+# add/remove) using a change/add/remove verb" -- every case this vocabulary was tuned against,
+# including the ones that deliberately stay `refine`, is in
+# tests/unit/test_chat_intent.py::TestProfileUpdateVsRefineBoundary.
+
+_TOKEN_RE = re.compile(r"[a-zà-ÿ]+")
+
+
+def _tokenize(message: str) -> frozenset[str]:
+    return frozenset(_TOKEN_RE.findall(message.lower()))
+
+
+def _mentions_any(tokens: frozenset[str], vocab: frozenset[str]) -> bool:
+    return not tokens.isdisjoint(vocab)
+
+
+# An explicit mention of the rendered document always wins: "adiciona React no resumo" is a
+# refine even though "adiciona" + a profile-fact noun would otherwise match below. A project
+# literally named e.g. "Resume Agent" is a known, accepted collision with this gate (see the
+# test suite) -- not worth a more complex heuristic for.
+_RESUME_SCOPE_WORDS = frozenset({"resumo", "curriculo", "currículo", "resume", "cv", "documento"})
+
+_ACTION_VERBS = frozenset(
+    {
+        # pt-BR: change-in-place ("mudei"/"atualizei"/"corrigi" my X)
+        "mudei", "mudar", "mude", "atualizei", "atualizar", "atualize", "alterei", "alterar",
+        "altere", "troquei", "trocar", "troque", "corrigi", "corrigir", "corrija",
+        # pt-BR: add
+        "adiciona", "adicione", "adicionar", "adicionei", "inclui", "inclua", "incluir",
+        # pt-BR: remove
+        "remove", "remova", "remover", "removi", "tira", "tire", "tirar", "exclui", "exclua",
+        "excluir", "apaga", "apague", "apagar",
+        # en: change-in-place
+        "changed", "change", "update", "updated", "fixed", "fix", "corrected", "correct",
+        # en: add
+        "add", "added", "include", "included",
+        # en: remove
+        "remove", "removed", "delete", "deleted", "drop", "dropped",
+    }
+)
+
+_PROFILE_FACT_NOUNS = frozenset(
+    {
+        # contact/identity fields
+        "telefone", "celular", "email", "endereco", "endereço", "linkedin", "github", "phone",
+        "address",
+        # credentials -- this schema has no dedicated "certifications" field (see
+        # prompts/system/profile_update.md); the noun is still a recognizable profile fact
+        "certificacao", "certificação", "certificado", "certification", "certifications",
+        # entities -- shared vocabulary with the ProfileMaster schema itself
+        "projeto", "project", "projects",
+        "formacao", "formação", "educacao", "educação", "education", "faculdade", "universidade",
+        "experiencia", "experiência", "experience", "emprego", "empresa", "company", "job",
+        "cargo", "role", "title",
+        "habilidade", "skill", "skills", "competencia", "competência",
+    }
+)
+
+
+def _looks_like_profile_update(message: str) -> bool:
+    if looks_like_job_description(message):
+        return False  # a genuine JD paste always wins -- see classify_intent's docstring
+    tokens = _tokenize(message)
+    if _mentions_any(tokens, _RESUME_SCOPE_WORDS):
+        return False
+    return _mentions_any(tokens, _ACTION_VERBS) and _mentions_any(tokens, _PROFILE_FACT_NOUNS)
+
+
 def classify_intent(*, message: str, has_active_resume: bool) -> Intent:
     """The single seam ``chat_service.handle_chat_turn`` calls to route a turn. No LLM call is
-    spent deciding it (CONTEXT.md: Intent)."""
+    spent deciding it (CONTEXT.md: Intent). ``profile_update`` is checked FIRST -- it wins even
+    over an active resume (a user mid-refine-session can still correct a profile fact without
+    it being swallowed into a refine turn); the rest is the untouched v1 3-way routing."""
+    if _looks_like_profile_update(message):
+        return "profile_update"
     if not has_active_resume and looks_like_job_description(message):
         return "generate"
     if has_active_resume:
