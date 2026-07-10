@@ -320,6 +320,108 @@ class TestChatMessageStreamRefineIntent:
         assert "Make the summary punchier." in refine_call["user"]
 
 
+class TestChatMessageStreamRefineClientResumeOverride:
+    """v2 ticket 11: an inline edit made only in the client (never persisted) must not be lost
+    by a chat refine -- the refine turn now prefers a client-supplied `resume` override (the
+    request's optional `resume` field) over the DB's active_resume_version_id when present."""
+
+    async def test_refine_uses_the_client_supplied_override_as_the_refine_base(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile())
+        fake_llm.queue(json.dumps(make_resume_payload()))  # the generate turn
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+        before = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
+        active_resume_version_id = before["session"]["activeResumeVersionId"]
+
+        # Simulates an inline edit made client-side but never persisted: the DB's active
+        # version still has the ORIGINAL summary; the client sends its own edited copy.
+        edited_resume = make_resume_payload(summary="An inline-edited summary the DB has never seen.")
+        updated = make_resume_payload(summary="A punchier summary for the resume.")
+        fake_llm.queue(json.dumps(updated))  # the refine turn
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Make the summary punchier.", "resume": edited_resume},
+        )
+
+        assert resp.status_code == 200
+        # The LLM prompt was built from the CLIENT override, not the DB's active version.
+        refine_call = fake_llm.calls[-1]["user"]
+        assert "An inline-edited summary the DB has never seen." in refine_call
+
+        events = parse_sse(resp.text)
+        resume_event = next(data for e, data in events if e == "resume")
+        assert resume_event["resume"]["summary"] == updated["summary"]
+
+        with Session(test_db_engine) as session:
+            new_version = resume_repo.get(session, resume_event["resumeVersionId"])
+            assert new_version is not None
+            # Provenance: the new version still chains off the previously-active version as
+            # parent, exactly like a non-override refine would.
+            assert new_version.parent_version_id == active_resume_version_id
+
+            _, messages = chat_repo.get_session_with_messages(session, created["id"])
+            assistant_msg = next(
+                m for m in messages if m.role == "assistant" and m.resume_version_id == new_version.id
+            )
+            meta = json.loads(assistant_msg.meta)
+            assert meta["clientResumeOverride"] is True
+
+    async def test_refine_without_override_uses_the_db_active_resume_and_no_override_flag(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile())
+        fake_llm.queue(json.dumps(make_resume_payload()))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        updated = make_resume_payload(summary="A punchier summary for the resume.")
+        fake_llm.queue(json.dumps(updated))
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Make the summary punchier."},
+        )
+
+        resume_event = next(data for e, data in parse_sse(resp.text) if e == "resume")
+        with Session(test_db_engine) as session:
+            _, messages = chat_repo.get_session_with_messages(session, created["id"])
+            assistant_msg = next(
+                m
+                for m in messages
+                if m.role == "assistant" and m.resume_version_id == resume_event["resumeVersionId"]
+            )
+            meta = json.loads(assistant_msg.meta)
+            assert "clientResumeOverride" not in meta
+
+    async def test_invalid_client_resume_override_is_a_clean_422_with_no_stream_started(
+        self, client, fake_llm, write_profile
+    ):
+        write_profile(make_profile())
+        fake_llm.queue(json.dumps(make_resume_payload()))  # the generate turn only
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Make the summary punchier.", "resume": {}},
+        )
+
+        assert resp.status_code == 422
+        assert "detail" in resp.json()
+        assert fake_llm.call_count == 1  # only the earlier generate call -- refine never ran
+
+
 class TestChatMessageStreamProfileUpdateIntent:
     """v2 ticket 05: "Mudei meu telefone para X" turns an LLM-adjudicated PatchOp[] into a new
     profile_versions row (source_kind='chat') via the SAME Patch Validator every other write
