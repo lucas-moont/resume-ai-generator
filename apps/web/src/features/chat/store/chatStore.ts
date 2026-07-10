@@ -31,7 +31,17 @@ export interface ProfileUpdatedCard {
   error?: string
 }
 
-export type ChatCard = ResumeUpdatedCard | ErrorCard | ProfileUpdatedCard
+/** Confirmation card for the `profile_update` chat intent (v2, ticket 05/09)
+ * — distinct from ProfileUpdatedCard (upload-driven, proposed/needs approval):
+ * a chat-driven profile update is already applied by the time the SSE event
+ * lands, so there's no approve/reject step here, just profileVersion + summary. */
+export interface ProfileUpdateAppliedCard {
+  type: 'profileUpdateApplied'
+  profileVersion: number
+  summary: string
+}
+
+export type ChatCard = ResumeUpdatedCard | ErrorCard | ProfileUpdatedCard | ProfileUpdateAppliedCard
 
 export interface ChatMessage {
   id: string

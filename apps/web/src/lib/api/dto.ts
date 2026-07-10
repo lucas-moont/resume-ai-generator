@@ -115,6 +115,14 @@ export interface ChatDoneEventPayload {
   resumeVersionId: number | null
 }
 
+/** Chat-stream-only: emitted for the `profile_update` intent (v2, ticket 05/09)
+ * — the Living Profile changed via chat, source_kind='chat'. Never carried by
+ * the legacy generate/refine streams (that intent is chat-only). */
+export interface ChatProfileUpdateEventPayload {
+  profileVersion: number
+  summary: string
+}
+
 // --- Living Profile: Source Documents (v2, F7 — ticket 07) ---
 // Contract per docs/v2-living-profile.md item 3 + ticket 04's addendum
 // (proposedPatch/diffSummary land in the same 202 response once the merge
