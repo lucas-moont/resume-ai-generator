@@ -8,41 +8,46 @@ import { renderApp } from './test/render'
 import { sseResponse } from './test/msw/sse'
 import { makeResume, makeStageEvents } from './test/factories'
 import { STORAGE_KEY, useResumeStore } from './features/resume/store/resumeStore'
+import { useChatStore } from './features/chat/store/chatStore'
 
 beforeEach(() => {
   localStorage.clear()
   useResumeStore.setState({ resume: null, template: 'modern', locale: 'auto' })
   useResumeStore.temporal.getState().clear()
+  useChatStore.getState().reset()
 })
 
 describe('App', () => {
-  it('renders the main heading and the core generation controls', () => {
+  it('renders the main heading and the core chat controls', () => {
     renderApp(<App />)
 
     expect(screen.getByRole('heading', { name: /resume agent/i })).toBeInTheDocument()
-    expect(screen.getByLabelText(/job description/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /generate resume/i })).toBeInTheDocument()
-    expect(screen.getByRole('radiogroup', { name: /resume template/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/^message$/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: /template/i })).toBeInTheDocument()
+    // Empty state before anything is generated.
+    expect(screen.getByText(/let's build your resume/i)).toBeInTheDocument()
   })
 
-  it('streams stage events from /api/generate/stream and renders the resulting resume in the preview', async () => {
+  it('generates a resume via the composer and renders it in the preview', async () => {
     const resume = makeResume({ fullName: 'Grace Hopper' })
-    server.use(
-      http.post('/api/generate/stream', () => sseResponse(makeStageEvents(resume))),
-    )
+    server.use(http.post('/api/generate/stream', () => sseResponse(makeStageEvents(resume))))
 
     const user = userEvent.setup()
     renderApp(<App />)
 
     await user.type(
-      screen.getByLabelText(/job description/i),
+      screen.getByLabelText(/^message$/i),
       'Senior Software Engineer, distributed systems team.',
     )
-    await user.click(screen.getByRole('button', { name: /generate resume/i }))
+    await user.click(screen.getByRole('button', { name: /^send$/i }))
 
     await waitFor(() => {
       expect(screen.getByText('Grace Hopper')).toBeInTheDocument()
     })
+    // The chat records both the user's message and the assistant's reply.
+    expect(screen.getByText('Senior Software Engineer, distributed systems team.')).toBeInTheDocument()
+    expect(screen.getByText(/resume updated/i)).toBeInTheDocument()
   })
 
   it('restores a previously generated resume from localStorage after a reload', async () => {
@@ -58,7 +63,7 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByText('Marie Curie')).toBeInTheDocument()
     })
-    expect(screen.getByText(/preview — classic/i)).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: /template/i })).toHaveValue('classic')
   })
 
   it('offers all 6 templates and switches instantly, with no network request', async () => {
@@ -71,19 +76,36 @@ describe('App', () => {
 
     const user = userEvent.setup()
     renderApp(<App />)
+    await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeInTheDocument())
 
-    const radiogroup = screen.getByRole('radiogroup', { name: /resume template/i })
-    const templateButtons = within(radiogroup).getAllByRole('radio')
-    expect(templateButtons).toHaveLength(6)
+    const picker = screen.getByRole('combobox', { name: /template/i })
+    expect(within(picker).getAllByRole('option')).toHaveLength(6)
 
     // onUnhandledRequest: 'error' (src/test/setup.ts) means this would throw
     // if switching templates ever triggered a request.
-    await user.click(within(radiogroup).getByRole('radio', { name: /ats plain/i }))
+    await user.selectOptions(picker, 'ats-plain')
 
-    expect(within(radiogroup).getByRole('radio', { name: /ats plain/i })).toHaveAttribute(
-      'aria-checked',
-      'true',
+    expect(picker).toHaveValue('ats-plain')
+  })
+
+  it('recognizes a template-switch command typed in the composer, without calling the LLM', async () => {
+    const resume = makeResume({ fullName: 'Katherine Johnson' })
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ state: { resume, template: 'modern', locale: 'auto' }, version: 1 }),
     )
-    expect(screen.getByText(/preview — ats-plain/i)).toBeInTheDocument()
+    await useResumeStore.persist.rehydrate()
+
+    const user = userEvent.setup()
+    renderApp(<App />)
+    await waitFor(() => expect(screen.getByText('Katherine Johnson')).toBeInTheDocument())
+
+    await user.type(screen.getByLabelText(/^message$/i), 'use the classic template')
+    await user.click(screen.getByRole('button', { name: /^send$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /template/i })).toHaveValue('classic')
+    })
+    expect(screen.getByText(/switched to the classic template/i)).toBeInTheDocument()
   })
 })

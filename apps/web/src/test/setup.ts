@@ -23,3 +23,15 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
     dispatchEvent: () => false,
   })
 }
+
+// jsdom doesn't implement ResizeObserver either. PreviewPanel uses it to
+// scale the A4 preview to the available width; the stub never actually
+// fires callbacks in tests (no real layout), which is fine — tests assert
+// behavior, not the computed scale value.
+if (typeof window !== 'undefined' && !window.ResizeObserver) {
+  window.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+}
