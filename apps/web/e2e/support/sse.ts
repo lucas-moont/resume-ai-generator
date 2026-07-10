@@ -7,7 +7,7 @@
  * handles any single complete read.
  */
 export interface E2eSseEvent {
-  event: 'stage' | 'resume' | 'message' | 'done' | 'error'
+  event: 'stage' | 'resume' | 'message' | 'profile_update' | 'done' | 'error'
   data: unknown
 }
 
