@@ -8,9 +8,12 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Shared base. Mirrors apps/api/templates/resume.css so the live preview and
-   the exported PDF stay visually identical. Every template sets its own CSS
-   variables on `.page`; component rules read those variables.
+   Shared base — single source of truth for the live web preview AND the
+   exported PDF (apps/api/app/services/pdf_export.py reads this same file via
+   a relative path, and apps/api/templates/resume_print.html wraps its markup
+   in a matching `.resume-doc` element so these selectors apply identically).
+   Every template sets its own CSS variables on `.page`; component rules read
+   those variables.
 --------------------------------------------------------------------------- */
 
 .resume-doc .page {
@@ -536,4 +539,118 @@
   border-color: rgba(13, 148, 136, 0.35);
   background: rgba(13, 148, 136, 0.08);
   color: #0f766e;
+}
+
+/* =============================================================================
+   TEMPLATE: ATS-PLAIN — single column, no color, system font, maximum ATS
+   parser compatibility. Same DOM as every other template (main-section markup
+   is untouched); this block only hides the sidebar and flattens color/accent
+   usage to black/gray so nothing but plain structured text remains.
+============================================================================= */
+.resume-doc .page.tpl-ats-plain {
+  --c-accent: #111111;
+  --c-name: #111111;
+  --c-text: #1a1a1a;
+  --c-muted: #4b5563;
+  --c-rule: #d1d5db;
+  --label-spacing: 0.04em;
+  --label-transform: none;
+}
+
+.resume-doc .page.tpl-ats-plain .doc-header {
+  border-bottom: 1px solid #111111;
+  padding-bottom: 8px;
+}
+
+.resume-doc .page.tpl-ats-plain .headline {
+  color: var(--c-text);
+  font-weight: 600;
+}
+
+.resume-doc .page.tpl-ats-plain .layout {
+  display: block;
+}
+
+.resume-doc .page.tpl-ats-plain .sidebar {
+  display: none;
+}
+
+.resume-doc .page.tpl-ats-plain .contact-bar {
+  display: flex;
+}
+
+.resume-doc .page.tpl-ats-plain .section-label {
+  color: #111111;
+  border-bottom: 1px solid var(--c-rule);
+}
+
+.resume-doc .page.tpl-ats-plain .exp-company,
+.resume-doc .page.tpl-ats-plain .edu-inst {
+  color: var(--c-text);
+  font-weight: 600;
+}
+
+.resume-doc .page.tpl-ats-plain .skill-chips {
+  gap: 4px 10px;
+}
+
+.resume-doc .page.tpl-ats-plain .skill-chips li {
+  border: none;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: var(--c-text);
+}
+
+.resume-doc .page.tpl-ats-plain .skill-chips li:not(:last-child)::after {
+  content: ",";
+}
+
+/* =============================================================================
+   TEMPLATE: TWO-COLUMN-ATS — visual 2-column layout for compact scanning, but
+   deliberately no color/background decoration. DOM order stays linear (same
+   markup as every template: <main> before <aside> in source order) — the grid
+   only repositions columns visually, so a parser reading raw text in document
+   order still sees main content, then contact/sidebar info, without gaps.
+============================================================================= */
+.resume-doc .page.tpl-two-column-ats {
+  --c-accent: #111111;
+  --c-name: #111111;
+  --c-text: #1a1a1a;
+  --c-muted: #4b5563;
+  --c-rule: #d1d5db;
+  --sidebar-w: 26%;
+  --label-transform: none;
+  --label-spacing: 0.04em;
+}
+
+.resume-doc .page.tpl-two-column-ats .doc-header {
+  border-bottom: 1px solid #111111;
+  padding-bottom: 8px;
+}
+
+.resume-doc .page.tpl-two-column-ats .sidebar {
+  border-left: 1px solid var(--c-rule);
+  padding-left: 14px;
+}
+
+.resume-doc .page.tpl-two-column-ats .section-label {
+  color: #111111;
+}
+
+.resume-doc .page.tpl-two-column-ats .side-title {
+  color: #111111;
+}
+
+.resume-doc .page.tpl-two-column-ats .exp-company,
+.resume-doc .page.tpl-two-column-ats .edu-inst {
+  color: var(--c-text);
+  font-weight: 600;
+}
+
+.resume-doc .page.tpl-two-column-ats .skill-chips li {
+  border: 1px solid var(--c-rule);
+  background: transparent;
+  border-radius: 0;
+  color: var(--c-text);
 }

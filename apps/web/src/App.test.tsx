@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -59,5 +59,31 @@ describe('App', () => {
       expect(screen.getByText('Marie Curie')).toBeInTheDocument()
     })
     expect(screen.getByText(/preview — classic/i)).toBeInTheDocument()
+  })
+
+  it('offers all 6 templates and switches instantly, with no network request', async () => {
+    const resume = makeResume({ fullName: 'Ada Lovelace' })
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ state: { resume, template: 'modern', locale: 'auto' }, version: 1 }),
+    )
+    await useResumeStore.persist.rehydrate()
+
+    const user = userEvent.setup()
+    renderApp(<App />)
+
+    const radiogroup = screen.getByRole('radiogroup', { name: /resume template/i })
+    const templateButtons = within(radiogroup).getAllByRole('radio')
+    expect(templateButtons).toHaveLength(6)
+
+    // onUnhandledRequest: 'error' (src/test/setup.ts) means this would throw
+    // if switching templates ever triggered a request.
+    await user.click(within(radiogroup).getByRole('radio', { name: /ats plain/i }))
+
+    expect(within(radiogroup).getByRole('radio', { name: /ats plain/i })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    expect(screen.getByText(/preview — ats-plain/i)).toBeInTheDocument()
   })
 })

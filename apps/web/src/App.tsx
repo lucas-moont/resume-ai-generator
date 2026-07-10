@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ResumePreview } from './components/ResumePreview'
-import type { ResumeDocument, TemplateId } from './types/resume'
+import type { ResumeDocument } from './types/resume'
 import { ApiError, exportPdf, fetchGithubRepos, fetchModels, generateStream, refineStream } from './lib/api/endpoints'
 import type { SseEvent } from './lib/api/sse'
 import type {
@@ -12,14 +12,14 @@ import type {
 } from './lib/api/dto'
 import { ThemeToggle } from './app/theme/ThemeToggle'
 import { useLocale, useResume, useResumeStore, useTemplate } from './features/resume/store/resumeStore'
+import { TEMPLATE_REGISTRY } from './features/resume/templates/registry'
 
 const DEFAULT_MODEL = ''
-const TEMPLATE_OPTIONS: { value: TemplateId; label: string; description: string }[] = [
-  { value: 'modern', label: 'Modern', description: 'Sidebar · indigo accent' },
-  { value: 'classic', label: 'Classic', description: 'Serif · single column' },
-  { value: 'minimal', label: 'Minimal', description: 'Airy · monochrome' },
-  { value: 'compact', label: 'Compact', description: 'Dense · content-rich' },
-]
+const TEMPLATE_OPTIONS = TEMPLATE_REGISTRY.map((t) => ({
+  value: t.id,
+  label: t.label,
+  description: t.description,
+}))
 
 const FALLBACK_MODEL_SUGGESTIONS: ModelSuggestion[] = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },

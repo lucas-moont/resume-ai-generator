@@ -1,5 +1,5 @@
 import type { ResumeDocument, TemplateId } from '../types/resume'
-import '../resume-print.css'
+import '@resume-templates/resume.css'
 import { SafeRichHtml } from './SafeRichHtml'
 
 export function ResumePreview({
