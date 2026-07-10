@@ -13,6 +13,9 @@ export default mergeConfig(
       setupFiles: './src/test/setup.ts',
       globals: true,
       css: false,
+      // e2e/ holds Playwright specs (its own test() API, own runner) — vitest's
+      // default include glob would otherwise also match e2e/**/*.spec.ts.
+      exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
     },
   }),
 )

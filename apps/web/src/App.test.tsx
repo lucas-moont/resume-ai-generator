@@ -1,20 +1,22 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http } from 'msw'
+import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import App from './App'
 import { server } from './test/setup'
 import { renderApp } from './test/render'
 import { sseResponse } from './test/msw/sse'
-import { makeChatTurnEvents, makeResume } from './test/factories'
+import { makeChatTurnEvents, makeResume, makeStageEvents } from './test/factories'
 import { STORAGE_KEY, useResumeStore } from './features/resume/store/resumeStore'
 import { useChatStore } from './features/chat/store/chatStore'
+import { __resetChatBackendAvailability } from './features/chat/hooks/useChatStream'
 
 beforeEach(() => {
   localStorage.clear()
   useResumeStore.setState({ resume: null, template: 'modern', locale: 'auto' })
   useResumeStore.temporal.getState().clear()
   useChatStore.getState().reset()
+  __resetChatBackendAvailability()
 })
 
 describe('App', () => {
@@ -109,5 +111,49 @@ describe('App', () => {
       expect(screen.getByRole('combobox', { name: /template/i })).toHaveValue('classic')
     })
     expect(screen.getByText(/switched to the classic template/i)).toBeInTheDocument()
+  })
+
+  it('graceful degradation: when the sessions list 404s, the sidebar hides but generating still works via the legacy endpoints', async () => {
+    server.use(http.get('/api/chat/sessions', () => HttpResponse.json({ detail: 'not found' }, { status: 404 })))
+    server.use(http.post('/api/chat/sessions', () => HttpResponse.json({ detail: 'not found' }, { status: 404 })))
+    const resume = makeResume({ fullName: 'Legacy Fallback Person' })
+    server.use(http.post('/api/generate/stream', () => sseResponse(makeStageEvents(resume))))
+
+    const user = userEvent.setup()
+    renderApp(<App />)
+
+    await waitFor(() => {
+      expect(screen.queryByRole('navigation', { name: /chat sessions/i })).not.toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText(/^message$/i), 'Senior backend engineer job posting')
+    await user.click(screen.getByRole('button', { name: /^send$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Legacy Fallback Person')).toBeInTheDocument()
+    })
+  })
+
+  it('a plain conversational message with no JD/resume gets a reply without touching the preview (question intent)', async () => {
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'message', data: { content: 'Paste a job description to generate a tailored resume.' } },
+          { event: 'done', data: { progress: 100, messageId: 1, resumeVersionId: null } },
+        ]),
+      ),
+    )
+
+    const user = userEvent.setup()
+    renderApp(<App />)
+
+    await user.type(screen.getByLabelText(/^message$/i), 'hey there')
+    await user.click(screen.getByRole('button', { name: /^send$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Paste a job description to generate a tailored resume.')).toBeInTheDocument()
+    })
+    expect(useResumeStore.getState().resume).toBeNull()
+    expect(screen.getByText(/generate a resume to see the a4 preview here/i)).toBeInTheDocument()
   })
 })
