@@ -54,9 +54,10 @@ const STAGE_MESSAGES: Record<(typeof WORK_STEP_IDS)[number], string> = {
   finalizing: 'Finalizing…',
 }
 
-/** A realistic stage → done SSE sequence, as emitted by /api/generate/stream and /api/refine/stream. */
-export function makeStageEvents(resume: ResumeDocument = makeResume()): MockSseEvent[] {
-  const stageEvents: MockSseEvent[] = WORK_STEP_IDS.map((step, idx) => ({
+/** The stage events every SSE fixture below starts with (shared by
+ * makeStageEvents/makeChatTurnEvents/makeProfileUpdateTurnEvents). */
+function buildStageEvents(): MockSseEvent[] {
+  return WORK_STEP_IDS.map((step, idx) => ({
     event: 'stage',
     data: {
       step,
@@ -64,7 +65,11 @@ export function makeStageEvents(resume: ResumeDocument = makeResume()): MockSseE
       message: STAGE_MESSAGES[step],
     },
   }))
-  return [...stageEvents, { event: 'done', data: { progress: 100, resume } }]
+}
+
+/** A realistic stage → done SSE sequence, as emitted by /api/generate/stream and /api/refine/stream. */
+export function makeStageEvents(resume: ResumeDocument = makeResume()): MockSseEvent[] {
+  return [...buildStageEvents(), { event: 'done', data: { progress: 100, resume } }]
 }
 
 /**
@@ -78,17 +83,9 @@ export function makeChatTurnEvents(
   resume: ResumeDocument = makeResume(),
   options: { content?: string; resumeVersionId?: number; messageId?: number } = {},
 ): MockSseEvent[] {
-  const stageEvents: MockSseEvent[] = WORK_STEP_IDS.map((step, idx) => ({
-    event: 'stage',
-    data: {
-      step,
-      progress: Math.round(((idx + 1) / (WORK_STEP_IDS.length + 1)) * 100),
-      message: STAGE_MESSAGES[step],
-    },
-  }))
   const resumeVersionId = options.resumeVersionId ?? 1
   return [
-    ...stageEvents,
+    ...buildStageEvents(),
     { event: 'resume', data: { resume, resumeVersionId } },
     { event: 'message', data: { content: options.content ?? "I've updated your resume." } },
     { event: 'done', data: { progress: 100, messageId: options.messageId ?? 1, resumeVersionId } },
@@ -105,16 +102,8 @@ export function makeChatTurnEvents(
 export function makeProfileUpdateTurnEvents(
   options: { profileVersion?: number; summary?: string; content?: string; messageId?: number } = {},
 ): MockSseEvent[] {
-  const stageEvents: MockSseEvent[] = WORK_STEP_IDS.map((step, idx) => ({
-    event: 'stage',
-    data: {
-      step,
-      progress: Math.round(((idx + 1) / (WORK_STEP_IDS.length + 1)) * 100),
-      message: STAGE_MESSAGES[step],
-    },
-  }))
   return [
-    ...stageEvents,
+    ...buildStageEvents(),
     {
       event: 'profile_update',
       data: {
