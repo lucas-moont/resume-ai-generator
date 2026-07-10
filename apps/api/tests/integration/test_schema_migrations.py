@@ -76,3 +76,62 @@ def test_init_db_is_a_no_op_when_the_column_is_already_gone(tmp_path):
     init_db(engine)  # second boot, simulating a server restart
 
     assert "template_id" not in _table_columns(engine, "resume_versions")
+
+
+def _create_legacy_v2_ticket03_source_documents_table(engine) -> None:
+    """Raw SQL matching the ticket-03-era schema (before ticket 04 added `diff_summary`) --
+    same rationale as the legacy resume_versions table above: create_all() only creates tables
+    that don't exist yet, so a hand-rolled legacy table is the only way to exercise the ADD
+    COLUMN migration path."""
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE source_documents (
+                    id INTEGER PRIMARY KEY,
+                    filename TEXT NOT NULL,
+                    media_type TEXT NOT NULL,
+                    sha256 TEXT NOT NULL UNIQUE,
+                    size_bytes INTEGER NOT NULL,
+                    stored_path TEXT NOT NULL,
+                    extracted_json TEXT,
+                    proposed_patch TEXT,
+                    status TEXT NOT NULL DEFAULT 'stored',
+                    error TEXT,
+                    created_at TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO source_documents (id, filename, media_type, sha256, size_bytes, "
+                "stored_path, status, created_at) VALUES "
+                "(1, 'a.json', 'json', :sha, 1, 'p', 'extracted', '2026-01-01T00:00:00')"
+            ),
+            {"sha": "a" * 64},
+        )
+        conn.commit()
+
+
+def test_init_db_adds_diff_summary_to_a_legacy_ticket03_source_documents_table(tmp_path):
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'legacy_v2.db').as_posix()}")
+    _create_legacy_v2_ticket03_source_documents_table(engine)
+    assert "diff_summary" not in _table_columns(engine, "source_documents")
+
+    init_db(engine)
+
+    assert "diff_summary" in _table_columns(engine, "source_documents")
+    with Session(engine) as session:
+        row = session.exec(text("SELECT id, filename FROM source_documents WHERE id = 1")).first()
+        assert row is not None
+        assert row[1] == "a.json"
+
+
+def test_init_db_diff_summary_migration_is_a_no_op_on_a_fresh_db(tmp_path):
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'fresh_v2.db').as_posix()}")
+
+    init_db(engine)
+    init_db(engine)  # second boot must not error
+
+    assert "diff_summary" in _table_columns(engine, "source_documents")

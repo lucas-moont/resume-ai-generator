@@ -80,6 +80,39 @@ def mark_failed(session: Session, row: SourceDocument, *, error: str) -> SourceD
     return row
 
 
+def mark_proposed(
+    session: Session, row: SourceDocument, *, proposed_patch: str, diff_summary: str
+) -> SourceDocument:
+    """v2 ticket 04: the Incremental Merge pipeline ran and produced a (possibly empty)
+    proposal -- ``proposed_patch``/``diff_summary`` are JSON-serialized (``list[PatchOp]`` /
+    ``list[str]`` respectively), always written even when empty (an upload identical to the
+    active profile still reaches 'proposed', just with an empty proposal)."""
+    row.status = "proposed"
+    row.proposed_patch = proposed_patch
+    row.diff_summary = diff_summary
+    row.error = None
+    session.add(row)
+    session.flush()
+    session.refresh(row)
+    return row
+
+
+def mark_applied(session: Session, row: SourceDocument) -> SourceDocument:
+    row.status = "applied"
+    session.add(row)
+    session.flush()
+    session.refresh(row)
+    return row
+
+
+def mark_rejected(session: Session, row: SourceDocument) -> SourceDocument:
+    row.status = "rejected"
+    session.add(row)
+    session.flush()
+    session.refresh(row)
+    return row
+
+
 def delete(session: Session, row: SourceDocument) -> None:
     session.delete(row)
     session.flush()

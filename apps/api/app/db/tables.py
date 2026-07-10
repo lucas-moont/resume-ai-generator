@@ -60,9 +60,12 @@ class SourceDocument(SQLModel, table=True):
     """An uploaded `.json`/`.md`/`.pdf` file carrying professional information (CONTEXT.md:
     Source Document). Lifecycle: stored -> extracted -> proposed -> applied | rejected |
     failed. v2 ticket 03 produces rows up to `extracted` (with `extracted_json` as the
-    preview) or `failed` (with an actionable `error`); `proposed`/`applied`/`rejected` and
-    `proposed_patch` are populated by ticket 04's merge-proposal flow -- the column exists
-    here, nullable, so that ticket doesn't need its own migration.
+    preview) or `failed` (with an actionable `error`). As of v2 ticket 04, every successful
+    extraction is immediately followed -- in the SAME request -- by the Incremental Merge
+    pipeline (`services/ingestion/merge_service.py`), so `extracted` is a transient in-request
+    state, never the terminal one returned to a caller: a document always settles at
+    `proposed` (possibly with an empty proposal), `applied`, `rejected`, or `failed`.
+    `proposed_patch`/`diff_summary` are populated together by `mark_proposed` (ticket 04).
     """
 
     __tablename__ = "source_documents"
@@ -75,6 +78,7 @@ class SourceDocument(SQLModel, table=True):
     stored_path: str  # data/uploads/<sha256>.<ext>
     extracted_json: str | None = None  # JSON-serialized ResumeDocument preview
     proposed_patch: str | None = None  # JSON-serialized list[PatchOp] -- ticket 04
+    diff_summary: str | None = None  # JSON-serialized list[str] -- ticket 04, alongside proposed_patch
     status: str = "stored"  # 'stored' | 'extracted' | 'proposed' | 'applied' | 'rejected' | 'failed'
     error: str | None = None  # actionable message when status == 'failed'
     created_at: datetime = Field(default_factory=_utcnow)

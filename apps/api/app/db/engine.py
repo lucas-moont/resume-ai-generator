@@ -57,9 +57,26 @@ def _drop_legacy_resume_versions_template_id_column(engine: Engine) -> None:
         conn.commit()
 
 
+def _add_missing_source_documents_diff_summary_column(engine: Engine) -> None:
+    """Ad-hoc migration (no Alembic -- see app/db/tables.py's docstring): a `source_documents`
+    table created by a v2-ticket-03-era boot (before ticket 04 added `diff_summary`) is missing
+    the column outright. Unlike the DROP COLUMN migration above, `ALTER TABLE ... ADD COLUMN` is
+    supported by every SQLite version, so no version gate is needed here.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.connect() as conn:
+        columns = conn.execute(text("PRAGMA table_info(source_documents)")).fetchall()
+        if not columns or any(row[1] == "diff_summary" for row in columns):
+            return
+        conn.execute(text("ALTER TABLE source_documents ADD COLUMN diff_summary TEXT"))
+        conn.commit()
+
+
 def init_db(engine: Engine) -> None:
     SQLModel.metadata.create_all(engine)
     _drop_legacy_resume_versions_template_id_column(engine)
+    _add_missing_source_documents_diff_summary_column(engine)
 
 
 def new_session(engine: Engine) -> Session:
