@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { ResumePreview } from './components/ResumePreview'
 import type { ResumeDocument, TemplateId } from './types/resume'
+import { ApiError, exportPdf, fetchGithubRepos, fetchModels, generateStream, refineStream } from './lib/api/endpoints'
+import type { SseEvent } from './lib/api/sse'
+import type {
+  ModelSuggestion,
+  StreamDonePayload,
+  StreamErrorPayload,
+  StreamStagePayload,
+} from './lib/api/dto'
 
 const DEFAULT_MODEL = ''
 const TEMPLATE_OPTIONS: { value: TemplateId; label: string; description: string }[] = [
@@ -9,7 +17,6 @@ const TEMPLATE_OPTIONS: { value: TemplateId; label: string; description: string 
   { value: 'minimal', label: 'Minimal', description: 'Airy · monochrome' },
   { value: 'compact', label: 'Compact', description: 'Dense · content-rich' },
 ]
-type ModelSuggestion = { value: string; label: string }
 
 const FALLBACK_MODEL_SUGGESTIONS: ModelSuggestion[] = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -30,9 +37,6 @@ const WORK_STEPS = [
   { id: 'finalizing', label: 'Finalizing' },
 ]
 type WorkType = 'generate' | 'refine' | null
-type StreamStage = { step: string; progress?: number; message?: string }
-type StreamDone = { progress?: number; resume: ResumeDocument }
-type StreamError = { message?: string }
 
 type Theme = 'light' | 'dark'
 
@@ -114,9 +118,7 @@ function App() {
     let cancelled = false
     ;(async () => {
       try {
-        const r = await fetch('/api/models')
-        if (!r.ok || cancelled) return
-        const data = (await r.json()) as { models?: ModelSuggestion[] }
+        const data = await fetchModels()
         if (!cancelled && Array.isArray(data.models) && data.models.length > 0) {
           setModelSuggestions(data.models)
         }
@@ -145,54 +147,26 @@ function App() {
     return idx >= 0 ? idx : 0
   }, [])
 
-  const runStreamRequest = useCallback(
+  const runStreamEvents = useCallback(
     async (
-      url: string,
-      payload: unknown,
+      events: AsyncGenerator<SseEvent>,
       onDone: (resume: ResumeDocument) => void,
     ) => {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (!r.ok || !r.body) {
-        const data = await r.json().catch(() => ({}))
-        throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail))
-      }
-      const reader = r.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop() ?? ''
-        for (const chunk of parts) {
-          const lines = chunk.split('\n')
-          const eventLine = lines.find((l) => l.startsWith('event:'))
-          const dataLine = lines.find((l) => l.startsWith('data:'))
-          if (!eventLine || !dataLine) continue
-          const event = eventLine.replace('event:', '').trim()
-          const raw = dataLine.replace('data:', '').trim()
-          if (!raw) continue
-          const parsed = JSON.parse(raw) as StreamStage | StreamDone | StreamError
-          if (event === 'stage') {
-            const s = parsed as StreamStage
-            setWorkStep(stepIndexFromId(s.step))
-            setWorkProgress(Math.max(5, Math.min(99, Math.round(s.progress ?? 0))))
-            setWorkMessage(s.message ?? '')
-          } else if (event === 'done') {
-            const d = parsed as StreamDone
-            setWorkProgress(Math.round(d.progress ?? 100))
-            setWorkStep(WORK_STEPS.length - 1)
-            setWorkMessage('Done')
-            onDone(d.resume)
-          } else if (event === 'error') {
-            const err = parsed as StreamError
-            throw new Error(err.message || 'Stream failed')
-          }
+      for await (const { event, data } of events) {
+        if (event === 'stage') {
+          const s = data as StreamStagePayload
+          setWorkStep(stepIndexFromId(s.step))
+          setWorkProgress(Math.max(5, Math.min(99, Math.round(s.progress ?? 0))))
+          setWorkMessage(s.message ?? '')
+        } else if (event === 'done') {
+          const d = data as StreamDonePayload
+          setWorkProgress(Math.round(d.progress ?? 100))
+          setWorkStep(WORK_STEPS.length - 1)
+          setWorkMessage('Done')
+          onDone(d.resume)
+        } else if (event === 'error') {
+          const err = data as StreamErrorPayload
+          throw new Error(err.message || 'Stream failed')
         }
       }
     },
@@ -202,17 +176,13 @@ function App() {
   const checkGithub = useCallback(async () => {
     setGhInfo(null)
     try {
-      const r = await fetch('/api/github/repos')
-      const data = await r.json()
-      if (!r.ok) {
-        setGhInfo(data.detail ?? 'GitHub check failed')
-        return
-      }
+      const data = await fetchGithubRepos()
       if (data.warning) setGhInfo(data.warning)
       else if (!data.repos?.length) setGhInfo('No repositories in response.')
       else setGhInfo(`Loaded ${data.repos.length} repos from GitHub.`)
-    } catch {
-      setGhInfo('Could not reach API (is the backend running?)')
+    } catch (e) {
+      if (e instanceof ApiError) setGhInfo((e.detail as string | undefined) ?? 'GitHub check failed')
+      else setGhInfo('Could not reach API (is the backend running?)')
     }
   }, [])
 
@@ -224,15 +194,12 @@ function App() {
     setWorkMessage('Starting generation')
     setLoading(true)
     try {
-      await runStreamRequest(
-        '/api/generate/stream',
-        {
-          job_description: jobDescription,
-          model: model || undefined,
-          locale: locale || undefined,
-        },
-        (nextResume) => setResume(nextResume),
-      )
+      const events = await generateStream({
+        job_description: jobDescription,
+        model: model || undefined,
+        locale: locale || undefined,
+      })
+      await runStreamEvents(events, (nextResume) => setResume(nextResume))
     } catch (e) {
       setError(String(e))
     } finally {
@@ -249,15 +216,12 @@ function App() {
     setWorkMessage('Starting refinement')
     setLoading(true)
     try {
-      await runStreamRequest(
-        '/api/refine/stream',
-        {
-          resume,
-          message: refineText,
-          model: model || undefined,
-        },
-        (nextResume) => setResume(nextResume),
-      )
+      const events = await refineStream({
+        resume,
+        message: refineText,
+        model: model || undefined,
+      })
+      await runStreamEvents(events, (nextResume) => setResume(nextResume))
       setRefineText('')
     } catch (e) {
       setError(String(e))
@@ -271,17 +235,7 @@ function App() {
     setError(null)
     setPdfLoading(true)
     try {
-      const r = await fetch('/api/export/pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resume, template }),
-      })
-      if (!r.ok) {
-        const data = await r.json().catch(() => ({}))
-        setError(data.detail ?? 'PDF export failed')
-        return
-      }
-      const blob = await r.blob()
+      const blob = await exportPdf({ resume, template })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -290,7 +244,8 @@ function App() {
       a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
-      setError(String(e))
+      if (e instanceof ApiError) setError((e.detail as string | undefined) ?? 'PDF export failed')
+      else setError(String(e))
     } finally {
       setPdfLoading(false)
     }

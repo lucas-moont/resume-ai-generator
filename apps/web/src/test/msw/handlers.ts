@@ -25,7 +25,9 @@ export const handlers = [
   http.get('/api/github/repos', () => HttpResponse.json({ repos: DEFAULT_GITHUB_REPOS })),
 
   http.post('/api/export/pdf', () =>
-    new HttpResponse(new Blob(['%PDF-1.4 fake pdf content'], { type: 'application/pdf' }), {
+    // A `Blob` body here gets serialized as the literal string "[object Blob]"
+    // by MSW's node interceptor — pass the raw bytes as a string instead.
+    new HttpResponse('%PDF-1.4 fake pdf content', {
       status: 200,
       headers: { 'Content-Type': 'application/pdf' },
     }),
