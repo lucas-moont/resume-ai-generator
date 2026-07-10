@@ -74,6 +74,22 @@ export interface ChatMessageDto {
   intent: string | null
   resumeVersionId: number | null
   createdAt: string
+  /** v2 ticket 10: present (non-null) when this message is linked to a Source Document
+   * upload. GET /api/chat/sessions/{id} joins source_documents LIVE, at read time, for its
+   * CURRENT status/diffSummary/opsCount — never a stale copy (see ChatMessageSourceDocumentDto). */
+  sourceDocument: ChatMessageSourceDocumentDto | null
+}
+
+/** v2 ticket 10: shape of ChatMessageDto's `sourceDocument` field — mirrors the fields
+ * ProfileUpdatedCard (chatStore.ts) needs, minus `type` (the card variant is decided by the
+ * caller reconstructing it, not carried on the wire). */
+export interface ChatMessageSourceDocumentDto {
+  documentId: number
+  filename: string
+  status: SourceDocumentStatus
+  diffSummary: string[]
+  opsCount: number
+  error: string | null
 }
 
 export interface ChatSessionDetailResponse {
