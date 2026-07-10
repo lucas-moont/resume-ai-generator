@@ -117,6 +117,22 @@ def profile_pdf_max_chars() -> int:
         return 32000
 
 
+def resolve_uploads_dir() -> Path:
+    """Where uploaded Source Document bytes live (v2 ticket 03), read at CALL time (module-
+    qualified) like ``resolve_profile_json_path`` above -- so tests can monkeypatch
+    ``DATA_UPLOADS_DIR`` per-test (see tests/conftest.py's ``isolated_data_env``) without any
+    module needing to re-import this file."""
+    override = os.getenv("DATA_UPLOADS_DIR", "").strip()
+    if override:
+        p = Path(override).expanduser()
+        return p if p.is_absolute() else (ROOT_DIR / p).resolve()
+    return DATA_DIR / "uploads"
+
+
+def max_upload_bytes() -> int:
+    return _env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024, minimum=1024, maximum=100 * 1024 * 1024)
+
+
 def profile_json_candidates_message() -> str:
     lines: list[str] = []
     o = os.getenv("PROFILE_JSON_PATH", "").strip()

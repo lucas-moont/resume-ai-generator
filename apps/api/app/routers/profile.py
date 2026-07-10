@@ -13,18 +13,51 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session
 
-from app.db.tables import ProfileVersion
+from app.config import max_upload_bytes
+from app.db.tables import ProfileVersion, SourceDocument
 from app.domain.schemas import RevertProfileRequest
-from app.repositories import profile_repo
+from app.repositories import profile_repo, source_document_repo
 from app.routers.deps import get_session
 from app.services.errors import http_error
 from app.services.github_client import fetch_user_repos
+from app.services.ingestion.ingest_json import JsonIngestionError, ingest_json
+from app.services.ingestion.storage import compute_sha256, store_upload
 from app.services.profile_resolution import ProfileValidationError, resolve_active_profile
 
 router = APIRouter()
+
+_MEDIA_TYPE_BY_EXT = {"json": "json", "md": "md", "markdown": "md", "pdf": "pdf"}
+
+
+def _media_type_from_filename(filename: str | None) -> str | None:
+    if not filename or "." not in filename:
+        return None
+    ext = filename.rsplit(".", 1)[-1].lower()
+    return _MEDIA_TYPE_BY_EXT.get(ext)
+
+
+def _upload_response(row: SourceDocument) -> dict:
+    return {
+        "documentId": row.id,
+        "status": row.status,
+        "extractedPreview": json.loads(row.extracted_json) if row.extracted_json else None,
+        "error": row.error,
+    }
+
+
+def _document_list_dict(row: SourceDocument) -> dict:
+    return {
+        "documentId": row.id,
+        "filename": row.filename,
+        "mediaType": row.media_type,
+        "status": row.status,
+        "sizeBytes": row.size_bytes,
+        "createdAt": row.created_at.isoformat(),
+        "error": row.error,
+    }
 
 
 def _version_dict(row: ProfileVersion) -> dict:
@@ -76,6 +109,60 @@ async def revert_profile(body: RevertProfileRequest, session: Session = Depends(
     session.commit()
     session.refresh(new_row)
     return _version_dict(new_row)
+
+
+@router.post("/api/profile/documents", status_code=202)
+async def upload_document(
+    file: UploadFile = File(...), session: Session = Depends(get_session)
+):
+    """Accepts a `.json`/`.md`/`.pdf` Source Document upload (CONTEXT.md: Source Document,
+    Ingestion). `.json` is validated deterministically (no LLM) -- a malformed or
+    schema-invalid file is a request error (422) and no row is persisted for it, same
+    treatment as the >max-size case (413): both are rejected before they ever become a Source
+    Document. `.md`/`.pdf` ingestion (LLM-based) is added in a later slice of this ticket;
+    for now those extensions are recognized but not yet processed.
+    """
+    content = await file.read()
+    limit = max_upload_bytes()
+    if len(content) > limit:
+        raise http_error(413, f"File exceeds the {limit} byte upload limit")
+
+    media_type = _media_type_from_filename(file.filename)
+    if media_type is None:
+        raise http_error(415, "Unsupported file type -- upload a .json, .md, or .pdf file")
+
+    sha256 = compute_sha256(content)
+    existing = source_document_repo.get_by_sha256(session, sha256)
+    if existing is not None:
+        return _upload_response(existing)
+
+    if media_type != "json":
+        raise http_error(415, f"{media_type} uploads are not supported yet")
+
+    try:
+        resume = ingest_json(content)
+    except JsonIngestionError as e:
+        raise http_error(422, str(e)) from e
+
+    stored_path = store_upload(content, sha256=sha256, ext="json")
+    row = source_document_repo.insert(
+        session,
+        filename=file.filename or "upload.json",
+        media_type="json",
+        sha256=sha256,
+        size_bytes=len(content),
+        stored_path=stored_path,
+        status="extracted",
+        extracted_json=resume.model_dump_json(),
+    )
+    session.commit()
+    return _upload_response(row)
+
+
+@router.get("/api/profile/documents")
+async def list_documents(session: Session = Depends(get_session)):
+    rows = source_document_repo.list_all(session)
+    return {"documents": [_document_list_dict(r) for r in rows]}
 
 
 @router.get("/api/github/repos")
