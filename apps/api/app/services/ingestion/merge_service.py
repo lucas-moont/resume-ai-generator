@@ -69,15 +69,19 @@ def _strip_code_fence(raw: str) -> str:
     return m.group(1).strip() if m else raw
 
 
-def _parse_patch_ops(raw: str) -> list[PatchOp]:
-    """Parses the Adjudication LLM's raw response into ``PatchOp`` instances. Each candidate op
-    is validated independently -- ``PatchOp``'s own construction-time whitelist (path shape,
-    non-blank reason/sourceExcerpt, required value) rejects a malformed or out-of-whitelist op
-    WITHOUT losing the rest of an otherwise-good response, mirroring ``apply_patch``'s own
-    per-op skip philosophy (see profile_patch.py's module docstring) rather than failing the
-    whole adjudication over one bad entry. Any response that isn't a JSON array (or
-    ``{"ops": [...]}``) at all yields an empty list rather than raising -- adjudication failures
-    are surfaced by the caller marking the Source Document 'failed', not a crash here."""
+def parse_patch_ops_from_llm_response(raw: str) -> list[PatchOp]:
+    """Parses an LLM's raw response into ``PatchOp`` instances -- shared by every LLM call in
+    this app that is asked to return ``PatchOp[]`` JSON (Adjudication here, and v2 ticket 05's
+    chat ``profile_update`` turn in ``chat_service.py``, which reuses this function rather than
+    duplicating the parsing). Each candidate op is validated independently --``PatchOp``'s own
+    construction-time whitelist (path shape, non-blank reason/sourceExcerpt, required value)
+    rejects a malformed or out-of-whitelist op WITHOUT losing the rest of an otherwise-good
+    response, mirroring ``apply_patch``'s own per-op skip philosophy (see profile_patch.py's
+    module docstring) rather than failing the whole response over one bad entry. Any response
+    that isn't a JSON array (or ``{"ops": [...]}``) at all yields an empty list rather than
+    raising -- callers treat "no usable ops" as a non-fatal, caller-specific outcome (the
+    Source Document marked 'failed' here; a friendly chat reply with the profile left untouched
+    in ticket 05), never a crash in this function."""
     try:
         data = json.loads(_strip_code_fence(raw))
     except json.JSONDecodeError:
@@ -141,7 +145,7 @@ async def adjudicate(diff: DiffResult, *, model: str | None = None) -> list[Patc
     system = load_merge_profile_system_prompt(PROMPTS_DIR)
     user = _build_adjudication_user_message(diff)
     raw = await llm_client.chat_json(system, user, model=model)
-    return _parse_patch_ops(raw)
+    return parse_patch_ops_from_llm_response(raw)
 
 
 async def propose_merge(

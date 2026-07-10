@@ -125,7 +125,7 @@ class ChatMessage(SQLModel, table=True):
     session_id: int = Field(foreign_key="chat_sessions.id", ondelete="CASCADE")
     role: str  # 'user' | 'assistant'
     content: str
-    intent: str | None = None  # 'generate' | 'refine' | 'question'
+    intent: str | None = None  # 'generate' | 'refine' | 'profile_update' | 'question'
     resume_version_id: int | None = Field(default=None, foreign_key="resume_versions.id")
     meta: str | None = None  # JSON-serialized {model, provider, elapsed_ms, error?}
     created_at: datetime = Field(default_factory=_utcnow)
