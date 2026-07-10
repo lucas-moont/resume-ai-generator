@@ -6,7 +6,23 @@ for `.json` uploads (deterministic ingestion, docs/v2-living-profile.md item 2).
 
 from __future__ import annotations
 
+import io
 import json
+
+from pypdf import PdfWriter
+
+from app.services.ingestion import ingest_pdf as ingest_pdf_module
+
+
+def _blank_pdf_bytes() -> bytes:
+    """A structurally valid PDF with a page but no text layer -- the "scanned document"
+    shape ``ingest_pdf`` must reject as PdfIngestionError, never crash on."""
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
 
 VALID_JSON_BYTES = json.dumps(
     {
@@ -89,6 +105,56 @@ Some markdown body about data engineering.
         body = resp.json()
         assert body["status"] == "extracted"
         assert body["extractedPreview"]["fullName"] == "Bruno Reis"
+        assert fake_llm.call_count == 1
+
+    async def test_llm_extraction_failure_is_a_failed_status_not_a_500(self, client, fake_llm):
+        fake_llm.queue(ValueError("LLM backend unreachable"))
+
+        resp = await client.post(
+            "/api/profile/documents",
+            files={"file": ("notes.md", b"# Just a body, no frontmatter", "text/markdown")},
+        )
+
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert body["extractedPreview"] is None
+        assert body["error"]  # actionable message, not empty
+
+        listing = (await client.get("/api/profile/documents")).json()["documents"]
+        assert listing[0]["status"] == "failed"
+
+
+class TestUploadPdfDocument:
+    async def test_pdf_with_no_extractable_text_is_a_failed_status_not_a_500(self, client):
+        resp = await client.post(
+            "/api/profile/documents",
+            files={"file": ("scanned.pdf", _blank_pdf_bytes(), "application/pdf")},
+        )
+
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert body["extractedPreview"] is None
+        assert body["error"]  # actionable, per the acceptance criteria
+
+    async def test_pdf_with_text_is_extracted_via_the_llm(self, client, fake_llm, monkeypatch):
+        monkeypatch.setattr(
+            ingest_pdf_module, "extract_pdf_plain_text", lambda path: "Diana Melo\nPrincipal Engineer"
+        )
+        fake_llm.queue(
+            json.dumps({"fullName": "Diana Melo", "headline": "Principal Engineer", "summary": "S."})
+        )
+
+        resp = await client.post(
+            "/api/profile/documents",
+            files={"file": ("resume.pdf", _blank_pdf_bytes(), "application/pdf")},
+        )
+
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["status"] == "extracted"
+        assert body["extractedPreview"]["fullName"] == "Diana Melo"
         assert fake_llm.call_count == 1
 
 

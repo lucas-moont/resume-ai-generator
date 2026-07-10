@@ -12,6 +12,7 @@ data copies the target version's.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlmodel import Session
@@ -25,8 +26,10 @@ from app.services.errors import http_error
 from app.services.github_client import fetch_user_repos
 from app.services.ingestion.ingest_json import JsonIngestionError, ingest_json
 from app.services.ingestion.ingest_markdown import ingest_markdown
+from app.services.ingestion.ingest_pdf import ingest_pdf
 from app.services.ingestion.storage import compute_sha256, store_upload
 from app.services.profile_resolution import ProfileValidationError, resolve_active_profile
+from app.services.secret_redaction import redact_secrets
 
 router = APIRouter()
 
@@ -123,9 +126,12 @@ async def upload_document(
     schema-invalid file is a request error (422) and no row is persisted for it, same
     treatment as the >max-size case (413): both are rejected before they ever become a Source
     Document. `.md`/`.pdf` go through LLM extraction instead (``model`` optionally overrides
-    the configured model, same convention as /api/generate and /api/chat); `.pdf` and its
-    failure handling (e.g. a scanned PDF with no extractable text) are added in a later slice
-    of this ticket -- for now `.pdf` is recognized but not yet processed.
+    the configured model, same convention as /api/generate and /api/chat): the file is
+    persisted and the row inserted as `status='stored'` FIRST, since LLM extraction can fail
+    for reasons that have nothing to do with the upload being bad (a scanned PDF with no text
+    layer, a flaky provider); any failure there marks the row `status='failed'` with an
+    actionable, secret-redacted message instead of ever surfacing as a 500 -- the upload
+    itself already succeeded, so the response is still 202.
     """
     content = await file.read()
     limit = max_upload_bytes()
@@ -161,25 +167,34 @@ async def upload_document(
         session.commit()
         return _upload_response(row)
 
-    if media_type == "md":
-        stored_path = store_upload(content, sha256=sha256, ext="md")
-        row = source_document_repo.insert(
-            session,
-            filename=file.filename or "upload.md",
-            media_type="md",
-            sha256=sha256,
-            size_bytes=len(content),
-            stored_path=stored_path,
-            status="stored",
-        )
-        session.commit()
+    # .md / .pdf: persist first (status='stored'), then attempt LLM-based extraction --
+    # any failure there becomes status='failed', never a 500 (see docstring above).
+    stored_path = store_upload(content, sha256=sha256, ext=media_type)
+    row = source_document_repo.insert(
+        session,
+        filename=file.filename or f"upload.{media_type}",
+        media_type=media_type,
+        sha256=sha256,
+        size_bytes=len(content),
+        stored_path=stored_path,
+        status="stored",
+    )
+    session.commit()
 
-        resume = await ingest_markdown(content, model=resolve_requested_model(model))
-        row = source_document_repo.mark_extracted(session, row, extracted_json=resume.model_dump_json())
+    model_override = resolve_requested_model(model)
+    try:
+        if media_type == "md":
+            resume = await ingest_markdown(content, model=model_override)
+        else:
+            resume = await ingest_pdf(Path(stored_path), model=model_override)
+    except Exception as e:
+        row = source_document_repo.mark_failed(session, row, error=redact_secrets(str(e)))
         session.commit()
         return _upload_response(row)
 
-    raise http_error(415, f"{media_type} uploads are not supported yet")
+    row = source_document_repo.mark_extracted(session, row, extracted_json=resume.model_dump_json())
+    session.commit()
+    return _upload_response(row)
 
 
 @router.get("/api/profile/documents")
