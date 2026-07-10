@@ -6,7 +6,11 @@ import {
   getChatSession,
   listChatSessions,
 } from '../../../lib/api/endpoints'
-import type { ChatMessageDto, CreateChatSessionResponse } from '../../../lib/api/dto'
+import type {
+  ChatMessageDto,
+  ChatMessageSourceDocumentDto,
+  CreateChatSessionResponse,
+} from '../../../lib/api/dto'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { useChatStore, type ChatMessage, type ProfileUpdatedCard } from '../store/chatStore'
 
@@ -62,18 +66,19 @@ export function useDeleteSession() {
 
 /** v2 ticket 10: reconstructs the ProfileUpdatedCard a document-upload assistant message had
  * live, from `dto.sourceDocument` (GET /api/chat/sessions/{id} joins source_documents live, at
- * read time, for its CURRENT status/diffSummary/opsCount — never a stale copy). `!= null`
- * (not `!== null`) deliberately also tolerates the field being absent entirely, not just
- * explicit null, for resilience against any older/incomplete mock payload. */
-function toProfileUpdatedCard(sourceDocument: ChatMessageDto['sourceDocument']): ProfileUpdatedCard {
+ * read time, for its CURRENT status/diffSummary/opsCount — never a stale copy). Takes the
+ * non-null shape directly -- the `!= null` guard lives at the call site (toChatMessage below),
+ * which also deliberately tolerates the field being absent entirely, not just explicit null,
+ * for resilience against any older/incomplete mock payload. */
+function toProfileUpdatedCard(sourceDocument: ChatMessageSourceDocumentDto): ProfileUpdatedCard {
   return {
     type: 'profileUpdated',
-    documentId: sourceDocument!.documentId,
-    filename: sourceDocument!.filename,
-    status: sourceDocument!.status,
-    diffSummary: sourceDocument!.diffSummary,
-    opsCount: sourceDocument!.opsCount,
-    ...(sourceDocument!.error !== null ? { error: sourceDocument!.error } : {}),
+    documentId: sourceDocument.documentId,
+    filename: sourceDocument.filename,
+    status: sourceDocument.status,
+    diffSummary: sourceDocument.diffSummary,
+    opsCount: sourceDocument.opsCount,
+    ...(sourceDocument.error !== null ? { error: sourceDocument.error } : {}),
   }
 }
 
