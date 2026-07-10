@@ -281,11 +281,27 @@ async def revert_profile(body: RevertProfileRequest, session: Session = Depends(
     return _version_dict(new_row)
 
 
+def _parse_session_id(raw: str | None) -> int | None:
+    """v2 ticket 10 review fix: ``sessionId`` used to be declared ``int | None = Form(None)``,
+    which makes FastAPI/Pydantic reject a malformed value (e.g. "not-a-number") with an
+    automatic 422 BEFORE ``upload_document`` ever runs -- exactly the outcome this field must
+    never cause (the session link is a best-effort side channel; the upload is the primary
+    flow). Declaring it ``str | None`` instead and parsing it by hand here means a malformed
+    value is silently treated the same as an absent one -- ``None``, never a raised error.
+    """
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 @router.post("/api/profile/documents", status_code=202)
 async def upload_document(
     file: UploadFile = File(...),
     model: str | None = Form(None),
-    sessionId: int | None = Form(None),
+    sessionId: str | None = Form(None),
     session: Session = Depends(get_session),
 ):
     """Accepts a `.json`/`.md`/`.pdf` Source Document upload (CONTEXT.md: Source Document,
@@ -304,8 +320,10 @@ async def upload_document(
     came from, if any -- when it resolves to a real ``ChatSession``, a durable assistant
     chat_message linking to this Source Document is persisted (see
     ``_link_upload_to_session``), so the frontend's ProfileUpdatedCard survives a session
-    reload instead of reverting to plain text. An unknown/omitted ``sessionId`` never affects
-    the upload's own outcome.
+    reload instead of reverting to plain text. Declared ``str`` (not ``int``) and parsed by
+    ``_parse_session_id`` on purpose: an unknown, missing, OR MALFORMED ``sessionId`` must
+    never affect the upload's own outcome -- an ``int`` Form field would instead make
+    FastAPI itself reject a malformed value with a 422 before this handler ever runs.
     """
     content = await file.read()
     limit = max_upload_bytes()
@@ -316,10 +334,12 @@ async def upload_document(
     if media_type is None:
         raise http_error(415, "Unsupported file type -- upload a .json, .md, or .pdf file")
 
+    chat_session_id = _parse_session_id(sessionId)
+
     sha256 = compute_sha256(content)
     existing = source_document_repo.get_by_sha256(session, sha256)
     if existing is not None:
-        _link_upload_to_session(session, sessionId, existing)
+        _link_upload_to_session(session, chat_session_id, existing)
         return _upload_response(existing)
 
     model_override = resolve_requested_model(model)
@@ -343,7 +363,7 @@ async def upload_document(
         )
         session.commit()
         row = await _propose_merge_or_fail(session, row, resume, model_override)
-        _link_upload_to_session(session, sessionId, row)
+        _link_upload_to_session(session, chat_session_id, row)
         return _upload_response(row)
 
     # .md / .pdf: persist first (status='stored'), then attempt LLM-based extraction --
@@ -368,13 +388,13 @@ async def upload_document(
     except Exception as e:
         row = source_document_repo.mark_failed(session, row, error=redact_secrets(str(e)))
         session.commit()
-        _link_upload_to_session(session, sessionId, row)
+        _link_upload_to_session(session, chat_session_id, row)
         return _upload_response(row)
 
     row = source_document_repo.mark_extracted(session, row, extracted_json=resume.model_dump_json())
     session.commit()
     row = await _propose_merge_or_fail(session, row, resume, model_override)
-    _link_upload_to_session(session, sessionId, row)
+    _link_upload_to_session(session, chat_session_id, row)
     return _upload_response(row)
 
 

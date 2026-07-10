@@ -96,6 +96,24 @@ class TestUploadLinksToChatSession:
         assert resp.status_code == 202
         assert resp.json()["status"] == "proposed"
 
+    async def test_upload_with_a_malformed_session_id_still_succeeds_with_no_linked_message(
+        self, client, fake_llm
+    ):
+        """A malformed sessionId (not an int at all) must be treated the same as an
+        unknown/missing one -- the upload is the primary flow, the session link is a
+        best-effort side channel that must never veto it, let alone with FastAPI's own
+        automatic 422 for a badly-typed Form field."""
+        fake_llm.queue("[]")
+
+        resp = await client.post(
+            "/api/profile/documents",
+            data={"sessionId": "not-a-number"},
+            files={"file": ("resume.json", VALID_JSON_BYTES, "application/json")},
+        )
+
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "proposed"
+
     async def test_reuploading_the_same_bytes_from_a_new_session_still_links_a_message(
         self, client, fake_llm, test_db_engine
     ):

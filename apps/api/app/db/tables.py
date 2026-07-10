@@ -8,7 +8,7 @@ JSON columns are plain TEXT with (de)serialization done in the repository layer 
 SQLite's JSON1 extension) -- keeps the roundtrip explicit and testable against the actual
 pydantic models (ProfileMaster/ResumeDocument) rather than trusting a DB-side JSON type.
 
-Three FK-shaped columns are deliberately declared as plain nullable ints WITHOUT a real
+Four FK-shaped columns are deliberately declared as plain nullable ints WITHOUT a real
 ForeignKey constraint:
   - `ProfileVersion.chat_message_id` -- a real FK here would close the cycle
     profile_versions -> chat_messages -> resume_versions -> profile_versions (SQLite cannot
@@ -28,7 +28,20 @@ ForeignKey constraint:
     breadcrumb, dangling but harmless -- see
     tests/unit/test_source_document_repo.py::TestSourceDocumentSoftRefOrphan for the
     characterization test.
-Referential integrity for all three is enforced by the repository layer, not the schema.
+  - `ChatMessage.meta`'s `sourceDocumentId` key (v2 ticket 10, JSON-encoded, not a real
+    column) -- when an upload names the chat session it came from, a durable assistant
+    ChatMessage is persisted with `meta: {"sourceDocumentId": <SourceDocument.id>}`, so its
+    ProfileUpdatedCard survives a session reload instead of reverting to plain text (see
+    routers/profile.py's `_link_upload_to_session`). Deliberately the SAME soft-ref treatment
+    as the three above, for the same reason as `source_document_id`: the Source Document may
+    be deleted independently of the chat history that references it. This key alone is
+    persisted -- NEVER a copy of `status` -- so there is only one source of truth: GET
+    /api/chat/sessions/{id} joins `source_documents` LIVE, at read time, for whatever the
+    CURRENT status/diffSummary/opsCount is (routers/chat.py's `_source_document_link_dict`);
+    apply/reject never need to touch this message. A dangling `sourceDocumentId` (the
+    document was deleted) simply resolves to no `sourceDocument` on that message, same as any
+    other message with no such reference.
+Referential integrity for all four is enforced by the repository layer, not the schema.
 """
 
 from __future__ import annotations
@@ -127,5 +140,5 @@ class ChatMessage(SQLModel, table=True):
     content: str
     intent: str | None = None  # 'generate' | 'refine' | 'profile_update' | 'question'
     resume_version_id: int | None = Field(default=None, foreign_key="resume_versions.id")
-    meta: str | None = None  # JSON-serialized {model, provider, elapsed_ms, error?}
+    meta: str | None = None  # JSON-serialized {model, provider, elapsed_ms, error?, sourceDocumentId?}
     created_at: datetime = Field(default_factory=_utcnow)
