@@ -105,6 +105,10 @@ _PROFILE_UPDATE_OFFER_REGENERATE = {
     "en": " Want me to update your resume with this change?",
     "pt-BR": " Quer que eu atualize seu currículo com essa mudança?",
 }
+_PROFILE_UPDATE_APPLIED_TEXT = {
+    "en": "Updated your profile: {summary}.",
+    "pt-BR": "Atualizei seu perfil: {summary}.",
+}
 
 
 def _reply_text_for_locale(intent: str, locale: str) -> str:
@@ -362,9 +366,7 @@ async def _handle_profile_update_turn(
     # Offers regeneration in natural language -- it never happens automatically (module
     # docstring / CONTEXT.md: profile_update). No offer at all when there is nothing yet to
     # regenerate.
-    content = (
-        f"Atualizei seu perfil: {summary}." if resolved_locale == "pt-BR" else f"Updated your profile: {summary}."
-    )
+    content = _PROFILE_UPDATE_APPLIED_TEXT[resolved_locale].format(summary=summary)
     if chat_session.active_resume_version_id is not None:
         content += _PROFILE_UPDATE_OFFER_REGENERATE[resolved_locale]
 
