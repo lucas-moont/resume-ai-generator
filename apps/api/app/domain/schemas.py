@@ -91,3 +91,7 @@ class ChatMessageRequest(BaseModel):
     model: str | None = None
     locale: str | None = None
     jobDescription: str | None = None
+
+
+class RevertProfileRequest(BaseModel):
+    toVersion: int
