@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchModels } from '../../../lib/api/endpoints'
 import type { ModelSuggestion } from '../../../lib/api/dto'
 import { useChatStore } from '../store/chatStore'
+import type { UploadAttachment } from '../../upload/useFileUpload'
+import { AttachmentChip } from '../../upload/components/AttachmentChip'
 
 const FALLBACK_MODEL_SUGGESTIONS: ModelSuggestion[] = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -24,6 +26,11 @@ export function Composer({
   focusSignal,
   onSend,
   onStop,
+  attachments,
+  validationError,
+  onAddFiles,
+  onRemoveAttachment,
+  onRetryAttachment,
 }: {
   draft: string
   onDraftChange: (value: string) => void
@@ -31,10 +38,17 @@ export function Composer({
   focusSignal: number
   onSend: (message: string, options: { model?: string }) => void
   onStop: () => void
+  attachments: UploadAttachment[]
+  validationError: string | null
+  onAddFiles: (files: FileList | File[]) => void
+  onRemoveAttachment: (id: string) => void
+  onRetryAttachment: (id: string) => void
 }) {
   const [model, setModel] = useState('')
   const [modelSuggestOpen, setModelSuggestOpen] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const streaming = useChatStore((s) => s.streaming)
 
   const modelsQuery = useQuery({ queryKey: ['models'], queryFn: fetchModels })
@@ -68,8 +82,71 @@ export function Composer({
     }
   }
 
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = () => setIsDragging(false)
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setIsDragging(false)
+    if (e.dataTransfer.files.length > 0) onAddFiles(e.dataTransfer.files)
+  }
+
   return (
-    <div className="border-t border-stone-200/80 bg-white/80 px-4 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80 sm:px-6">
+    <div
+      data-testid="composer-dropzone"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`relative border-t bg-white/80 px-4 py-3 backdrop-blur-md dark:bg-zinc-950/80 sm:px-6 ${
+        isDragging
+          ? 'border-stone-400 dark:border-zinc-500'
+          : 'border-stone-200/80 dark:border-zinc-800'
+      }`}
+    >
+      {isDragging && (
+        <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-stone-400 bg-white/90 text-sm font-medium text-stone-600 dark:border-zinc-500 dark:bg-zinc-950/90 dark:text-zinc-300">
+          Drop to attach — .json, .md, or .pdf
+        </div>
+      )}
+
+      {attachments.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {attachments.map((attachment) => (
+            <AttachmentChip
+              key={attachment.id}
+              attachment={attachment}
+              onRemove={() => onRemoveAttachment(attachment.id)}
+              onRetry={() => onRetryAttachment(attachment.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {validationError && (
+        <p role="alert" className="mb-2 text-xs font-medium text-red-600 dark:text-red-400">
+          {validationError}
+        </p>
+      )}
+
+      <input
+        ref={fileInputRef}
+        data-testid="attachment-input"
+        type="file"
+        multiple
+        accept=".json,.md,.pdf"
+        tabIndex={-1}
+        aria-hidden="true"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) onAddFiles(e.target.files)
+          e.target.value = ''
+        }}
+      />
+
       <div className="flex items-end gap-2">
         <textarea
           ref={textareaRef}
@@ -81,6 +158,22 @@ export function Composer({
           rows={1}
           className="min-h-10 flex-1 resize-none rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-[0.9375rem] text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus-visible:ring-zinc-500 dark:focus-visible:ring-offset-zinc-950"
         />
+
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="Attach a profile document (.json, .md, or .pdf)"
+          title="Attach a document"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-500 shadow-sm hover:bg-stone-50 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        >
+          <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4.5 w-4.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path
+              d="M14.5 7.5 8.379 13.621a2 2 0 1 1-2.829-2.829L11.5 4.843a3.333 3.333 0 1 1 4.714 4.714L10.207 15.55a4.667 4.667 0 1 1-6.6-6.6L9.5 3.05"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
 
         <div className="relative shrink-0">
           <input

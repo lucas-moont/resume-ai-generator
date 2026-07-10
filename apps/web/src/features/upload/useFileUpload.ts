@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../../lib/api/client'
 import { uploadSourceDocument } from '../../lib/api/endpoints'
 import type { SourceDocumentStatus } from '../../lib/api/dto'
@@ -52,7 +52,9 @@ export function useFileUpload(options: UseFileUploadOptions = {}): UseFileUpload
   const controllers = useRef(new Map<string, AbortController>())
   const files = useRef(new Map<string, File>())
   const onSettledRef = useRef(options.onSettled)
-  onSettledRef.current = options.onSettled
+  useEffect(() => {
+    onSettledRef.current = options.onSettled
+  })
 
   const startUpload = useCallback((id: string, file: File) => {
     const controller = new AbortController()
