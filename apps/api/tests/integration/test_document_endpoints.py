@@ -68,6 +68,21 @@ class TestUploadJsonDocument:
 
         assert resp.status_code == 422
 
+    async def test_invalid_json_upload_is_not_persisted(self, client, isolated_data_env):
+        """Mirrors TestUploadSizeAndDedup::test_oversize_upload_is_not_persisted: a malformed
+        .json is a request error, same treatment as oversize -- no source_documents row and
+        no file written under data/uploads/ (see routers/profile.py's docstring)."""
+        resp = await client.post(
+            "/api/profile/documents",
+            files={"file": ("broken.json", b"{}", "application/json")},
+        )
+        assert resp.status_code == 422
+
+        listing = (await client.get("/api/profile/documents")).json()["documents"]
+        assert listing == []
+        uploads_dir = isolated_data_env / "uploads"
+        assert not uploads_dir.exists() or list(uploads_dir.iterdir()) == []
+
     async def test_unsupported_file_extension_is_rejected(self, client):
         resp = await client.post(
             "/api/profile/documents",
@@ -75,6 +90,21 @@ class TestUploadJsonDocument:
         )
 
         assert resp.status_code == 415
+
+    async def test_unsupported_file_extension_upload_is_not_persisted(self, client, isolated_data_env):
+        """Mirrors TestUploadSizeAndDedup::test_oversize_upload_is_not_persisted: an
+        unrecognized extension is rejected before it ever becomes a Source Document -- no row,
+        no file under data/uploads/."""
+        resp = await client.post(
+            "/api/profile/documents",
+            files={"file": ("resume.txt", b"hello", "text/plain")},
+        )
+        assert resp.status_code == 415
+
+        listing = (await client.get("/api/profile/documents")).json()["documents"]
+        assert listing == []
+        uploads_dir = isolated_data_env / "uploads"
+        assert not uploads_dir.exists() or list(uploads_dir.iterdir()) == []
 
 
 class TestUploadMarkdownDocument:
