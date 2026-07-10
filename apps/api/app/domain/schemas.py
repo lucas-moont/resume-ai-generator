@@ -80,3 +80,14 @@ class GitHubRepoInfo(BaseModel):
     language: str | None = None
     topics: list[str] = Field(default_factory=list)
     private: bool = False
+
+
+class CreateChatSessionRequest(BaseModel):
+    title: str | None = None
+
+
+class ChatMessageRequest(BaseModel):
+    message: str
+    model: str | None = None
+    locale: str | None = None
+    jobDescription: str | None = None
