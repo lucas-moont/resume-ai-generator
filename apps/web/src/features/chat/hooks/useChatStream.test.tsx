@@ -8,7 +8,7 @@ import { useChatStore } from '../store/chatStore'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { server } from '../../../test/setup'
 import { sseResponse } from '../../../test/msw/sse'
-import { makeResume, makeStageEvents } from '../../../test/factories'
+import { makeProfileUpdateTurnEvents, makeResume, makeStageEvents } from '../../../test/factories'
 
 beforeEach(() => {
   useChatStore.getState().reset()
@@ -309,6 +309,59 @@ describe('useChatStream — template is a sticky global preference (B1 regressio
       expect(useResumeStore.getState().resume?.fullName).toBe('Refined Person')
     })
     expect(useResumeStore.getState().template).toBe('ats-plain')
+  })
+})
+
+describe('useChatStream — profile_update (Living Profile via chat, v2 ticket 09)', () => {
+  it('a profile_update event mid-stream (between stage and message) shows a profile card and leaves the active resume untouched', async () => {
+    mockSessionCreation()
+    const activeResume = makeResume({ fullName: 'Untouched Person', headline: 'Staff Engineer' })
+    useResumeStore.getState().setResume(activeResume)
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse(makeProfileUpdateTurnEvents({ profileVersion: 3, summary: 'Updated phone number.' })),
+      ),
+    )
+
+    const { result } = renderChatStream()
+    await result.current.send('I changed my phone number')
+
+    expect(useResumeStore.getState().resume).toEqual(activeResume)
+
+    const assistantMsg = useChatStore.getState().messages.find((m) => m.role === 'assistant')
+    expect(assistantMsg?.card).toEqual({
+      type: 'profileUpdateApplied',
+      profileVersion: 3,
+      summary: 'Updated phone number.',
+    })
+    expect(assistantMsg?.content).toMatch(/regenerate/i)
+    expect(useChatStore.getState().streaming).toBeNull()
+  })
+
+  it('a profile_update event positioned after the message event (before done) is still picked up, with no resume event ever touching the resumeStore', async () => {
+    mockSessionCreation()
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'stage', data: { step: 'calling_ai', progress: 40 } },
+          { event: 'message', data: { content: 'Updated your profile.' } },
+          { event: 'profile_update', data: { profileVersion: 5, summary: 'Added a certification.' } },
+          { event: 'done', data: { progress: 100, messageId: 9, resumeVersionId: null } },
+        ]),
+      ),
+    )
+
+    const { result } = renderChatStream()
+    await result.current.send('add my AWS certification')
+
+    const assistantMsg = useChatStore.getState().messages.find((m) => m.role === 'assistant')
+    expect(assistantMsg?.card).toEqual({
+      type: 'profileUpdateApplied',
+      profileVersion: 5,
+      summary: 'Added a certification.',
+    })
+    expect(useResumeStore.getState().resume).toBeNull()
+    expect(useChatStore.getState().streaming).toBeNull()
   })
 })
 

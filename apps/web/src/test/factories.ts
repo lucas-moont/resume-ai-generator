@@ -95,6 +95,45 @@ export function makeChatTurnEvents(
   ]
 }
 
+/**
+ * A stage -> profile_update -> message -> done SSE sequence, as emitted for
+ * the `profile_update` chat intent (v2, ticket 05/09) — unlike
+ * makeChatTurnEvents, there is deliberately no "resume" event: this intent
+ * never touches the active resume (the assistant only offers to regenerate
+ * it via the following "message" event).
+ */
+export function makeProfileUpdateTurnEvents(
+  options: { profileVersion?: number; summary?: string; content?: string; messageId?: number } = {},
+): MockSseEvent[] {
+  const stageEvents: MockSseEvent[] = WORK_STEP_IDS.map((step, idx) => ({
+    event: 'stage',
+    data: {
+      step,
+      progress: Math.round(((idx + 1) / (WORK_STEP_IDS.length + 1)) * 100),
+      message: STAGE_MESSAGES[step],
+    },
+  }))
+  return [
+    ...stageEvents,
+    {
+      event: 'profile_update',
+      data: {
+        profileVersion: options.profileVersion ?? 2,
+        summary: options.summary ?? 'Updated phone number.',
+      },
+    },
+    {
+      event: 'message',
+      data: {
+        content:
+          options.content ??
+          "I've updated your profile. Want me to regenerate your resume with this change?",
+      },
+    },
+    { event: 'done', data: { progress: 100, messageId: options.messageId ?? 1, resumeVersionId: null } },
+  ]
+}
+
 // --- Living Profile: Source Documents (v2, F7) ---
 
 export function makePatchOp(overrides: Partial<PatchOp> = {}): PatchOp {
