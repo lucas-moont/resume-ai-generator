@@ -3,7 +3,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { ReactNode } from 'react'
-import { useChatSessionsList, useResumeChatSession } from './useChatSession'
+import {
+  useCreateSession,
+  useDeleteSession,
+  useResumeChatSession,
+  useSession,
+  useSessions,
+} from './useChatSession'
 import { useChatStore } from '../store/chatStore'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { server } from '../../../test/setup'
@@ -20,9 +26,9 @@ function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 }
 
-describe('useChatSessionsList', () => {
+describe('useSessions', () => {
   it('resolves the sessions list (default handler: empty)', async () => {
-    const { result } = renderHook(() => useChatSessionsList(), { wrapper })
+    const { result } = renderHook(() => useSessions(), { wrapper })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(result.current.data).toEqual({ sessions: [] })
@@ -37,10 +43,57 @@ describe('useChatSessionsList', () => {
       }),
     )
 
-    const { result } = renderHook(() => useChatSessionsList(), { wrapper })
+    const { result } = renderHook(() => useSessions(), { wrapper })
 
     await waitFor(() => expect(result.current.isError).toBe(true))
     expect(calls).toBe(1)
+  })
+})
+
+describe('useSession', () => {
+  it('is disabled (does not fetch) when sessionId is null', () => {
+    const { result } = renderHook(() => useSession(null), { wrapper })
+    expect(result.current.fetchStatus).toBe('idle')
+  })
+
+  it('fetches the session detail when given an id', async () => {
+    server.use(
+      http.get('/api/chat/sessions/3', () =>
+        HttpResponse.json({
+          session: { id: 3, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [],
+          activeResume: null,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useSession(3), { wrapper })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(result.current.data?.session.id).toBe(3)
+  })
+})
+
+describe('useCreateSession', () => {
+  it('creates a session and invalidates the sessions list', async () => {
+    server.use(
+      http.post('/api/chat/sessions', () =>
+        HttpResponse.json({ id: 9, title: 'New one', createdAt: '2026-07-10T00:00:00Z' }, { status: 201 }),
+      ),
+    )
+
+    const { result } = renderHook(() => useCreateSession(), { wrapper })
+    const created = await result.current.mutateAsync('New one')
+
+    expect(created).toEqual({ id: 9, title: 'New one', createdAt: '2026-07-10T00:00:00Z' })
+  })
+})
+
+describe('useDeleteSession', () => {
+  it('deletes a session', async () => {
+    server.use(http.delete('/api/chat/sessions/9', () => new HttpResponse(null, { status: 204 })))
+
+    const { result } = renderHook(() => useDeleteSession(), { wrapper })
+    await expect(result.current.mutateAsync(9)).resolves.toBeUndefined()
   })
 })
 
@@ -67,6 +120,35 @@ describe('useResumeChatSession', () => {
     expect(useChatStore.getState().messages).toHaveLength(2)
     expect(useChatStore.getState().messages[0]).toMatchObject({ role: 'user', content: 'hello' })
     expect(useResumeStore.getState().resume?.fullName).toBe('Loaded From Session')
+  })
+
+  it('an assistant message with a resumeVersionId gets a ResumeUpdatedCard with no section diff', async () => {
+    const resume = makeResume()
+    server.use(
+      http.get('/api/chat/sessions/11', () =>
+        HttpResponse.json({
+          session: { id: 11, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: 4 },
+          messages: [
+            { id: 1, role: 'user', content: 'a job description', intent: null, resumeVersionId: null, createdAt: '2026-07-10T00:00:00Z' },
+            {
+              id: 2,
+              role: 'assistant',
+              content: 'Generated a tailored resume for this job description.',
+              intent: 'generate',
+              resumeVersionId: 4,
+              createdAt: '2026-07-10T00:00:01Z',
+            },
+          ],
+          activeResume: resume,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(11)
+
+    const assistantMsg = useChatStore.getState().messages[1]
+    expect(assistantMsg.card).toEqual({ type: 'resumeUpdated', changedSections: [] })
   })
 
   it('resumeSession clears the resume when the session has none active', async () => {

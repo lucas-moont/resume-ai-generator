@@ -1,9 +1,16 @@
 import { useCallback } from 'react'
-import { ApiError, chatMessageStream, createChatSession } from '../../../lib/api/endpoints'
+import {
+  ApiError,
+  chatMessageStream,
+  generateStream,
+  refineStream,
+} from '../../../lib/api/endpoints'
 import type {
   ChatDoneEventPayload,
   ChatMessageEventPayload,
   ChatResumeEventPayload,
+  CreateChatSessionResponse,
+  StreamDonePayload,
   StreamErrorPayload,
   StreamStagePayload,
 } from '../../../lib/api/dto'
@@ -13,6 +20,7 @@ import { useResumeStore } from '../../resume/store/resumeStore'
 import { TEMPLATE_REGISTRY } from '../../resume/templates/registry'
 import { parseCommand } from '../commands'
 import { useChatStore } from '../store/chatStore'
+import { useCreateSession } from './useChatSession'
 
 // ADAPTER: routes every non-command message through
 // POST /api/chat/sessions/{id}/messages/stream (B6) — intent routing
@@ -21,6 +29,12 @@ import { useChatStore } from '../store/chatStore'
 // created lazily on the first message of a fresh chat (title = a preview of
 // that message). If B6's contract ever changes again, this is still the
 // single file that needs to change.
+//
+// GRACEFUL DEGRADATION: if creating a session ever 404s (the chat router
+// isn't mounted in this deployment — the same condition SessionSidebar
+// treats as "hide the sidebar"), every send/retry for the rest of this page
+// load falls back to the v0 /api/generate|refine/stream endpoints directly,
+// exactly like F4 before this file existed.
 
 export interface SendOptions {
   model?: string
@@ -34,25 +48,43 @@ export interface UseChatStreamResult {
 
 const TITLE_PREVIEW_MAX_LENGTH = 60
 
+type CreateSessionFn = (title?: string) => Promise<CreateChatSessionResponse>
+
+let chatBackendUnavailable = false
+
+/** Test-only escape hatch — resets the module-level fallback flag between tests. */
+export function __resetChatBackendAvailability(): void {
+  chatBackendUnavailable = false
+}
+
 export function useChatStream(): UseChatStreamResult {
-  const send = useCallback(async (message: string, options: SendOptions = {}) => {
-    const trimmed = message.trim()
-    if (!trimmed) return
+  const createSessionMutation = useCreateSession()
+  const createSession = createSessionMutation.mutateAsync
 
-    const command = parseCommand(trimmed)
-    if (command) {
+  const send = useCallback(
+    async (message: string, options: SendOptions = {}) => {
+      const trimmed = message.trim()
+      if (!trimmed) return
+
+      const command = parseCommand(trimmed)
+      if (command) {
+        useChatStore.getState().appendUserMessage(trimmed)
+        await runCommand(command)
+        return
+      }
+
       useChatStore.getState().appendUserMessage(trimmed)
-      await runCommand(command)
-      return
-    }
+      await runTurn(trimmed, options, createSession)
+    },
+    [createSession],
+  )
 
-    useChatStore.getState().appendUserMessage(trimmed)
-    await runTurn(trimmed, options)
-  }, [])
-
-  const retry = useCallback(async (message: string, options: SendOptions = {}) => {
-    await runTurn(message, options)
-  }, [])
+  const retry = useCallback(
+    async (message: string, options: SendOptions = {}) => {
+      await runTurn(message, options, createSession)
+    },
+    [createSession],
+  )
 
   const stop = useCallback(() => {
     const { streaming } = useChatStore.getState()
@@ -109,15 +141,19 @@ function titlePreview(message: string): string {
 }
 
 /** Returns the active session id, creating one (titled from this message) if this is a fresh chat. */
-async function ensureSession(message: string): Promise<number> {
+async function ensureSession(message: string, createSession: CreateSessionFn): Promise<number> {
   const existing = useChatStore.getState().sessionId
   if (existing !== null) return existing
-  const created = await createChatSession({ title: titlePreview(message) })
+  const created = await createSession(titlePreview(message))
   useChatStore.getState().setSessionId(created.id)
   return created.id
 }
 
-async function runTurn(message: string, options: SendOptions): Promise<void> {
+async function runTurn(
+  message: string,
+  options: SendOptions,
+  createSession: CreateSessionFn,
+): Promise<void> {
   const controller = new AbortController()
   useChatStore.getState().updateStreaming({
     step: 'preparing_context',
@@ -126,8 +162,29 @@ async function runTurn(message: string, options: SendOptions): Promise<void> {
     abortController: controller,
   })
 
+  if (chatBackendUnavailable) {
+    await runLegacyTurn(message, options, controller)
+    return
+  }
+
+  let sessionId: number
   try {
-    const sessionId = await ensureSession(message)
+    sessionId = await ensureSession(message, createSession)
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) {
+      chatBackendUnavailable = true
+      await runLegacyTurn(message, options, controller)
+      return
+    }
+    const text = e instanceof ApiError ? apiErrorText(e, 'Something went wrong.') : String(e)
+    useChatStore
+      .getState()
+      .appendAssistantMessage(text, { type: 'error', message: text, retryMessage: message })
+    useChatStore.getState().finishStreaming()
+    return
+  }
+
+  try {
     const { locale } = useResumeStore.getState()
     const events = await chatMessageStream(
       sessionId,
@@ -164,6 +221,60 @@ async function runTurn(message: string, options: SendOptions): Promise<void> {
             assistantText || 'Done.',
             resumeEvent ? { type: 'resumeUpdated', changedSections } : undefined,
           )
+        useChatStore.getState().finishStreaming()
+        return
+      } else if (event === 'error') {
+        const err = data as StreamErrorPayload
+        throw new Error(err.message || 'Stream failed')
+      }
+    }
+  } catch (e) {
+    if (isAbortError(e)) {
+      useChatStore.getState().finishStreaming()
+      return
+    }
+    const text = e instanceof ApiError ? apiErrorText(e, 'Something went wrong.') : String(e)
+    useChatStore
+      .getState()
+      .appendAssistantMessage(text, { type: 'error', message: text, retryMessage: message })
+    useChatStore.getState().finishStreaming()
+  }
+}
+
+/** Fallback path (F4-era behavior) when the chat backend isn't available: no-resume
+ * -> generate/stream, active resume -> refine/stream, with a client-invented
+ * assistant reply (these endpoints don't have a "message" event). */
+async function runLegacyTurn(
+  message: string,
+  options: SendOptions,
+  controller: AbortController,
+): Promise<void> {
+  try {
+    const { resume, locale } = useResumeStore.getState()
+    const events = resume
+      ? await refineStream({ resume, message, model: options.model || undefined }, controller.signal)
+      : await generateStream(
+          { job_description: message, model: options.model || undefined, locale: locale || undefined },
+          controller.signal,
+        )
+
+    for await (const { event, data } of events) {
+      if (controller.signal.aborted) return
+
+      if (event === 'stage') {
+        const s = data as StreamStagePayload
+        useChatStore.getState().updateStreaming({
+          step: s.step,
+          progress: Math.max(5, Math.min(99, Math.round(s.progress ?? 0))),
+          message: s.message ?? '',
+        })
+      } else if (event === 'done') {
+        const d = data as StreamDonePayload
+        const prevResume = useResumeStore.getState().resume
+        useResumeStore.getState().setResume(d.resume)
+        const changedSections = diffResumeSections(prevResume, d.resume)
+        const text = prevResume ? "I've updated your resume." : "I've generated your resume."
+        useChatStore.getState().appendAssistantMessage(text, { type: 'resumeUpdated', changedSections })
         useChatStore.getState().finishStreaming()
         return
       } else if (event === 'error') {

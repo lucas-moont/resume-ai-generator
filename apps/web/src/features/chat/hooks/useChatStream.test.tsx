@@ -1,18 +1,30 @@
 import { renderHook, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useChatStream } from './useChatStream'
+import type { ReactNode } from 'react'
+import { __resetChatBackendAvailability, useChatStream } from './useChatStream'
 import { useChatStore } from '../store/chatStore'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { server } from '../../../test/setup'
 import { sseResponse } from '../../../test/msw/sse'
-import { makeResume } from '../../../test/factories'
+import { makeResume, makeStageEvents } from '../../../test/factories'
 
 beforeEach(() => {
   useChatStore.getState().reset()
   useResumeStore.setState({ resume: null, template: 'modern', locale: 'auto' })
   useResumeStore.temporal.getState().clear()
+  __resetChatBackendAvailability()
 })
+
+function wrapper({ children }: { children: ReactNode }) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+}
+
+function renderChatStream() {
+  return renderHook(() => useChatStream(), { wrapper })
+}
 
 /** Mocks POST /api/chat/sessions to always create session id 1. */
 function mockSessionCreation() {
@@ -46,7 +58,7 @@ describe('useChatStream — session + message routing', () => {
       }),
     )
 
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     await result.current.send('Senior backend engineer, distributed systems')
 
     await waitFor(() => {
@@ -84,7 +96,7 @@ describe('useChatStream — session + message routing', () => {
       ),
     )
 
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     await result.current.send('First message')
     await result.current.send('Second message')
 
@@ -103,7 +115,7 @@ describe('useChatStream — session + message routing', () => {
       ),
     )
 
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     await result.current.send('hey there')
 
     expect(useResumeStore.getState().resume).toBeNull()
@@ -129,7 +141,7 @@ describe('useChatStream — session + message routing', () => {
       ),
     )
 
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     const sendPromise = result.current.send('Backend engineer job posting')
 
     await waitFor(() => {
@@ -142,12 +154,12 @@ describe('useChatStream — session + message routing', () => {
 })
 
 describe('useChatStream — errors and retry', () => {
-  it('appends an error card with a retry message when session creation fails', async () => {
+  it('appends an error card with a retry message when session creation fails (non-404)', async () => {
     server.use(
       http.post('/api/chat/sessions', () => HttpResponse.json({ detail: 'db unavailable' }, { status: 500 })),
     )
 
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     await result.current.send('A job description that will fail')
 
     const assistantMsg = useChatStore.getState().messages.find((m) => m.role === 'assistant')
@@ -165,7 +177,7 @@ describe('useChatStream — errors and retry', () => {
       ),
     )
 
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     await result.current.send('A job description that will fail')
 
     const messages = useChatStore.getState().messages
@@ -193,7 +205,7 @@ describe('useChatStream — errors and retry', () => {
       }),
     )
 
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     await result.current.send('Flaky job description')
     expect(useChatStore.getState().messages.at(-1)?.card?.type).toBe('error')
 
@@ -203,6 +215,44 @@ describe('useChatStream — errors and retry', () => {
       expect(useResumeStore.getState().resume?.fullName).toBe('Retry Success')
     })
     expect(attempt).toBe(2)
+  })
+})
+
+describe('useChatStream — graceful degradation (chat backend unavailable)', () => {
+  it('falls back to /api/generate/stream when session creation 404s, and stays in fallback mode', async () => {
+    server.use(
+      http.post('/api/chat/sessions', () => HttpResponse.json({ detail: 'not found' }, { status: 404 })),
+    )
+    const resume = makeResume({ fullName: 'Legacy Fallback' })
+    let generateCalls = 0
+    server.use(
+      http.post('/api/generate/stream', () => {
+        generateCalls += 1
+        return sseResponse(makeStageEvents(resume))
+      }),
+    )
+
+    const { result } = renderChatStream()
+    await result.current.send('A job description')
+
+    await waitFor(() => {
+      expect(useResumeStore.getState().resume?.fullName).toBe('Legacy Fallback')
+    })
+    expect(useChatStore.getState().sessionId).toBeNull() // never created — fell back before that
+    expect(generateCalls).toBe(1)
+
+    // A second message should skip trying /api/chat/sessions again entirely
+    // (onUnhandledRequest: 'error' would throw if it did — no handler is
+    // registered for a 2nd POST /api/chat/sessions in this test) and go
+    // straight to refine/stream (a resume is now active).
+    server.use(
+      http.post('/api/refine/stream', () => sseResponse(makeStageEvents({ ...resume, headline: 'Updated' }))),
+    )
+    await result.current.send('Update the headline')
+
+    await waitFor(() => {
+      expect(useResumeStore.getState().resume?.headline).toBe('Updated')
+    })
   })
 })
 
@@ -219,7 +269,7 @@ describe('useChatStream — stop', () => {
       ),
     )
 
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     const abortSpy = vi.spyOn(AbortController.prototype, 'abort')
     const sendPromise = result.current.send('A slow job description')
 
@@ -239,7 +289,7 @@ describe('useChatStream — stop', () => {
 
 describe('useChatStream — client-side commands (no network)', () => {
   it('switches the template locally without hitting the network', async () => {
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
 
     await result.current.send('use the classic template')
 
@@ -254,7 +304,7 @@ describe('useChatStream — client-side commands (no network)', () => {
     useResumeStore.getState().setResume(makeResume({ fullName: 'PDF Export Test' }))
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     await result.current.send('export pdf')
 
     const messages = useChatStore.getState().messages
@@ -265,7 +315,7 @@ describe('useChatStream — client-side commands (no network)', () => {
   })
 
   it('export-pdf command with no active resume reports there is nothing to export', async () => {
-    const { result } = renderHook(() => useChatStream())
+    const { result } = renderChatStream()
     await result.current.send('export pdf')
 
     const messages = useChatStore.getState().messages
