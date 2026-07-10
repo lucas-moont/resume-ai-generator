@@ -19,3 +19,7 @@ def load_generate_system_prompt(prompts_dir: Path) -> str:
 
 def load_extract_profile_system_prompt(prompts_dir: Path) -> str:
     return load_prompt("system/extract_profile.md", prompts_dir)
+
+
+def load_merge_profile_system_prompt(prompts_dir: Path) -> str:
+    return load_prompt("system/merge_profile.md", prompts_dir)
