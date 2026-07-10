@@ -65,6 +65,7 @@ from app.domain.schemas import ProfileMaster, ResumeDocument
 from app.prompt_loader import load_profile_update_system_prompt
 from app.repositories import chat_repo, profile_repo, resume_repo
 from app.services import llm_client
+from app.services.html_sanitize import sanitize_resume_for_display
 from app.services.generation_service import generate_resume_events
 from app.services.ingestion.merge_service import parse_patch_ops_from_llm_response, resolve_profile_for_merge
 from app.services.profile_resolution import resolve_active_profile
@@ -252,6 +253,18 @@ async def _handle_generate_turn(
     yield "done", {"progress": 100, "messageId": assistant_msg.id, "resumeVersionId": resume_row.id}
 
 
+def _sanitize_client_resume_override(resume: ResumeDocument) -> ResumeDocument:
+    """v2 ticket 11 review fix: the client-supplied refine override is untrusted input arriving
+    fresh at this seam (unlike the DB's active row, already sanitized by construction), and it
+    is embedded straight into the LLM prompt by ``build_refine_user_msg`` -- BEFORE
+    ``parse_resume_json``'s own ``sanitize_resume_for_display`` pass on the merged output ever
+    runs. Runs the SAME choke point the rest of the app uses, on a dict copy, then re-validates
+    -- never mutates ``resume`` itself."""
+    dumped = resume.model_dump()
+    sanitize_resume_for_display(dumped)
+    return ResumeDocument.model_validate(dumped)
+
+
 async def _handle_refine_turn(
     *,
     session: Session,
@@ -269,9 +282,14 @@ async def _handle_refine_turn(
     # a chat refine -- prefer the client's own in-memory doc over the DB's active version when
     # the request carried one. It has already been through the SAME pydantic model_validate as
     # any other request field (ChatMessageRequest.resume); a shape that fails validation is a
-    # plain 422 raised before this function -- or handle_chat_turn -- ever runs.
+    # plain 422 raised before this function -- or handle_chat_turn -- ever runs. Unlike the DB
+    # row (already sanitized by construction -- every write path runs sanitize_resume_for_display
+    # before persisting), this doc is untrusted input arriving fresh at this seam, so it is
+    # sanitized HERE, before it ever reaches build_refine_user_msg's prompt -- not left to
+    # parse_resume_json's later sanitize_resume_for_display pass on the LLM's merged output,
+    # which only cleans what ends up in the final document, not what was sent to the model.
     base_resume = (
-        client_resume_override
+        _sanitize_client_resume_override(client_resume_override)
         if client_resume_override is not None
         else ResumeDocument.model_validate_json(active_resume_row.data)
     )

@@ -372,6 +372,37 @@ class TestChatMessageStreamRefineClientResumeOverride:
             meta = json.loads(assistant_msg.meta)
             assert meta["clientResumeOverride"] is True
 
+    async def test_refine_sanitizes_the_client_override_before_it_reaches_the_llm_prompt(
+        self, client, fake_llm, write_profile
+    ):
+        # Real gap found on review: the override used to flow into build_refine_user_msg's
+        # prompt raw -- sanitize_resume_for_display only ran LATER, on parse_resume_json's
+        # merged output. Before the DB was the only source at this point (already sanitized by
+        # construction); the client override is new, untrusted input at exactly this seam.
+        write_profile(make_profile())
+        fake_llm.queue(json.dumps(make_resume_payload()))  # the generate turn
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        malicious_resume = make_resume_payload()
+        malicious_resume["experience"][0]["highlights"][0] = (
+            "Shipped a feature <script>alert(1)</script> ahead of schedule"
+        )
+        fake_llm.queue(json.dumps(make_resume_payload(summary="A punchier summary for the resume.")))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Make the summary punchier.", "resume": malicious_resume},
+        )
+
+        assert resp.status_code == 200
+        refine_call = fake_llm.calls[-1]["user"]
+        assert "<script>" not in refine_call
+        assert "Shipped a feature" in refine_call  # sanitized, not dropped wholesale
+
     async def test_refine_without_override_uses_the_db_active_resume_and_no_override_flag(
         self, client, fake_llm, write_profile, parse_sse, test_db_engine
     ):
