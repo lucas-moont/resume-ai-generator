@@ -38,6 +38,15 @@ in natural language. An LLM response that yields no usable ops (garbage, or a pa
 final schema validation) is not an error -- it is a friendly "nothing changed" reply, profile
 left untouched, exactly like a real error would leave it (the Patch Validator only ever mutates
 a copy).
+
+As of v2 ticket 11, ``handle_chat_turn``'s optional ``client_resume`` lets a "refine" turn start
+from the document the user is actually looking at (post inline-edit, never persisted) instead of
+the DB's ``active_resume_version_id`` -- see ``_handle_refine_turn``. It is validated the same
+way any other request field is (pydantic, at the router boundary) and ignored entirely by every
+other intent; the resulting ``ResumeVersion`` still chains off the previously-active version as
+``parent_version_id`` (unchanged provenance), with the fact that it started from a client
+override recorded honestly on the assistant message's ``meta`` JSON
+(``{"clientResumeOverride": true}``) rather than inventing a new column.
 """
 
 from __future__ import annotations
@@ -141,12 +150,18 @@ def _finalize_resume_turn(
     backend_label: str,
     profile_version_id: int | None,
     parent_version_id: int | None = None,
+    extra_meta: dict | None = None,
 ):
     """Shared tail of the generate/refine turns (v2 ticket 05 AC: "insert_version deduplicado
     entre generate/refine"): inserts the new ``ResumeVersion``, points the session's active
     resume at it, appends the assistant confirmation message, and persists. Returns
     ``(resume_row, content, assistant_msg)`` for the caller to build its own SSE frames from --
     kept a plain function (not a generator) since it never yields, only the two callers do.
+
+    ``extra_meta`` (v2 ticket 11) lets a caller record turn-specific provenance on the
+    assistant message's ``meta`` JSON -- e.g. ``{"clientResumeOverride": True}`` for a refine
+    that started from the client's in-memory doc rather than the DB's active version -- without
+    ``resume_versions`` itself needing a new column for it.
     """
     resume_row = resume_repo.insert_version(
         session,
@@ -164,6 +179,9 @@ def _finalize_resume_turn(
     # turn can itself change the document's language (e.g. "translate this to English"),
     # which would otherwise leave the confirmation bubble in the stale, pre-turn language.
     content = _reply_text_for_locale(intent, resume_doc.locale)
+    meta = {"model": model, "provider": backend_label}
+    if extra_meta:
+        meta.update(extra_meta)
     assistant_msg = chat_repo.append_message(
         session,
         session_id=chat_session.id,
@@ -171,7 +189,7 @@ def _finalize_resume_turn(
         content=content,
         intent=intent,
         resume_version_id=resume_row.id,
-        meta=json.dumps({"model": model, "provider": backend_label}),
+        meta=json.dumps(meta),
     )
     chat_repo.touch_session(session, chat_session.id)
     session.commit()
@@ -243,10 +261,20 @@ async def _handle_refine_turn(
     active_resume_row,
     model: str | None,
     backend_label: str,
+    client_resume_override: ResumeDocument | None = None,
 ) -> AsyncIterator[tuple[str, dict]]:
     history_text = _format_history(prior_messages, _HISTORY_MESSAGES_FOR_REFINE)
     enriched_message = f"{history_text}\n\nUser: {user_message}" if history_text else user_message
-    base_resume = ResumeDocument.model_validate_json(active_resume_row.data)
+    # v2 ticket 11: an inline edit made only in the client (never persisted) must not be lost by
+    # a chat refine -- prefer the client's own in-memory doc over the DB's active version when
+    # the request carried one. It has already been through the SAME pydantic model_validate as
+    # any other request field (ChatMessageRequest.resume); a shape that fails validation is a
+    # plain 422 raised before this function -- or handle_chat_turn -- ever runs.
+    base_resume = (
+        client_resume_override
+        if client_resume_override is not None
+        else ResumeDocument.model_validate_json(active_resume_row.data)
+    )
     resume_doc: ResumeDocument | None = None
     async for event, data in refine_resume_events(
         resume=base_resume, message=enriched_message, model=model, backend_label=backend_label
@@ -266,6 +294,7 @@ async def _handle_refine_turn(
         backend_label=backend_label,
         profile_version_id=active_resume_row.profile_version_id,
         parent_version_id=active_resume_row.id,
+        extra_meta={"clientResumeOverride": True} if client_resume_override is not None else None,
     )
     yield "resume", {"resume": resume_doc, "resumeVersionId": resume_row.id}
     yield "message", {"content": content}
@@ -399,6 +428,7 @@ async def handle_chat_turn(
     locale: str | None,
     job_description: str | None,
     backend_label: str,
+    client_resume: ResumeDocument | None = None,
 ) -> AsyncIterator[tuple[str, dict]]:
     _, prior_messages = chat_repo.get_session_with_messages(session, chat_session.id)
     user_msg_row = chat_repo.append_message(
@@ -446,6 +476,7 @@ async def handle_chat_turn(
                 active_resume_row=active_resume_row,
                 model=model,
                 backend_label=backend_label,
+                client_resume_override=client_resume,
             ):
                 yield event, data
         else:  # profile_update

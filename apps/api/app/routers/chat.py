@@ -113,6 +113,7 @@ async def post_chat_message_stream(
                 locale=body.locale,
                 job_description=body.jobDescription,
                 backend_label=llm_backend_label(),
+                client_resume=body.resume,
             ):
                 if event == "resume":
                     yield sse(
