@@ -186,10 +186,15 @@ async function runTurn(
   }
 
   try {
-    const { locale } = useResumeStore.getState()
+    const { locale, resume } = useResumeStore.getState()
     const events = await chatMessageStream(
       sessionId,
-      { message, model: options.model || undefined, locale: locale || undefined },
+      // v2 ticket 11: carries the client's own in-memory resume (post inline-edit, never
+      // persisted) so a chat `refine` turn starts from what the user is actually looking at
+      // instead of the last version the server persisted. `resume` is `null` until one is
+      // ever generated -- `|| undefined` keeps that out of the JSON body entirely rather than
+      // serializing a `"resume": null` the backend would just treat as "no override" anyway.
+      { message, model: options.model || undefined, locale: locale || undefined, resume: resume || undefined },
       controller.signal,
     )
 

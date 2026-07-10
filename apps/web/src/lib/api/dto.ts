@@ -97,6 +97,11 @@ export interface ChatMessageStreamRequest {
   model?: string
   locale?: string
   jobDescription?: string
+  /** v2 ticket 11: the client's own in-memory resume (post inline-edit, never persisted),
+   * sent whenever `resumeStore` has an active resume — lets a chat `refine` turn start from
+   * what the user is actually looking at instead of the last version the server persisted.
+   * Ignored server-side by every intent except `refine`. */
+  resume?: ResumeDocument
 }
 
 // Chat-stream-only SSE payloads (stage/error are shared with StreamStagePayload/StreamErrorPayload above).
