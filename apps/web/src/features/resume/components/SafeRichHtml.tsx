@@ -1,9 +1,5 @@
 import { createElement } from 'react'
-import DOMPurify from 'dompurify'
-
-const RICH_HTML = {
-  ALLOWED_TAGS: ['strong', 'b', 'em', 'i', 'br', 'code'],
-}
+import { sanitizeRichHtml } from '../../../lib/sanitize'
 
 type RichTag = 'p' | 'span' | 'div' | 'li' | 'h3'
 
@@ -16,7 +12,7 @@ export function SafeRichHtml({
   className?: string
   as?: RichTag
 }) {
-  const clean = DOMPurify.sanitize(html || '', RICH_HTML)
+  const clean = sanitizeRichHtml(html)
   return createElement(as, {
     className,
     dangerouslySetInnerHTML: { __html: clean },
