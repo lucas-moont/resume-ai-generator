@@ -122,6 +122,9 @@ test.describe('Inline editing — external update mid-typing (SSE race)', () => 
     // previously-sent turn is still in flight — so Send fires first, then
     // the summary field is focused, and only THEN does the delayed SSE event
     // land while it's held.
+    // Set up BEFORE the triggering click, so there's no window where the
+    // (mocked, delayed) response could resolve before we start waiting for it.
+    const responsePromise = page.waitForResponse((resp) => resp.url().includes('/messages/stream'))
     await page.getByLabel('Message', { exact: true }).fill('Tighten this up')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
 
@@ -130,8 +133,11 @@ test.describe('Inline editing — external update mid-typing (SSE race)', () => 
     await page.keyboard.press('Control+A')
     await page.keyboard.type('User is actively typing this', { delay: 40 })
 
-    // Wait for the (delayed) SSE resume event to land — fullName is NOT
-    // focused, so it syncs immediately once the event arrives.
+    // Condition-based, not a fixed time window: wait for the actual network
+    // round-trip to finish before asserting, so this stays robust even if a
+    // cold/contended dev server makes the mock's 400ms delay take much
+    // longer in wall-clock time than usual.
+    await responsePromise
     await expect(page.locator('[data-field="fullName"]')).toHaveText('Grace Hopper')
 
     // The focused summary field must still show the user's in-progress text

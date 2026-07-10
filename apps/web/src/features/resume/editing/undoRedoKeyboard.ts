@@ -6,10 +6,12 @@ import { useResumeStore } from '../store/resumeStore'
  * pencil/edit-mode toggle (undoing a bad chat refine should work even if
  * inline editing was never turned on).
  *
- * Exception: while focus is inside a live contenteditable node (the user is
- * actively typing a field), the shortcut is left alone so the browser's own
- * native per-field undo handles it instead of jumping the WHOLE resume back
- * a version out from under an in-progress edit — see isFocusInsideContentEditable.
+ * Exception: while focus is inside a live contenteditable node OR any form
+ * control (input/textarea/select — e.g. the chat Composer's textarea, which
+ * mounts right alongside the resume preview), the shortcut is left alone so
+ * the browser's own native per-field undo handles it instead of jumping the
+ * WHOLE resume back a version out from under an in-progress edit or chat
+ * message — see isFocusInsideContentEditable.
  */
 
 export function matchesUndo(e: KeyboardEvent): boolean {
@@ -20,9 +22,14 @@ export function matchesRedo(e: KeyboardEvent): boolean {
   return (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'z'
 }
 
+const NATIVE_EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
+
 export function isFocusInsideContentEditable(): boolean {
   const el = document.activeElement
-  return !!el && el.getAttribute('contenteditable') === 'true'
+  if (!el) return false
+  if (el.getAttribute('contenteditable') === 'true') return true
+  if (el instanceof HTMLElement && el.isContentEditable) return true
+  return NATIVE_EDITABLE_TAGS.has(el.tagName)
 }
 
 export function useUndoRedoShortcuts(): void {

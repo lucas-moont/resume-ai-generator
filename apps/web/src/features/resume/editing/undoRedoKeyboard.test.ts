@@ -85,6 +85,36 @@ describe('isFocusInsideContentEditable', () => {
 
     button.remove()
   })
+
+  it('is true when focus is on a <textarea> (e.g. the chat Composer)', () => {
+    const textarea = document.createElement('textarea')
+    document.body.appendChild(textarea)
+    textarea.focus()
+
+    expect(isFocusInsideContentEditable()).toBe(true)
+
+    textarea.remove()
+  })
+
+  it('is true when focus is on an <input>', () => {
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+
+    expect(isFocusInsideContentEditable()).toBe(true)
+
+    input.remove()
+  })
+
+  it('is true when focus is on a <select>', () => {
+    const select = document.createElement('select')
+    document.body.appendChild(select)
+    select.focus()
+
+    expect(isFocusInsideContentEditable()).toBe(true)
+
+    select.remove()
+  })
 })
 
 describe('useUndoRedoShortcuts', () => {
@@ -135,6 +165,44 @@ describe('useUndoRedoShortcuts', () => {
     expect(event.defaultPrevented).toBe(false)
 
     el.remove()
+  })
+
+  it('does not intercept Ctrl+Z while focus is inside a <textarea> (e.g. the chat Composer)', () => {
+    useResumeStore.getState().setResume(makeResume({ fullName: 'Ada Lovelace' }))
+    useResumeStore.getState().setResume(makeResume({ fullName: 'Grace Hopper' }))
+    renderHook(() => useUndoRedoShortcuts())
+
+    const textarea = document.createElement('textarea')
+    document.body.appendChild(textarea)
+    textarea.focus()
+
+    const event = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })
+    window.dispatchEvent(event)
+
+    // Untouched — Ctrl+Z here should undo a typo in the chat message, not
+    // rewind the resume out from under the Composer.
+    expect(useResumeStore.getState().resume?.fullName).toBe('Grace Hopper')
+    expect(event.defaultPrevented).toBe(false)
+
+    textarea.remove()
+  })
+
+  it('does not intercept Ctrl+Z while focus is inside an <input>', () => {
+    useResumeStore.getState().setResume(makeResume({ fullName: 'Ada Lovelace' }))
+    useResumeStore.getState().setResume(makeResume({ fullName: 'Grace Hopper' }))
+    renderHook(() => useUndoRedoShortcuts())
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+
+    const event = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })
+    window.dispatchEvent(event)
+
+    expect(useResumeStore.getState().resume?.fullName).toBe('Grace Hopper')
+    expect(event.defaultPrevented).toBe(false)
+
+    input.remove()
   })
 
   it('cleans up its window listener on unmount', () => {
