@@ -373,6 +373,26 @@ class TestRefineStreamEndpoint:
         assert events[-1][1]["resume"]["summary"] == updated["summary"]
         assert fake_llm.call_count == 1
 
+    async def test_llm_error_emits_error_event_with_secret_redacted(
+        self, client, fake_llm, parse_sse, monkeypatch
+    ):
+        # Mirrors TestGenerateStreamEndpoint's equivalent test: proves refine/stream's error
+        # path is also covered by streaming.sse()'s centralized redaction (B4.1), not just
+        # generate/stream's.
+        secret = "sk-ant-fake-refine-secret-0123456789abcdef"  # pragma: allowlist secret
+        monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
+        fake_llm.queue(RuntimeError(f"upstream rejected the request: {secret}"))
+
+        resp = await client.post(
+            "/api/refine/stream",
+            json={"resume": make_resume_payload(), "message": "Make the summary punchier."},
+        )
+
+        assert secret not in resp.text
+        events = parse_sse(resp.text)
+        assert events[-1][0] == "error"
+        assert "«redacted»" in events[-1][1]["message"]
+
 
 class TestExportPdfEndpoint:
     async def test_invalid_template_is_rejected_before_rendering(self, client):
