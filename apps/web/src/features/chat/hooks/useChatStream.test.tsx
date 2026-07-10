@@ -365,6 +365,49 @@ describe('useChatStream — profile_update (Living Profile via chat, v2 ticket 0
   })
 })
 
+describe('useChatStream — sends the client-supplied resume for refine (v2 ticket 11)', () => {
+  it('carries resumeStore.getState().resume in the payload when a resume is active', async () => {
+    mockSessionCreation()
+    const editedResume = makeResume({ fullName: 'Inline-Edited Person', summary: 'Edited but not yet persisted.' })
+    useResumeStore.getState().setResume(editedResume)
+    let capturedBody: Record<string, unknown> | undefined
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', async ({ request }) => {
+        capturedBody = (await request.json()) as Record<string, unknown>
+        return sseResponse([
+          { event: 'resume', data: { resume: editedResume, resumeVersionId: 2 } },
+          { event: 'message', data: { content: 'Updated your resume.' } },
+          { event: 'done', data: { progress: 100, messageId: 1, resumeVersionId: 2 } },
+        ])
+      }),
+    )
+
+    const { result } = renderChatStream()
+    await result.current.send('Make the summary punchier.')
+
+    expect(capturedBody?.resume).toEqual(editedResume)
+  })
+
+  it('omits the resume field entirely when there is no active resume', async () => {
+    mockSessionCreation()
+    let capturedBody: Record<string, unknown> | undefined
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', async ({ request }) => {
+        capturedBody = (await request.json()) as Record<string, unknown>
+        return sseResponse([
+          { event: 'message', data: { content: 'Paste a job description to generate a tailored resume.' } },
+          { event: 'done', data: { progress: 100, messageId: 1, resumeVersionId: null } },
+        ])
+      }),
+    )
+
+    const { result } = renderChatStream()
+    await result.current.send('hey there')
+
+    expect(capturedBody).not.toHaveProperty('resume')
+  })
+})
+
 describe('useChatStream — client-side commands (no network)', () => {
   it('switches the template locally without hitting the network', async () => {
     const { result } = renderChatStream()
