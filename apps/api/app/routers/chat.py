@@ -6,7 +6,7 @@ from sqlmodel import Session
 
 from app.db.tables import ChatSession
 from app.domain.schemas import ChatMessageRequest, CreateChatSessionRequest
-from app.repositories import chat_repo, resume_repo
+from app.repositories import chat_repo, resume_repo, source_document_repo
 from app.routers.deps import get_session, resolve_requested_model
 from app.services.chat_service import handle_chat_turn
 from app.services.errors import http_error
@@ -55,6 +55,41 @@ async def list_chat_sessions(session: Session = Depends(get_session)):
     return {"sessions": [_session_dict(r) for r in rows]}
 
 
+def _source_document_link_dict(session: Session, meta_raw: str | None) -> dict | None:
+    """v2 ticket 10 ("Durabilidade do ProfileUpdatedCard"): when a chat_message's ``meta``
+    references a Source Document (``{"sourceDocumentId": int}`` -- written by
+    routers/profile.py's upload endpoint when the upload came from this session), joins
+    source_documents LIVE, at read time, for its CURRENT status/diffSummary/opsCount. This is
+    the single source of truth: apply/reject only ever mutate the source_documents row, never
+    this message's meta, so a reload always reflects whatever the document's real state is --
+    never a stale copy. Returns None for a message with no such reference (a plain chat
+    reply), or if the referenced document no longer exists (soft ref -- see db/tables.py's
+    module docstring).
+    """
+    if not meta_raw:
+        return None
+    try:
+        meta = json.loads(meta_raw)
+    except json.JSONDecodeError:
+        return None
+    document_id = meta.get("sourceDocumentId")
+    if document_id is None:
+        return None
+    row = source_document_repo.get(session, document_id)
+    if row is None:
+        return None
+    diff_summary = json.loads(row.diff_summary) if row.diff_summary else []
+    proposed_patch = json.loads(row.proposed_patch) if row.proposed_patch else []
+    return {
+        "documentId": row.id,
+        "filename": row.filename,
+        "status": row.status,
+        "diffSummary": diff_summary,
+        "opsCount": len(proposed_patch),
+        "error": row.error,
+    }
+
+
 @router.get("/api/chat/sessions/{session_id}")
 async def get_chat_session(session_id: int, session: Session = Depends(get_session)):
     chat_session, messages = chat_repo.get_session_with_messages(session, session_id)
@@ -77,6 +112,7 @@ async def get_chat_session(session_id: int, session: Session = Depends(get_sessi
                 "intent": m.intent,
                 "resumeVersionId": m.resume_version_id,
                 "createdAt": m.created_at.isoformat(),
+                "sourceDocument": _source_document_link_dict(session, m.meta),
             }
             for m in messages
         ],

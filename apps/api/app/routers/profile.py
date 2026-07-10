@@ -19,10 +19,10 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.config import max_upload_bytes
-from app.db.tables import ProfileVersion, SourceDocument
+from app.db.tables import ChatSession, ProfileVersion, SourceDocument
 from app.domain.profile_patch import PatchOp, PatchResult, PatchValidationFailed, apply_patch
 from app.domain.schemas import RevertProfileRequest
-from app.repositories import profile_repo, source_document_repo
+from app.repositories import chat_repo, profile_repo, source_document_repo
 from app.routers.deps import get_session, resolve_requested_model
 from app.services.errors import http_error
 from app.services.github_client import fetch_user_repos
@@ -123,6 +123,47 @@ async def _propose_merge_or_fail(
     )
     session.commit()
     return row
+
+
+def _profile_update_message_text(row: SourceDocument) -> str:
+    """Mirrors the frontend's client-only synthetic copy (ChatPanel.tsx's
+    profileUpdateMessageText) so the durable, backend-persisted message (v2 ticket 10) reads
+    the same as the live one it exists to survive a session reload for."""
+    if row.status == "failed":
+        return f"Couldn't process {row.filename}."
+    diff_summary = json.loads(row.diff_summary) if row.diff_summary else []
+    if not diff_summary:
+        return f"Checked {row.filename} — nothing new to merge."
+    return f"Reviewed {row.filename} — here's what I found."
+
+
+def _link_upload_to_session(session: Session, chat_session_id: int | None, row: SourceDocument) -> None:
+    """v2 ticket 10 ("Durabilidade do ProfileUpdatedCard"): when the upload came from an
+    active chat session, persists a durable assistant chat_message referencing this Source
+    Document, so its ProfileUpdatedCard survives a session reload -- today that card is a
+    client-only synthetic message a reload loses entirely. ``meta`` stores ONLY
+    ``sourceDocumentId`` -- never a copy of ``status`` -- so GET /api/chat/sessions/{id} can
+    join source_documents LIVE at read time for whatever the CURRENT status/diffSummary/
+    opsCount is (routers/chat.py's ``_source_document_link_dict``); apply/reject never need to
+    touch this message, so there is no second, driftable source of truth. An unknown or
+    missing ``chat_session_id`` is silently ignored: the upload itself already succeeded and
+    must not fail over an unrelated (possibly stale) chat session id.
+    """
+    if chat_session_id is None:
+        return
+    chat_session = session.get(ChatSession, chat_session_id)
+    if chat_session is None:
+        return
+    chat_repo.append_message(
+        session,
+        session_id=chat_session.id,
+        role="assistant",
+        content=_profile_update_message_text(row),
+        intent="profile_update",
+        meta=json.dumps({"sourceDocumentId": row.id}),
+    )
+    chat_repo.touch_session(session, chat_session.id)
+    session.commit()
 
 
 def _document_list_dict(row: SourceDocument) -> dict:
@@ -244,6 +285,7 @@ async def revert_profile(body: RevertProfileRequest, session: Session = Depends(
 async def upload_document(
     file: UploadFile = File(...),
     model: str | None = Form(None),
+    sessionId: int | None = Form(None),
     session: Session = Depends(get_session),
 ):
     """Accepts a `.json`/`.md`/`.pdf` Source Document upload (CONTEXT.md: Source Document,
@@ -257,6 +299,13 @@ async def upload_document(
     layer, a flaky provider); any failure there marks the row `status='failed'` with an
     actionable, secret-redacted message instead of ever surfacing as a 500 -- the upload
     itself already succeeded, so the response is still 202.
+
+    ``sessionId`` (v2 ticket 10, optional multipart field) names the chat session the upload
+    came from, if any -- when it resolves to a real ``ChatSession``, a durable assistant
+    chat_message linking to this Source Document is persisted (see
+    ``_link_upload_to_session``), so the frontend's ProfileUpdatedCard survives a session
+    reload instead of reverting to plain text. An unknown/omitted ``sessionId`` never affects
+    the upload's own outcome.
     """
     content = await file.read()
     limit = max_upload_bytes()
@@ -270,6 +319,7 @@ async def upload_document(
     sha256 = compute_sha256(content)
     existing = source_document_repo.get_by_sha256(session, sha256)
     if existing is not None:
+        _link_upload_to_session(session, sessionId, existing)
         return _upload_response(existing)
 
     model_override = resolve_requested_model(model)
@@ -293,6 +343,7 @@ async def upload_document(
         )
         session.commit()
         row = await _propose_merge_or_fail(session, row, resume, model_override)
+        _link_upload_to_session(session, sessionId, row)
         return _upload_response(row)
 
     # .md / .pdf: persist first (status='stored'), then attempt LLM-based extraction --
@@ -317,11 +368,13 @@ async def upload_document(
     except Exception as e:
         row = source_document_repo.mark_failed(session, row, error=redact_secrets(str(e)))
         session.commit()
+        _link_upload_to_session(session, sessionId, row)
         return _upload_response(row)
 
     row = source_document_repo.mark_extracted(session, row, extracted_json=resume.model_dump_json())
     session.commit()
     row = await _propose_merge_or_fail(session, row, resume, model_override)
+    _link_upload_to_session(session, sessionId, row)
     return _upload_response(row)
 
 
