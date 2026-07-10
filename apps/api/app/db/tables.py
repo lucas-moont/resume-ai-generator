@@ -73,7 +73,10 @@ class ResumeVersion(SQLModel, table=True):
     parent_version_id: int | None = Field(default=None, foreign_key="resume_versions.id")
     profile_version_id: int | None = Field(default=None, foreign_key="profile_versions.id")
     data: str  # JSON-serialized ResumeDocument
-    template_id: str = Field(default="modern")
+    # No template_id here (v2 ticket 01 dropped it -- see docs/v2-living-profile.md's
+    # "Dívida herdada"): the frontend never sent a real per-version choice in v1, and product
+    # settled template as a global sticky user preference (like theme), not per-resume-version.
+    # app/db/engine.py's init_db() drops the column ad-hoc for any v1 DB that still has it.
     model_used: str | None = None
     provider_used: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
