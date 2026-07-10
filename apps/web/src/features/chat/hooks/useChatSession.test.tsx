@@ -179,4 +179,37 @@ describe('useResumeChatSession', () => {
     expect(useChatStore.getState().sessionId).toBeNull()
     expect(useChatStore.getState().messages).toEqual([])
   })
+
+  it('switching to another session and back does not change the selected template (B1 regression)', async () => {
+    useResumeStore.getState().setTemplate('ats-plain')
+    const resumeA = makeResume({ fullName: 'Session A Resume' })
+    const resumeB = makeResume({ fullName: 'Session B Resume' })
+    server.use(
+      http.get('/api/chat/sessions/101', () =>
+        HttpResponse.json({
+          session: { id: 101, title: 'A', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: 1 },
+          messages: [],
+          activeResume: resumeA,
+        }),
+      ),
+      http.get('/api/chat/sessions/102', () =>
+        HttpResponse.json({
+          session: { id: 102, title: 'B', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: 2 },
+          messages: [],
+          activeResume: resumeB,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(101)
+    expect(useResumeStore.getState().resume?.fullName).toBe('Session A Resume')
+
+    await result.current.resumeSession(102)
+    expect(useResumeStore.getState().resume?.fullName).toBe('Session B Resume')
+
+    await result.current.resumeSession(101)
+    expect(useResumeStore.getState().resume?.fullName).toBe('Session A Resume')
+    expect(useResumeStore.getState().template).toBe('ats-plain')
+  })
 })

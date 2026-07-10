@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { SessionSidebar } from '../features/chat/components/SessionSidebar'
 import { ChatPanel } from '../features/chat/components/ChatPanel'
+import { useRestoreActiveSession } from '../features/chat/hooks/useChatSession'
 import { PreviewPanel } from '../features/resume/components/PreviewPanel'
 import { AppHeader } from './AppHeader'
 
@@ -16,6 +17,7 @@ function tabButtonClass(selected: boolean): string {
 
 export function AppShell() {
   const [mobileTab, setMobileTab] = useState<MobileTab>('chat')
+  useRestoreActiveSession()
 
   return (
     <div className="print-shell flex h-screen flex-col bg-stone-50 text-stone-900 transition-colors duration-200 dark:bg-zinc-950 dark:text-zinc-100">

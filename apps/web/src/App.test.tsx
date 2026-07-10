@@ -8,7 +8,7 @@ import { renderApp } from './test/render'
 import { sseResponse } from './test/msw/sse'
 import { makeChatTurnEvents, makeResume, makeStageEvents } from './test/factories'
 import { STORAGE_KEY, useResumeStore } from './features/resume/store/resumeStore'
-import { useChatStore } from './features/chat/store/chatStore'
+import { ACTIVE_SESSION_STORAGE_KEY, useChatStore } from './features/chat/store/chatStore'
 import { __resetChatBackendAvailability } from './features/chat/hooks/useChatStream'
 
 beforeEach(() => {
@@ -132,6 +132,52 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByText('Legacy Fallback Person')).toBeInTheDocument()
     })
+  })
+
+  it('restores the active session (messages + resume) from a persisted sessionId on mount (B2)', async () => {
+    const resume = makeResume({ fullName: 'Restored Person' })
+    localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify({ state: { sessionId: 5 }, version: 1 }))
+    await useChatStore.persist.rehydrate()
+
+    server.use(
+      http.get('/api/chat/sessions/5', () =>
+        HttpResponse.json({
+          session: { id: 5, title: 'Restored chat', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: 1 },
+          messages: [
+            { id: 1, role: 'user', content: 'a job description', intent: null, resumeVersionId: null, createdAt: '2026-07-10T00:00:00Z' },
+            { id: 2, role: 'assistant', content: 'Generated a tailored resume.', intent: 'generate', resumeVersionId: 1, createdAt: '2026-07-10T00:00:01Z' },
+          ],
+          activeResume: resume,
+        }),
+      ),
+    )
+
+    renderApp(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Restored Person')).toBeInTheDocument()
+    })
+    expect(screen.getByText('a job description')).toBeInTheDocument()
+    expect(screen.getByText('Generated a tailored resume.')).toBeInTheDocument()
+  })
+
+  it('a persisted session the backend no longer has falls back cleanly to the empty state (B2)', async () => {
+    localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify({ state: { sessionId: 99 }, version: 1 }))
+    await useChatStore.persist.rehydrate()
+
+    server.use(
+      http.get('/api/chat/sessions/99', () => HttpResponse.json({ detail: 'not found' }, { status: 404 })),
+    )
+
+    renderApp(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/let's build your resume/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    const raw = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)
+    expect(JSON.parse(raw as string).state).toEqual({ sessionId: null })
   })
 
   it('a plain conversational message with no JD/resume gets a reply without touching the preview (question intent)', async () => {

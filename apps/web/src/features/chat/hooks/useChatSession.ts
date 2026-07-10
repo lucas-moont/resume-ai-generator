@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createChatSession,
@@ -92,4 +93,43 @@ export function useResumeChatSession() {
   }
 
   return { resumeSession, startNewChat }
+}
+
+/** B2: on boot, if a sessionId survived a reload (chatStore persists just
+ * that field — see ACTIVE_SESSION_STORAGE_KEY) but its messages didn't
+ * (by design — they're ephemeral), refetch the full conversation so the
+ * chat panel doesn't show a misleading empty state while the sidebar/preview
+ * already reflect the restored session. A 404/error (the session was
+ * deleted, or the backend isn't reachable) falls back to a clean empty
+ * state — reset() also clears the persisted id, so this doesn't retry
+ * forever on a dead session. */
+export function useRestoreActiveSession(): void {
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    const { sessionId, messages } = useChatStore.getState()
+    if (sessionId === null || messages.length > 0) return
+
+    let cancelled = false
+    queryClient
+      .fetchQuery({
+        queryKey: chatSessionQueryKey(sessionId),
+        queryFn: () => getChatSession(sessionId),
+      })
+      .then((detail) => {
+        if (cancelled) return
+        useChatStore.getState().loadSession(sessionId, detail.messages.map(toChatMessage))
+        useResumeStore.getState().setResume(detail.activeResume)
+      })
+      .catch(() => {
+        if (cancelled) return
+        useChatStore.getState().reset()
+      })
+
+    return () => {
+      cancelled = true
+    }
+    // Boot-time only: intentionally runs once, not on every sessionId change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 }

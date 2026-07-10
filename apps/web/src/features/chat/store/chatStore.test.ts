@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useChatStore } from './chatStore'
+import { ACTIVE_SESSION_STORAGE_KEY, useChatStore } from './chatStore'
 
 beforeEach(() => {
   useChatStore.getState().reset()
+  localStorage.clear()
 })
 
 describe('chatStore', () => {
@@ -111,5 +112,37 @@ describe('chatStore', () => {
     expect(state.sessionId).toBe(456)
     expect(state.messages).toHaveLength(1)
     expect(state.streaming).not.toBeNull()
+  })
+
+  describe('active session persistence (B2)', () => {
+    it('persists only sessionId to localStorage — not messages or streaming', () => {
+      useChatStore.getState().loadSession(42, [
+        { id: 'm1', role: 'user', content: 'hello', createdAt: 1 },
+      ])
+
+      const raw = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)
+      expect(raw).not.toBeNull()
+      const parsed = JSON.parse(raw as string)
+      expect(parsed.state).toEqual({ sessionId: 42 })
+    })
+
+    it('rehydrates sessionId from a pre-populated localStorage entry', async () => {
+      localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify({ state: { sessionId: 7 }, version: 1 }))
+
+      await useChatStore.persist.rehydrate()
+
+      expect(useChatStore.getState().sessionId).toBe(7)
+      // Messages/streaming are never part of the persisted blob.
+      expect(useChatStore.getState().messages).toEqual([])
+    })
+
+    it('reset() clears the persisted sessionId too', () => {
+      useChatStore.getState().setSessionId(9)
+      useChatStore.getState().reset()
+
+      const raw = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)
+      const parsed = JSON.parse(raw as string)
+      expect(parsed.state).toEqual({ sessionId: null })
+    })
   })
 })

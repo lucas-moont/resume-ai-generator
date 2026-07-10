@@ -4,7 +4,7 @@ import { sseBody, SSE_HEADERS } from './support/sse'
 import { makeResume } from './support/fixtures'
 
 test.describe('Reload persistence', () => {
-  test('resume, template, and theme survive a reload; the session list restores the conversation', async ({
+  test('resume, template, and theme survive a reload; the active session auto-restores the conversation', async ({
     page,
   }) => {
     await mockBaseline(page)
@@ -79,12 +79,9 @@ test.describe('Reload persistence', () => {
     await expect(page.getByLabel('Template', { exact: true })).toHaveValue('classic')
     await expect(page.getByRole('button', { name: /switch to light mode/i })).toBeVisible()
 
-    // chatStore itself is ephemeral (by design, F5) — the conversation is
-    // gone until the session is resumed from the sidebar.
-    await expect(page.getByText("Let's build your resume")).toBeVisible()
-
-    await page.getByText('Persisted chat').click()
-
+    // B2: the active session id is persisted too (chatStore's own messages
+    // stay ephemeral), so the conversation auto-restores on boot instead of
+    // showing an empty chat panel until manually resumed from the sidebar.
     await expect(page.getByText('Backend engineer role')).toBeVisible()
     await expect(page.getByText(/resume updated/i)).toBeVisible()
   })

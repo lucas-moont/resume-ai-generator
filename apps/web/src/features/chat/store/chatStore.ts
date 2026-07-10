@@ -1,6 +1,12 @@
 import { create } from 'zustand'
+import { createJSONStorage, persist } from 'zustand/middleware'
 
 export type ChatRole = 'user' | 'assistant'
+
+/** Only `sessionId` is persisted here — messages/streaming stay ephemeral
+ * (F5 decision); B2 restores the full conversation on boot by refetching
+ * from the backend, not by caching it locally. */
+export const ACTIVE_SESSION_STORAGE_KEY = 'resume-agent:active-session'
 
 export interface ResumeUpdatedCard {
   type: 'resumeUpdated'
@@ -59,64 +65,74 @@ const DEFAULT_STREAMING: Omit<StreamingState, 'status'> = {
   message: '',
 }
 
-export const useChatStore = create<ChatState>()((set) => ({
-  sessionId: null,
-  messages: [],
-  streaming: null,
+export const useChatStore = create<ChatState>()(
+  persist(
+    (set) => ({
+      sessionId: null,
+      messages: [],
+      streaming: null,
 
-  appendUserMessage: (content) => {
-    const message: ChatMessage = {
-      id: makeMessageId(),
-      role: 'user',
-      content,
-      createdAt: Date.now(),
-    }
-    set((state) => ({ messages: [...state.messages, message] }))
-    return message
-  },
-
-  appendAssistantMessage: (content, card) => {
-    const message: ChatMessage = {
-      id: makeMessageId(),
-      role: 'assistant',
-      content,
-      createdAt: Date.now(),
-      ...(card ? { card } : {}),
-    }
-    set((state) => ({ messages: [...state.messages, message] }))
-    return message
-  },
-
-  updateStreaming: (partial) => {
-    set((state) => ({
-      streaming: {
-        status: 'streaming',
-        ...DEFAULT_STREAMING,
-        ...state.streaming,
-        ...partial,
+      appendUserMessage: (content) => {
+        const message: ChatMessage = {
+          id: makeMessageId(),
+          role: 'user',
+          content,
+          createdAt: Date.now(),
+        }
+        set((state) => ({ messages: [...state.messages, message] }))
+        return message
       },
-    }))
-  },
 
-  finishStreaming: () => {
-    // Abort in-flight requests aren't cancelled here — callers that own the
-    // AbortController (useChatStream) are responsible for calling .abort()
-    // before finishing if that's the reason the turn is ending.
-    set({ streaming: null })
-  },
+      appendAssistantMessage: (content, card) => {
+        const message: ChatMessage = {
+          id: makeMessageId(),
+          role: 'assistant',
+          content,
+          createdAt: Date.now(),
+          ...(card ? { card } : {}),
+        }
+        set((state) => ({ messages: [...state.messages, message] }))
+        return message
+      },
 
-  reset: () => {
-    set({ sessionId: null, messages: [], streaming: null })
-  },
+      updateStreaming: (partial) => {
+        set((state) => ({
+          streaming: {
+            status: 'streaming',
+            ...DEFAULT_STREAMING,
+            ...state.streaming,
+            ...partial,
+          },
+        }))
+      },
 
-  loadSession: (sessionId, messages) => {
-    set({ sessionId, messages, streaming: null })
-  },
+      finishStreaming: () => {
+        // Abort in-flight requests aren't cancelled here — callers that own the
+        // AbortController (useChatStream) are responsible for calling .abort()
+        // before finishing if that's the reason the turn is ending.
+        set({ streaming: null })
+      },
 
-  setSessionId: (sessionId) => {
-    set({ sessionId })
-  },
-}))
+      reset: () => {
+        set({ sessionId: null, messages: [], streaming: null })
+      },
+
+      loadSession: (sessionId, messages) => {
+        set({ sessionId, messages, streaming: null })
+      },
+
+      setSessionId: (sessionId) => {
+        set({ sessionId })
+      },
+    }),
+    {
+      name: ACTIVE_SESSION_STORAGE_KEY,
+      version: 1,
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({ sessionId: state.sessionId }),
+    },
+  ),
+)
 
 // Exposed for callers that need the current state outside React (e.g.
 // useChatStream's SSE loop) without subscribing to re-renders.

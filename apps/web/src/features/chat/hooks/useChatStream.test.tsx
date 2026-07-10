@@ -287,6 +287,31 @@ describe('useChatStream — stop', () => {
   })
 })
 
+describe('useChatStream — template is a sticky global preference (B1 regression)', () => {
+  it('a resume event during a refine does not change the selected template', async () => {
+    mockSessionCreation()
+    useResumeStore.getState().setTemplate('ats-plain')
+    const resume = makeResume({ fullName: 'Refined Person' })
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'resume', data: { resume, resumeVersionId: 1 } },
+          { event: 'message', data: { content: 'Updated your resume.' } },
+          { event: 'done', data: { progress: 100, messageId: 1, resumeVersionId: 1 } },
+        ]),
+      ),
+    )
+
+    const { result } = renderChatStream()
+    await result.current.send('Make it punchier')
+
+    await waitFor(() => {
+      expect(useResumeStore.getState().resume?.fullName).toBe('Refined Person')
+    })
+    expect(useResumeStore.getState().template).toBe('ats-plain')
+  })
+})
+
 describe('useChatStream — client-side commands (no network)', () => {
   it('switches the template locally without hitting the network', async () => {
     const { result } = renderChatStream()

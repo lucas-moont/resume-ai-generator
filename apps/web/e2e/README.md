@@ -2,6 +2,7 @@
 
 Five core flows, each with a **default (mocked)** test and, where practical, an
 opt-in **`@real`**-tagged counterpart that exercises the actual FastAPI backend.
+Plus a couple of regression specs for bugs found in the v1 QA live pass.
 
 | Spec | Flow |
 |---|---|
@@ -9,7 +10,8 @@ opt-in **`@real`**-tagged counterpart that exercises the actual FastAPI backend.
 | `refine.spec.ts` | Follow-up message on an active resume → preview updates, "resume updated" card |
 | `template-switch.spec.ts` | Toolbar select **and** a chat command switch templates instantly, zero network calls |
 | `export-pdf.spec.ts` | Toolbar "Download PDF" → correct request payload → browser download fires |
-| `persistence.spec.ts` | Resume/template/theme survive a reload; the session list restores the conversation |
+| `persistence.spec.ts` | Resume/template/theme survive a reload; the active session auto-restores the conversation |
+| `responsive-preview.spec.ts` | The A4 preview scales to fit a narrow (~400px) viewport instead of overflowing (B3 regression) |
 
 ## Running the mocked suite (default, required to pass)
 
