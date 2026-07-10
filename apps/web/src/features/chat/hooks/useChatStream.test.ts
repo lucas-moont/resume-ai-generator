@@ -6,7 +6,7 @@ import { useChatStore } from '../store/chatStore'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { server } from '../../../test/setup'
 import { sseResponse } from '../../../test/msw/sse'
-import { makeResume, makeStageEvents } from '../../../test/factories'
+import { makeResume } from '../../../test/factories'
 
 beforeEach(() => {
   useChatStore.getState().reset()
@@ -14,14 +14,35 @@ beforeEach(() => {
   useResumeStore.temporal.getState().clear()
 })
 
-describe('useChatStream — routing (adapter)', () => {
-  it('sends to /api/generate/stream when there is no active resume, and appends a resumeUpdated card', async () => {
+/** Mocks POST /api/chat/sessions to always create session id 1. */
+function mockSessionCreation() {
+  server.use(
+    http.post('/api/chat/sessions', () =>
+      HttpResponse.json({ id: 1, title: 'New chat', createdAt: '2026-07-10T00:00:00Z' }, { status: 201 }),
+    ),
+  )
+}
+
+describe('useChatStream — session + message routing', () => {
+  it('creates a session on the first message, then streams to it', async () => {
     const resume = makeResume({ fullName: 'Ada Lovelace' })
-    let capturedBody: unknown
+    let capturedCreateBody: unknown
     server.use(
-      http.post('/api/generate/stream', async ({ request }) => {
-        capturedBody = await request.json()
-        return sseResponse(makeStageEvents(resume))
+      http.post('/api/chat/sessions', async ({ request }) => {
+        capturedCreateBody = await request.json()
+        return HttpResponse.json({ id: 7, title: 'A job posting', createdAt: '2026-07-10T00:00:00Z' }, { status: 201 })
+      }),
+    )
+    let capturedMessageBody: unknown
+    server.use(
+      http.post('/api/chat/sessions/7/messages/stream', async ({ request }) => {
+        capturedMessageBody = await request.json()
+        return sseResponse([
+          { event: 'stage', data: { step: 'calling_ai', progress: 40 } },
+          { event: 'resume', data: { resume, resumeVersionId: 12 } },
+          { event: 'message', data: { content: 'Generated a tailored resume for this job description.' } },
+          { event: 'done', data: { progress: 100, messageId: 1, resumeVersionId: 12 } },
+        ])
       }),
     )
 
@@ -32,41 +53,78 @@ describe('useChatStream — routing (adapter)', () => {
       expect(useResumeStore.getState().resume?.fullName).toBe('Ada Lovelace')
     })
 
-    expect(capturedBody).toMatchObject({ job_description: 'Senior backend engineer, distributed systems' })
+    expect(capturedCreateBody).toMatchObject({ title: 'Senior backend engineer, distributed systems' })
+    expect(capturedMessageBody).toMatchObject({ message: 'Senior backend engineer, distributed systems' })
+    expect(useChatStore.getState().sessionId).toBe(7)
+
     const messages = useChatStore.getState().messages
     expect(messages[0]).toMatchObject({ role: 'user', content: 'Senior backend engineer, distributed systems' })
-    expect(messages[1]).toMatchObject({ role: 'assistant', card: { type: 'resumeUpdated' } })
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Generated a tailored resume for this job description.',
+      card: { type: 'resumeUpdated' },
+    })
     expect(useChatStore.getState().streaming).toBeNull()
   })
 
-  it('sends to /api/refine/stream when a resume is already active', async () => {
-    const existing = makeResume({ fullName: 'Grace Hopper' })
-    useResumeStore.getState().setResume(existing)
-    const updated = { ...existing, headline: 'Staff Engineer' }
-    let capturedBody: unknown
+  it('reuses the existing session for a second message instead of creating another one', async () => {
+    let createCalls = 0
     server.use(
-      http.post('/api/refine/stream', async ({ request }) => {
-        capturedBody = await request.json()
-        return sseResponse(makeStageEvents(updated))
+      http.post('/api/chat/sessions', () => {
+        createCalls += 1
+        return HttpResponse.json({ id: 1, title: 'x', createdAt: '2026-07-10T00:00:00Z' }, { status: 201 })
       }),
+    )
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'message', data: { content: 'Updated your resume.' } },
+          { event: 'done', data: { progress: 100, messageId: 2, resumeVersionId: null } },
+        ]),
+      ),
     )
 
     const { result } = renderHook(() => useChatStream())
-    await result.current.send('Update my headline to Staff Engineer')
+    await result.current.send('First message')
+    await result.current.send('Second message')
 
-    await waitFor(() => {
-      expect(useResumeStore.getState().resume?.headline).toBe('Staff Engineer')
+    expect(createCalls).toBe(1)
+    expect(useChatStore.getState().sessionId).toBe(1)
+  })
+
+  it('a plain "question" reply (no resume event) still appends the assistant text, without touching resumeStore', async () => {
+    mockSessionCreation()
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'message', data: { content: 'Paste a job description to generate a tailored resume.' } },
+          { event: 'done', data: { progress: 100, messageId: 3, resumeVersionId: null } },
+        ]),
+      ),
+    )
+
+    const { result } = renderHook(() => useChatStream())
+    await result.current.send('hey there')
+
+    expect(useResumeStore.getState().resume).toBeNull()
+    const messages = useChatStore.getState().messages
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Paste a job description to generate a tailored resume.',
     })
-    expect(capturedBody).toMatchObject({ resume: existing, message: 'Update my headline to Staff Engineer' })
+    expect(messages[1].card).toBeUndefined()
   })
 
   it('reports the stage progress on the store while streaming', async () => {
+    mockSessionCreation()
     const resume = makeResume()
     server.use(
-      http.post('/api/generate/stream', () =>
+      http.post('/api/chat/sessions/1/messages/stream', () =>
         sseResponse([
           { event: 'stage', data: { step: 'calling_ai', progress: 40, message: 'Calling the model' } },
-          { event: 'done', data: { progress: 100, resume }, delayMs: 150 },
+          { event: 'resume', data: { resume, resumeVersionId: 1 }, delayMs: 150 },
+          { event: 'message', data: { content: 'Done.' } },
+          { event: 'done', data: { progress: 100, messageId: 4, resumeVersionId: 1 } },
         ]),
       ),
     )
@@ -84,9 +142,25 @@ describe('useChatStream — routing (adapter)', () => {
 })
 
 describe('useChatStream — errors and retry', () => {
-  it('appends an error card with a retry message on stream failure', async () => {
+  it('appends an error card with a retry message when session creation fails', async () => {
     server.use(
-      http.post('/api/generate/stream', () =>
+      http.post('/api/chat/sessions', () => HttpResponse.json({ detail: 'db unavailable' }, { status: 500 })),
+    )
+
+    const { result } = renderHook(() => useChatStream())
+    await result.current.send('A job description that will fail')
+
+    const assistantMsg = useChatStore.getState().messages.find((m) => m.role === 'assistant')
+    expect(assistantMsg?.card).toMatchObject({
+      type: 'error',
+      retryMessage: 'A job description that will fail',
+    })
+  })
+
+  it('appends an error card with a retry message on stream failure', async () => {
+    mockSessionCreation()
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
         HttpResponse.json({ detail: 'model unavailable' }, { status: 502 }),
       ),
     )
@@ -104,13 +178,18 @@ describe('useChatStream — errors and retry', () => {
   })
 
   it('retry resends the same message and can succeed the second time', async () => {
+    mockSessionCreation()
     const resume = makeResume({ fullName: 'Retry Success' })
     let attempt = 0
     server.use(
-      http.post('/api/generate/stream', () => {
+      http.post('/api/chat/sessions/1/messages/stream', () => {
         attempt += 1
         if (attempt === 1) return HttpResponse.json({ detail: 'model unavailable' }, { status: 502 })
-        return sseResponse(makeStageEvents(resume))
+        return sseResponse([
+          { event: 'resume', data: { resume, resumeVersionId: 1 } },
+          { event: 'message', data: { content: 'Generated a tailored resume for this job description.' } },
+          { event: 'done', data: { progress: 100, messageId: 5, resumeVersionId: 1 } },
+        ])
       }),
     )
 
@@ -129,13 +208,14 @@ describe('useChatStream — errors and retry', () => {
 
 describe('useChatStream — stop', () => {
   it('stop() aborts the in-flight request and resets streaming immediately', async () => {
+    mockSessionCreation()
     // MSW's mocked ReadableStream doesn't actually tear down when the client
     // aborts (see F1 report) — a short delay keeps this test fast regardless;
     // what's under test is the store's immediate synchronous "stopped" state,
     // not real network cancellation.
     server.use(
-      http.post('/api/generate/stream', () =>
-        sseResponse([{ event: 'done', data: { progress: 100, resume: makeResume() }, delayMs: 100 }]),
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([{ event: 'done', data: { progress: 100, messageId: 6, resumeVersionId: null }, delayMs: 100 }]),
       ),
     )
 

@@ -1,7 +1,7 @@
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup'
-import { ApiError, postInit, requestBlob, requestJson, requestStream } from './client'
+import { ApiError, postInit, requestBlob, requestJson, requestStream, requestVoid } from './client'
 
 describe('postInit', () => {
   it('builds a JSON POST RequestInit carrying the body and an optional abort signal', () => {
@@ -115,6 +115,28 @@ describe('requestStream', () => {
 
     await expect(requestStream('/api/test-stream-error', postInit({}))).rejects.toThrow(
       'Model not found',
+    )
+  })
+})
+
+describe('requestVoid', () => {
+  it('resolves without attempting to parse a body (e.g. 204 No Content)', async () => {
+    server.use(
+      http.delete('/api/test-void-ok', () => new HttpResponse(null, { status: 204 })),
+    )
+
+    await expect(requestVoid('/api/test-void-ok', { method: 'DELETE' })).resolves.toBeUndefined()
+  })
+
+  it('throws an ApiError on failure', async () => {
+    server.use(
+      http.delete('/api/test-void-error', () =>
+        HttpResponse.json({ detail: 'Session not found' }, { status: 404 }),
+      ),
+    )
+
+    await expect(requestVoid('/api/test-void-error', { method: 'DELETE' })).rejects.toThrow(
+      'Session not found',
     )
   })
 })

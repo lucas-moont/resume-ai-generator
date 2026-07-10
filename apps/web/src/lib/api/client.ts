@@ -50,3 +50,9 @@ export async function requestStream(path: string, init: RequestInit): Promise<Re
   }
   return response
 }
+
+/** For endpoints with no response body (e.g. DELETE -> 204) — never calls .json(). */
+export async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+  const response = await fetch(path, init)
+  if (!response.ok) throw new ApiError(await readErrorDetail(response), response.status)
+}

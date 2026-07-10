@@ -1,6 +1,12 @@
 import { useCallback } from 'react'
-import { ApiError, generateStream, refineStream } from '../../../lib/api/endpoints'
-import type { StreamDonePayload, StreamErrorPayload, StreamStagePayload } from '../../../lib/api/dto'
+import { ApiError, chatMessageStream, createChatSession } from '../../../lib/api/endpoints'
+import type {
+  ChatDoneEventPayload,
+  ChatMessageEventPayload,
+  ChatResumeEventPayload,
+  StreamErrorPayload,
+  StreamStagePayload,
+} from '../../../lib/api/dto'
 import { diffResumeSections } from '../../resume/diffResumeSections'
 import { downloadResumePdf } from '../../resume/downloadResumePdf'
 import { useResumeStore } from '../../resume/store/resumeStore'
@@ -8,11 +14,13 @@ import { TEMPLATE_REGISTRY } from '../../resume/templates/registry'
 import { parseCommand } from '../commands'
 import { useChatStore } from '../store/chatStore'
 
-// ADAPTER: while apps/api's chat backend (B6) doesn't exist, this hook routes
-// to the existing v0 endpoints — no active resume -> /api/generate/stream,
-// active resume -> /api/refine/stream. When B6 ships, only this file changes
-// (to POST /api/chat/sessions/{id}/messages/stream); chatStore, commands.ts
-// and every chat component are unaffected.
+// ADAPTER: routes every non-command message through
+// POST /api/chat/sessions/{id}/messages/stream (B6) — intent routing
+// (generate vs. refine vs. plain reply) happens server-side now, so this
+// hook no longer branches on whether a resume is active. A session is
+// created lazily on the first message of a fresh chat (title = a preview of
+// that message). If B6's contract ever changes again, this is still the
+// single file that needs to change.
 
 export interface SendOptions {
   model?: string
@@ -23,6 +31,8 @@ export interface UseChatStreamResult {
   retry: (message: string, options?: SendOptions) => Promise<void>
   stop: () => void
 }
+
+const TITLE_PREVIEW_MAX_LENGTH = 60
 
 export function useChatStream(): UseChatStreamResult {
   const send = useCallback(async (message: string, options: SendOptions = {}) => {
@@ -92,8 +102,22 @@ function isAbortError(e: unknown): boolean {
   return e instanceof DOMException && e.name === 'AbortError'
 }
 
+function titlePreview(message: string): string {
+  return message.length > TITLE_PREVIEW_MAX_LENGTH
+    ? `${message.slice(0, TITLE_PREVIEW_MAX_LENGTH - 1)}…`
+    : message
+}
+
+/** Returns the active session id, creating one (titled from this message) if this is a fresh chat. */
+async function ensureSession(message: string): Promise<number> {
+  const existing = useChatStore.getState().sessionId
+  if (existing !== null) return existing
+  const created = await createChatSession({ title: titlePreview(message) })
+  useChatStore.getState().setSessionId(created.id)
+  return created.id
+}
+
 async function runTurn(message: string, options: SendOptions): Promise<void> {
-  const { resume, locale } = useResumeStore.getState()
   const controller = new AbortController()
   useChatStore.getState().updateStreaming({
     step: 'preparing_context',
@@ -103,15 +127,17 @@ async function runTurn(message: string, options: SendOptions): Promise<void> {
   })
 
   try {
-    const events = resume
-      ? await refineStream(
-          { resume, message, model: options.model || undefined },
-          controller.signal,
-        )
-      : await generateStream(
-          { job_description: message, model: options.model || undefined, locale: locale || undefined },
-          controller.signal,
-        )
+    const sessionId = await ensureSession(message)
+    const { locale } = useResumeStore.getState()
+    const events = await chatMessageStream(
+      sessionId,
+      { message, model: options.model || undefined, locale: locale || undefined },
+      controller.signal,
+    )
+
+    let resumeEvent: ChatResumeEventPayload | null = null
+    let changedSections: string[] = []
+    let assistantText = ''
 
     for await (const { event, data } of events) {
       if (controller.signal.aborted) return
@@ -123,13 +149,21 @@ async function runTurn(message: string, options: SendOptions): Promise<void> {
           progress: Math.max(5, Math.min(99, Math.round(s.progress ?? 0))),
           message: s.message ?? '',
         })
-      } else if (event === 'done') {
-        const d = data as StreamDonePayload
+      } else if (event === 'resume') {
+        resumeEvent = data as ChatResumeEventPayload
         const prevResume = useResumeStore.getState().resume
-        useResumeStore.getState().setResume(d.resume)
-        const changedSections = diffResumeSections(prevResume, d.resume)
-        const text = prevResume ? "I've updated your resume." : "I've generated your resume."
-        useChatStore.getState().appendAssistantMessage(text, { type: 'resumeUpdated', changedSections })
+        useResumeStore.getState().setResume(resumeEvent.resume)
+        changedSections = diffResumeSections(prevResume, resumeEvent.resume)
+      } else if (event === 'message') {
+        assistantText = (data as ChatMessageEventPayload).content
+      } else if (event === 'done') {
+        void (data as ChatDoneEventPayload)
+        useChatStore
+          .getState()
+          .appendAssistantMessage(
+            assistantText || 'Done.',
+            resumeEvent ? { type: 'resumeUpdated', changedSections } : undefined,
+          )
         useChatStore.getState().finishStreaming()
         return
       } else if (event === 'error') {

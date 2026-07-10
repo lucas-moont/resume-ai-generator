@@ -6,7 +6,7 @@ import App from './App'
 import { server } from './test/setup'
 import { renderApp } from './test/render'
 import { sseResponse } from './test/msw/sse'
-import { makeResume, makeStageEvents } from './test/factories'
+import { makeChatTurnEvents, makeResume } from './test/factories'
 import { STORAGE_KEY, useResumeStore } from './features/resume/store/resumeStore'
 import { useChatStore } from './features/chat/store/chatStore'
 
@@ -31,7 +31,9 @@ describe('App', () => {
 
   it('generates a resume via the composer and renders it in the preview', async () => {
     const resume = makeResume({ fullName: 'Grace Hopper' })
-    server.use(http.post('/api/generate/stream', () => sseResponse(makeStageEvents(resume))))
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () => sseResponse(makeChatTurnEvents(resume))),
+    )
 
     const user = userEvent.setup()
     renderApp(<App />)

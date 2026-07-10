@@ -32,4 +32,13 @@ export const handlers = [
       headers: { 'Content-Type': 'application/pdf' },
     }),
   ),
+
+  // Chat (F5): default = an empty session list, and creation always mints
+  // session id 1. Individual tests override the message-stream endpoint
+  // (`/api/chat/sessions/1/messages/stream`) with `server.use(...)`.
+  http.get('/api/chat/sessions', () => HttpResponse.json({ sessions: [] })),
+
+  http.post('/api/chat/sessions', () =>
+    HttpResponse.json({ id: 1, title: 'New chat', createdAt: '2026-07-10T00:00:00Z' }, { status: 201 }),
+  ),
 ]

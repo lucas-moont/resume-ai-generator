@@ -1,9 +1,10 @@
 import { useState } from 'react'
+import { SessionSidebar } from '../features/chat/components/SessionSidebar'
 import { ChatPanel } from '../features/chat/components/ChatPanel'
 import { PreviewPanel } from '../features/resume/components/PreviewPanel'
 import { AppHeader } from './AppHeader'
 
-type MobileTab = 'chat' | 'preview'
+type MobileTab = 'sessions' | 'chat' | 'preview'
 
 function tabButtonClass(selected: boolean): string {
   return `rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 ${
@@ -16,11 +17,6 @@ function tabButtonClass(selected: boolean): string {
 export function AppShell() {
   const [mobileTab, setMobileTab] = useState<MobileTab>('chat')
 
-  // SessionSidebar slot (F5): a <SessionSidebar /> column goes right before
-  // the tablist/Chat section below, e.g. `hidden lg:flex lg:w-64` — same
-  // graceful-degradation pattern as the Chat/Preview sections (visible at
-  // lg+, folded into the mobile tab bar as a 3rd tab). Not added yet since F5
-  // needs a real session id from B6 to have anything to show.
   return (
     <div className="print-shell flex h-screen flex-col bg-stone-50 text-stone-900 transition-colors duration-200 dark:bg-zinc-950 dark:text-zinc-100">
       <a
@@ -43,6 +39,15 @@ export function AppShell() {
           <button
             type="button"
             role="tab"
+            aria-selected={mobileTab === 'sessions'}
+            onClick={() => setMobileTab('sessions')}
+            className={tabButtonClass(mobileTab === 'sessions')}
+          >
+            Sessions
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={mobileTab === 'chat'}
             onClick={() => setMobileTab('chat')}
             className={tabButtonClass(mobileTab === 'chat')}
@@ -59,6 +64,17 @@ export function AppShell() {
             Preview
           </button>
         </div>
+
+        {/* SessionSidebar hides itself (renders null) when the list can't be
+            loaded — no extra conditional needed here for that degradation. */}
+        <section
+          aria-label="Sessions"
+          className={`no-print min-h-0 flex-col border-stone-200 dark:border-zinc-800 lg:flex lg:w-56 lg:border-r ${
+            mobileTab === 'sessions' ? 'flex' : 'hidden'
+          }`}
+        >
+          <SessionSidebar />
+        </section>
 
         <section
           aria-label="Chat"

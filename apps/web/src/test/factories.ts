@@ -65,3 +65,31 @@ export function makeStageEvents(resume: ResumeDocument = makeResume()): MockSseE
   }))
   return [...stageEvents, { event: 'done', data: { progress: 100, resume } }]
 }
+
+/**
+ * A realistic stage → resume → message → done SSE sequence, as emitted by
+ * POST /api/chat/sessions/{id}/messages/stream (B6/F5) — unlike the legacy
+ * generate/refine streams, the chat stream also carries a "resume" event
+ * (the ResumeDocument + its version id) and a "message" event (the
+ * assistant's chat bubble text).
+ */
+export function makeChatTurnEvents(
+  resume: ResumeDocument = makeResume(),
+  options: { content?: string; resumeVersionId?: number; messageId?: number } = {},
+): MockSseEvent[] {
+  const stageEvents: MockSseEvent[] = WORK_STEP_IDS.map((step, idx) => ({
+    event: 'stage',
+    data: {
+      step,
+      progress: Math.round(((idx + 1) / (WORK_STEP_IDS.length + 1)) * 100),
+      message: STAGE_MESSAGES[step],
+    },
+  }))
+  const resumeVersionId = options.resumeVersionId ?? 1
+  return [
+    ...stageEvents,
+    { event: 'resume', data: { resume, resumeVersionId } },
+    { event: 'message', data: { content: options.content ?? "I've updated your resume." } },
+    { event: 'done', data: { progress: 100, messageId: options.messageId ?? 1, resumeVersionId } },
+  ]
+}

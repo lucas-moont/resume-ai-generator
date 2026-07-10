@@ -5,10 +5,15 @@ import { sseResponse } from '../../test/msw/sse'
 import { makeResume, makeStageEvents } from '../../test/factories'
 import {
   ApiError,
+  chatMessageStream,
+  createChatSession,
+  deleteChatSession,
   exportPdf,
   fetchGithubRepos,
   fetchModels,
   generateStream,
+  getChatSession,
+  listChatSessions,
   refineStream,
 } from './endpoints'
 
@@ -127,5 +132,125 @@ describe('refineStream', () => {
     for await (const evt of generator) events.push(evt)
 
     expect(events.at(-1)).toMatchObject({ event: 'done', data: { resume } })
+  })
+})
+
+describe('createChatSession', () => {
+  it('posts to /api/chat/sessions and resolves the created session', async () => {
+    let capturedBody: unknown
+    server.use(
+      http.post('/api/chat/sessions', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json(
+          { id: 42, title: 'Backend engineer job posting', createdAt: '2026-07-10T00:00:00Z' },
+          { status: 201 },
+        )
+      }),
+    )
+
+    const result = await createChatSession({ title: 'Backend engineer job posting' })
+
+    expect(result).toEqual({ id: 42, title: 'Backend engineer job posting', createdAt: '2026-07-10T00:00:00Z' })
+    expect(capturedBody).toEqual({ title: 'Backend engineer job posting' })
+  })
+})
+
+describe('listChatSessions', () => {
+  it('resolves the sessions list', async () => {
+    server.use(
+      http.get('/api/chat/sessions', () =>
+        HttpResponse.json({
+          sessions: [{ id: 1, title: 'Hello', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+        }),
+      ),
+    )
+
+    await expect(listChatSessions()).resolves.toEqual({
+      sessions: [{ id: 1, title: 'Hello', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+    })
+  })
+
+  it('rejects with an ApiError when the chat feature is unavailable (e.g. 404)', async () => {
+    server.use(http.get('/api/chat/sessions', () => HttpResponse.json({ detail: 'not found' }, { status: 404 })))
+
+    let caught: unknown
+    try {
+      await listChatSessions()
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+  })
+})
+
+describe('getChatSession', () => {
+  it('resolves the session detail with messages and the active resume', async () => {
+    const resume = makeResume({ fullName: 'Loaded Session' })
+    server.use(
+      http.get('/api/chat/sessions/7', () =>
+        HttpResponse.json({
+          session: { id: 7, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: 3 },
+          messages: [
+            { id: 1, role: 'user', content: 'hi', intent: null, resumeVersionId: null, createdAt: '2026-07-10T00:00:00Z' },
+          ],
+          activeResume: resume,
+        }),
+      ),
+    )
+
+    const result = await getChatSession(7)
+    expect(result.session.id).toBe(7)
+    expect(result.messages).toHaveLength(1)
+    expect(result.activeResume?.fullName).toBe('Loaded Session')
+  })
+})
+
+describe('deleteChatSession', () => {
+  it('sends a DELETE request and resolves with no content', async () => {
+    server.use(http.delete('/api/chat/sessions/9', () => new HttpResponse(null, { status: 204 })))
+
+    await expect(deleteChatSession(9)).resolves.toBeUndefined()
+  })
+})
+
+describe('chatMessageStream', () => {
+  it('posts to the session-scoped stream endpoint and yields resume/message/done events', async () => {
+    const resume = makeResume({ fullName: 'Chat Adapter Test' })
+    let capturedBody: unknown
+    server.use(
+      http.post('/api/chat/sessions/5/messages/stream', async ({ request }) => {
+        capturedBody = await request.json()
+        return sseResponse([
+          { event: 'stage', data: { step: 'calling_ai', progress: 40 } },
+          { event: 'resume', data: { resume, resumeVersionId: 12 } },
+          { event: 'message', data: { content: 'Generated a tailored resume for this job description.' } },
+          { event: 'done', data: { progress: 100, messageId: 99, resumeVersionId: 12 } },
+        ])
+      }),
+    )
+
+    const generator = await chatMessageStream(5, { message: 'A job description' })
+    const events = []
+    for await (const evt of generator) events.push(evt)
+
+    expect(capturedBody).toEqual({ message: 'A job description' })
+    expect(events.map((e) => e.event)).toEqual(['stage', 'resume', 'message', 'done'])
+    expect(events[1]).toMatchObject({ event: 'resume', data: { resumeVersionId: 12 } })
+  })
+
+  it('rejects with an ApiError when the session does not exist', async () => {
+    server.use(
+      http.post('/api/chat/sessions/404/messages/stream', () =>
+        HttpResponse.json({ detail: 'Chat session 404 not found' }, { status: 404 }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await chatMessageStream(404, { message: 'hi' })
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
   })
 })

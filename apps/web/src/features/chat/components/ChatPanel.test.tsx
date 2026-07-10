@@ -6,7 +6,7 @@ import { ChatPanel } from './ChatPanel'
 import { server } from '../../../test/setup'
 import { renderApp } from '../../../test/render'
 import { sseResponse } from '../../../test/msw/sse'
-import { makeResume, makeStageEvents } from '../../../test/factories'
+import { makeChatTurnEvents, makeResume } from '../../../test/factories'
 import { useChatStore } from '../store/chatStore'
 import { useResumeStore } from '../../resume/store/resumeStore'
 
@@ -22,10 +22,10 @@ describe('ChatPanel — retry', () => {
     const resume = makeResume({ fullName: 'Retry UI Test' })
     let attempt = 0
     server.use(
-      http.post('/api/generate/stream', () => {
+      http.post('/api/chat/sessions/1/messages/stream', () => {
         attempt += 1
         if (attempt === 1) return HttpResponse.json({ detail: 'model unavailable' }, { status: 502 })
-        return sseResponse(makeStageEvents(resume))
+        return sseResponse(makeChatTurnEvents(resume))
       }),
     )
 
@@ -48,8 +48,10 @@ describe('ChatPanel — retry', () => {
 describe('ChatPanel — stop', () => {
   it('clicking Stop hides the progress indicator immediately', async () => {
     server.use(
-      http.post('/api/generate/stream', () =>
-        sseResponse([{ event: 'done', data: { progress: 100, resume: makeResume() }, delayMs: 300 }]),
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'done', data: { progress: 100, messageId: 1, resumeVersionId: null }, delayMs: 300 },
+        ]),
       ),
     )
 

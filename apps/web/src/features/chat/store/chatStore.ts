@@ -33,7 +33,7 @@ export interface StreamingState {
 }
 
 interface ChatState {
-  sessionId: string | null
+  sessionId: number | null
   messages: ChatMessage[]
   streaming: StreamingState | null
   appendUserMessage: (content: string) => ChatMessage
@@ -41,8 +41,12 @@ interface ChatState {
   updateStreaming: (partial: Partial<StreamingState>) => void
   finishStreaming: () => void
   reset: () => void
-  /** Hydrates from GET /api/chat/sessions/{id} — wired for real in F5. */
-  loadSession: (sessionId: string, messages: ChatMessage[]) => void
+  /** Hydrates from GET /api/chat/sessions/{id} (F5: SessionSidebar "resume"). */
+  loadSession: (sessionId: number, messages: ChatMessage[]) => void
+  /** Sets just the session id — used right after POST /api/chat/sessions
+   * creates a session for the FIRST message of a fresh chat, without
+   * touching the user message already appended locally. */
+  setSessionId: (sessionId: number) => void
 }
 
 function makeMessageId(): string {
@@ -107,6 +111,10 @@ export const useChatStore = create<ChatState>()((set) => ({
 
   loadSession: (sessionId, messages) => {
     set({ sessionId, messages, streaming: null })
+  },
+
+  setSessionId: (sessionId) => {
+    set({ sessionId })
   },
 }))
 

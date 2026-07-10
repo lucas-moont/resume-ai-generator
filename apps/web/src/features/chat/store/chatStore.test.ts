@@ -93,11 +93,23 @@ describe('chatStore', () => {
       { id: 'm2', role: 'assistant' as const, content: 'hi there', createdAt: 2 },
     ]
 
-    useChatStore.getState().loadSession('session-123', hydrated)
+    useChatStore.getState().loadSession(123, hydrated)
 
     const state = useChatStore.getState()
-    expect(state.sessionId).toBe('session-123')
+    expect(state.sessionId).toBe(123)
     expect(state.messages).toEqual(hydrated)
     expect(state.streaming).toBeNull()
+  })
+
+  it('setSessionId sets only the session id, leaving messages/streaming untouched', () => {
+    useChatStore.getState().appendUserMessage('first message, sent before the session existed')
+    useChatStore.getState().updateStreaming({ step: 'preparing_context' })
+
+    useChatStore.getState().setSessionId(456)
+
+    const state = useChatStore.getState()
+    expect(state.sessionId).toBe(456)
+    expect(state.messages).toHaveLength(1)
+    expect(state.streaming).not.toBeNull()
   })
 })
