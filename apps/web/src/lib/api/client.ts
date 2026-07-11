@@ -22,23 +22,22 @@ async function readErrorDetail(response: Response): Promise<unknown> {
   return data.detail
 }
 
-export function postInit(body: unknown, signal?: AbortSignal): RequestInit {
+function jsonInit(method: 'POST' | 'PUT', body: unknown, signal?: AbortSignal): RequestInit {
   return {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,
   }
 }
 
+export function postInit(body: unknown, signal?: AbortSignal): RequestInit {
+  return jsonInit('POST', body, signal)
+}
+
 /** Same shape as postInit but PUT — settings writes (v3 ticket 06) are idempotent replacements, not creations. */
 export function putInit(body: unknown, signal?: AbortSignal): RequestInit {
-  return {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  }
+  return jsonInit('PUT', body, signal)
 }
 
 export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
