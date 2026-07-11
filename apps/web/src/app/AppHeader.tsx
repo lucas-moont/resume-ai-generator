@@ -29,9 +29,14 @@ export function AppHeader() {
     <header className="no-print border-b border-stone-200/80 bg-white/80 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80">
       <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
         <div className="min-w-0">
-          <h1 className="font-display text-pretty text-2xl font-semibold tracking-tight text-stone-900 sm:text-3xl dark:text-zinc-50">
+          {/* v3 debt b: demoted from h1 -- the resume's own name (ResumePreview's
+              EditableText as="h1") is the page's main-content heading; this is
+              app chrome, same as a product's logo/wordmark. Not tag-qualified in
+              packages/resume-templates/resume.css (always `.name`/`.page .name`),
+              so this doesn't touch that shared, out-of-radius stylesheet. */}
+          <h2 className="font-display text-pretty text-2xl font-semibold tracking-tight text-stone-900 sm:text-3xl dark:text-zinc-50">
             Resume agent
-          </h1>
+          </h2>
           <p className="mt-1 max-w-xl text-sm leading-relaxed text-stone-600 dark:text-zinc-400">
             Local AI API · FastAPI · ATS-friendly layout
           </p>
