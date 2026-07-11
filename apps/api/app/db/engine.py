@@ -8,14 +8,14 @@ unconditionally, so tests and production share the exact same connection setup c
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
-from sqlalchemy import event, text
+from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
 from app import config as config_module
+from app.db.migrations import run_migrations
 
 
 def create_db_engine(database_url: str | None = None, *, echo: bool = False, **engine_kwargs: Any) -> Engine:
@@ -39,44 +39,9 @@ def create_db_engine(database_url: str | None = None, *, echo: bool = False, **e
     return engine
 
 
-def _drop_legacy_resume_versions_template_id_column(engine: Engine) -> None:
-    """Ad-hoc migration (no Alembic -- see app/db/tables.py's docstring): v1 DBs on disk may
-    still carry ``resume_versions.template_id``, which the model no longer defines as of v2
-    ticket 01 (see docs/v2-living-profile.md's "Dívida herdada"). ``create_all()`` above only
-    creates tables that don't exist yet, so a pre-existing v1 file keeps the dead column until
-    this runs. SQLite gained ``ALTER TABLE ... DROP COLUMN`` in 3.35.0 (2021); an older SQLite
-    build just keeps the column -- harmless, since nothing reads or writes it anymore.
-    """
-    if engine.dialect.name != "sqlite" or sqlite3.sqlite_version_info < (3, 35, 0):
-        return
-    with engine.connect() as conn:
-        columns = conn.execute(text("PRAGMA table_info(resume_versions)")).fetchall()
-        if not columns or not any(row[1] == "template_id" for row in columns):
-            return
-        conn.execute(text("ALTER TABLE resume_versions DROP COLUMN template_id"))
-        conn.commit()
-
-
-def _add_missing_source_documents_diff_summary_column(engine: Engine) -> None:
-    """Ad-hoc migration (no Alembic -- see app/db/tables.py's docstring): a `source_documents`
-    table created by a v2-ticket-03-era boot (before ticket 04 added `diff_summary`) is missing
-    the column outright. Unlike the DROP COLUMN migration above, `ALTER TABLE ... ADD COLUMN` is
-    supported by every SQLite version, so no version gate is needed here.
-    """
-    if engine.dialect.name != "sqlite":
-        return
-    with engine.connect() as conn:
-        columns = conn.execute(text("PRAGMA table_info(source_documents)")).fetchall()
-        if not columns or any(row[1] == "diff_summary" for row in columns):
-            return
-        conn.execute(text("ALTER TABLE source_documents ADD COLUMN diff_summary TEXT"))
-        conn.commit()
-
-
 def init_db(engine: Engine) -> None:
     SQLModel.metadata.create_all(engine)
-    _drop_legacy_resume_versions_template_id_column(engine)
-    _add_missing_source_documents_diff_summary_column(engine)
+    run_migrations(engine)
 
 
 def new_session(engine: Engine) -> Session:
