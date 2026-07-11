@@ -3,7 +3,14 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 TemplateId = Literal[
-    "modern", "classic", "minimal", "compact", "ats-plain", "two-column-ats"
+    "modern",
+    "classic",
+    "minimal",
+    "compact",
+    "ats-plain",
+    "two-column-ats",
+    "executive",
+    "tech",
 ]
 DEFAULT_TEMPLATE: TemplateId = "modern"
 

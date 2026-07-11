@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -8,19 +9,28 @@ from app.models import DEFAULT_TEMPLATE, ResumeDocument
 from app.services.html_sanitize import sanitize_resume_for_display
 from app.services.llm.resume_json_parser import filter_skills_non_tech_inplace
 
-# Kept in sync by hand with apps/web/src/features/resume/templates/registry.ts
-# (TEMPLATE_IDS) — tests/unit/test_pdf_export_templates.py asserts the two match.
-_ALLOWED_TEMPLATES = frozenset(
-    {"modern", "classic", "minimal", "compact", "ats-plain", "two-column-ats"}
-)
-
-# packages/resume-templates/resume.css is the single source of truth for
-# resume styling, shared with apps/web (imported there via the
-# @resume-templates vite alias). Resolved relative to this file so it works
-# regardless of the process's current working directory.
+# packages/resume-templates/ is the single source of truth for template
+# identity (templates.json) and styling (resume.css), shared with apps/web
+# (imported there via the @resume-templates vite alias / TS path). Resolved
+# relative to this file so it works regardless of the process's current
+# working directory.
 RESUME_TEMPLATES_PACKAGE_DIR = (
     Path(__file__).resolve().parents[4] / "packages" / "resume-templates"
 )
+
+
+def _load_allowed_templates() -> frozenset[str]:
+    manifest = json.loads(
+        (RESUME_TEMPLATES_PACKAGE_DIR / "templates.json").read_text(encoding="utf-8")
+    )
+    return frozenset(t["id"] for t in manifest["templates"])
+
+
+# Derived from templates.json at import time — not hand-mirrored. The web
+# registry (apps/web/src/features/resume/templates/registry.ts) derives from
+# the same manifest; tests/unit/test_pdf_export_templates.py and
+# tests/unit/test_shared_template_source_guard.py assert both sides agree.
+_ALLOWED_TEMPLATES = _load_allowed_templates()
 
 _env = Environment(
     loader=FileSystemLoader([str(TEMPLATES_DIR), str(RESUME_TEMPLATES_PACKAGE_DIR)]),
