@@ -131,6 +131,23 @@ class ResumeVersion(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class AppSettings(SQLModel, table=True):
+    """Non-sensitive runtime preferences (v3 ticket 01: config lazy prefactor) -- provider
+    choice, default model, and any future UI-configurable preference. Read/written via
+    app/repositories/app_settings_repo.py and resolved call-time (env -> app_settings ->
+    hardcoded default) by app/config.py's ``get_runtime_config()``.
+
+    API keys NEVER land here -- only in the OS keychain (app/services/secret_store.py). See
+    CONTEXT.md / docs/v3-agnostic-settings.md Backend-1/Backend-2 for the precedence rule.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: str = Field(primary_key=True)
+    value: str  # JSON-encoded
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class ChatMessage(SQLModel, table=True):
     __tablename__ = "chat_messages"
 
