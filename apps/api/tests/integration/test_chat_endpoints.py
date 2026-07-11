@@ -15,6 +15,7 @@ import json
 
 from sqlmodel import Session
 
+from app.db.tables import ChatSession
 from app.repositories import chat_repo, profile_repo, resume_repo
 from tests.factories import make_profile, make_resume_payload
 
@@ -32,6 +33,40 @@ GENERIC_JOB_DESCRIPTION = (
 
 def _stage_shape(events: list[tuple[str, dict]]) -> list[tuple[str, object, object]]:
     return [(event, data.get("step"), data.get("progress")) for event, data in events]
+
+
+def _seed_active_resume(
+    test_db_engine, session_id: int, resume_payload: dict, *, job_description: str = GENERIC_JOB_DESCRIPTION
+) -> int:
+    """v4 ticket B3: pasting a job description in chat no longer generates a resume directly --
+    it runs the Analysis and proposes changes instead (``chat_service._handle_propose_turn``);
+    an active resume now only exists once a proposal has been approved (ticket B5, not yet
+    wired up). The tests below are about turns that assume an ALREADY-active resume (refine,
+    profile_update); this recreates, directly against the DB, exactly the session shape a
+    completed pre-v4 generate turn used to leave behind -- the JD as the user's first chat
+    message (so history-folding tests still see it), a resume version, an assistant
+    confirmation referencing it, and the session's ``active_resume_version_id`` pointed at it --
+    without depending on the (now proposal-producing) chat endpoint or spending a queued
+    ``fake_llm`` response on a turn that isn't the one under test.
+    """
+    with Session(test_db_engine) as session:
+        chat_repo.append_message(session, session_id=session_id, role="user", content=job_description)
+        resume_row = resume_repo.insert_version(
+            session, data=json.dumps(resume_payload), session_id=session_id, provider_used="fake"
+        )
+        chat_repo.append_message(
+            session,
+            session_id=session_id,
+            role="assistant",
+            content="Generated a tailored resume for this job description.",
+            intent="generate",
+            resume_version_id=resume_row.id,
+        )
+        chat_session = session.get(ChatSession, session_id)
+        chat_session.active_resume_version_id = resume_row.id
+        session.add(chat_session)
+        session.commit()
+        return resume_row.id
 
 
 class TestChatSessionCrud:
@@ -106,147 +141,22 @@ class TestChatSessionCrud:
         assert resp.status_code == 404
 
 
-class TestChatMessageStreamGenerateIntent:
-    async def test_pasting_a_job_description_with_no_active_resume_generates(
-        self, client, fake_llm, write_profile, parse_sse
-    ):
-        write_profile(make_profile())
-        strong_resume = make_resume_payload()
-        fake_llm.queue(json.dumps(strong_resume))
-        created = (await client.post("/api/chat/sessions", json={})).json()
-
-        resp = await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
-
-        assert resp.status_code == 200
-        events = parse_sse(resp.text)
-        kinds = [e for e, _ in events]
-        assert "resume" in kinds
-        assert "message" in kinds
-        assert kinds[-1] == "done"
-
-        resume_event = next(data for e, data in events if e == "resume")
-        assert resume_event["resume"]["fullName"] == strong_resume["fullName"]
-        assert isinstance(resume_event["resumeVersionId"], int)
-
-        message_event = next(data for e, data in events if e == "message")
-        assert isinstance(message_event["content"], str) and message_event["content"]
-
-        done_event = next(data for e, data in events if e == "done")
-        assert done_event["resumeVersionId"] == resume_event["resumeVersionId"]
-        assert isinstance(done_event["messageId"], int)
-        assert fake_llm.call_count == 1
-
-    async def test_generate_turn_updates_the_session_active_resume_and_history(
-        self, client, fake_llm, write_profile
-    ):
-        write_profile(make_profile())
-        strong_resume = make_resume_payload()
-        fake_llm.queue(json.dumps(strong_resume))
-        created = (await client.post("/api/chat/sessions", json={})).json()
-
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
-
-        resp = await client.get(f"/api/chat/sessions/{created['id']}")
-        body = resp.json()
-        assert body["activeResume"]["fullName"] == strong_resume["fullName"]
-        assert body["session"]["activeResumeVersionId"] is not None
-        roles = [m["role"] for m in body["messages"]]
-        assert roles == ["user", "assistant"]
-        assert body["messages"][0]["content"] == GENERIC_JOB_DESCRIPTION
-        assert body["messages"][1]["resumeVersionId"] == body["session"]["activeResumeVersionId"]
-
-    async def test_generate_turn_persists_locale_and_job_description_on_the_session(
-        self, client, fake_llm, write_profile
-    ):
-        write_profile(make_profile())
-        fake_llm.queue(json.dumps(make_resume_payload()))
-        created = (await client.post("/api/chat/sessions", json={})).json()
-
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION, "locale": "en"},
-        )
-
-        body = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
-        assert body["session"]["locale"] == "en"
-        assert body["session"]["jobDescription"] == GENERIC_JOB_DESCRIPTION
-
-    async def test_generate_confirmation_follows_the_resulting_resume_locale(
-        self, client, fake_llm, write_profile, parse_sse
-    ):
-        write_profile(make_profile())
-        fake_llm.queue(json.dumps(make_resume_payload(locale="pt-BR")))
-        created = (await client.post("/api/chat/sessions", json={})).json()
-
-        resp = await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
-
-        message_event = next(data for e, data in parse_sse(resp.text) if e == "message")
-        assert message_event["content"] == "Currículo gerado com base na vaga."
-
-
-class TestChatGenerateProfileProvenance:
-    """v2 ticket 01: the profile actually fed into the LLM prompt must be the SAME
-    profile_versions row stamped as provenance on the resulting ResumeVersion -- in v1 this
-    was a best-effort, separately-fetched ``profile_repo.get_active(session)`` call made
-    AFTER generation, with no guarantee it matched whatever generation_service had
-    independently read from disk (see chat_service.py's module docstring, pre-v2)."""
-
-    async def test_generate_uses_the_db_active_profile_not_the_disk_decoy(
-        self, client, fake_llm, write_profile, parse_sse, test_db_engine
-    ):
-        write_profile(make_profile(fullName="Disk Decoy Person"))  # must NOT be used
-        with Session(test_db_engine) as session:
-            db_version = profile_repo.insert_version(
-                session,
-                data=json.dumps(make_profile(fullName="DB Active Person")),
-                source_kind="seed_disk",
-            )
-            session.commit()
-            db_version_id = db_version.id
-
-        fake_llm.queue(json.dumps(make_resume_payload()))
-        created = (await client.post("/api/chat/sessions", json={})).json()
-
-        resp = await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
-
-        assert resp.status_code == 200
-        # The LLM prompt was built from the DB's active profile, not the disk decoy.
-        prompt = fake_llm.calls[-1]["user"]
-        assert "DB Active Person" in prompt
-        assert "Disk Decoy Person" not in prompt
-
-        resume_event = next(data for e, data in parse_sse(resp.text) if e == "resume")
-        with Session(test_db_engine) as session:
-            resume_row = resume_repo.get(session, resume_event["resumeVersionId"])
-            assert resume_row is not None
-            # The stamped provenance link is the EXACT row the prompt was built from.
-            assert resume_row.profile_version_id == db_version_id
+# NOTE (v4 ticket B3): pasting a job description with no active resume and no Pending Proposal
+# no longer generates a resume directly -- it runs the Analysis and proposes changes instead.
+# ``TestChatMessageStreamGenerateIntent`` and ``TestChatGenerateProfileProvenance`` (the "JD paste
+# -> resume" and "generate uses the DB profile, not the disk decoy" coverage) moved to
+# tests/integration/test_proposal_flow.py, which exercises the same profile-provenance and
+# locale/message concerns against the new "proposal" event and _handle_propose_turn instead.
+# The refine/profile_update classes below now seed their "already has an active resume"
+# precondition directly via ``_seed_active_resume`` rather than through a chat-turn JD paste,
+# since that turn no longer produces a resume (see that helper's docstring).
 
 
 class TestChatMessageStreamRefineIntent:
-    async def test_a_short_instruction_refines_the_active_resume(
-        self, client, fake_llm, write_profile, parse_sse
-    ):
-        write_profile(make_profile())
+    async def test_a_short_instruction_refines_the_active_resume(self, client, fake_llm, parse_sse, test_db_engine):
         strong_resume = make_resume_payload()
-        fake_llm.queue(json.dumps(strong_resume))  # the generate turn
         created = (await client.post("/api/chat/sessions", json={})).json()
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
+        _seed_active_resume(test_db_engine, created["id"], strong_resume)
 
         updated = make_resume_payload(summary="A punchier summary for the resume.")
         fake_llm.queue(json.dumps(updated))  # the refine turn
@@ -260,27 +170,22 @@ class TestChatMessageStreamRefineIntent:
         events = parse_sse(resp.text)
         resume_event = next(data for e, data in events if e == "resume")
         assert resume_event["resume"]["summary"] == updated["summary"]
-        assert fake_llm.call_count == 2  # 1 generate + 1 refine
+        assert fake_llm.call_count == 1  # only the refine call -- the active resume was DB-seeded
 
-        # The new resume version is a distinct, later version than the generate turn's.
+        # The new resume version is a distinct, later version than the seeded one.
         after = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
         assert after["session"]["activeResumeVersionId"] == resume_event["resumeVersionId"]
         assert after["activeResume"]["summary"] == updated["summary"]
 
     async def test_refine_confirmation_follows_the_resulting_resume_locale_not_the_session_locale(
-        self, client, fake_llm, write_profile, parse_sse
+        self, client, fake_llm, parse_sse, test_db_engine
     ):
         # Real QA-found bug: pt-BR resume, user asks to translate it to English. The document
         # correctly flips to locale="en", but the confirmation bubble used to stay in
         # Portuguese because it derived its language from the session/request locale (still
         # unset/pt-BR here) instead of the resulting resume's own locale field.
-        write_profile(make_profile())
-        fake_llm.queue(json.dumps(make_resume_payload(locale="pt-BR")))
         created = (await client.post("/api/chat/sessions", json={})).json()
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},  # no explicit locale in the request
-        )
+        _seed_active_resume(test_db_engine, created["id"], make_resume_payload(locale="pt-BR"))
 
         translated = make_resume_payload(locale="en", summary="An English-language summary.")
         fake_llm.queue(json.dumps(translated))
@@ -297,16 +202,11 @@ class TestChatMessageStreamRefineIntent:
         assert message_event["content"] == "Updated your resume."
 
     async def test_refine_folds_recent_history_into_the_llm_instruction(
-        self, client, fake_llm, write_profile
+        self, client, fake_llm, test_db_engine
     ):
-        write_profile(make_profile())
         strong_resume = make_resume_payload()
-        fake_llm.queue(json.dumps(strong_resume))
         created = (await client.post("/api/chat/sessions", json={})).json()
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
+        _seed_active_resume(test_db_engine, created["id"], strong_resume)
 
         updated = make_resume_payload(summary="A punchier summary for the resume.")
         fake_llm.queue(json.dumps(updated))
@@ -326,17 +226,10 @@ class TestChatMessageStreamRefineClientResumeOverride:
     request's optional `resume` field) over the DB's active_resume_version_id when present."""
 
     async def test_refine_uses_the_client_supplied_override_as_the_refine_base(
-        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+        self, client, fake_llm, parse_sse, test_db_engine
     ):
-        write_profile(make_profile())
-        fake_llm.queue(json.dumps(make_resume_payload()))  # the generate turn
         created = (await client.post("/api/chat/sessions", json={})).json()
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
-        before = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
-        active_resume_version_id = before["session"]["activeResumeVersionId"]
+        active_resume_version_id = _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
 
         # Simulates an inline edit made client-side but never persisted: the DB's active
         # version still has the ORIGINAL summary; the client sends its own edited copy.
@@ -373,19 +266,14 @@ class TestChatMessageStreamRefineClientResumeOverride:
             assert meta["clientResumeOverride"] is True
 
     async def test_refine_sanitizes_the_client_override_before_it_reaches_the_llm_prompt(
-        self, client, fake_llm, write_profile
+        self, client, fake_llm, test_db_engine
     ):
         # Real gap found on review: the override used to flow into build_refine_user_msg's
         # prompt raw -- sanitize_resume_for_display only ran LATER, on parse_resume_json's
         # merged output. Before the DB was the only source at this point (already sanitized by
         # construction); the client override is new, untrusted input at exactly this seam.
-        write_profile(make_profile())
-        fake_llm.queue(json.dumps(make_resume_payload()))  # the generate turn
         created = (await client.post("/api/chat/sessions", json={})).json()
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
+        _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
 
         malicious_resume = make_resume_payload()
         malicious_resume["experience"][0]["highlights"][0] = (
@@ -404,15 +292,10 @@ class TestChatMessageStreamRefineClientResumeOverride:
         assert "Shipped a feature" in refine_call  # sanitized, not dropped wholesale
 
     async def test_refine_without_override_uses_the_db_active_resume_and_no_override_flag(
-        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+        self, client, fake_llm, parse_sse, test_db_engine
     ):
-        write_profile(make_profile())
-        fake_llm.queue(json.dumps(make_resume_payload()))
         created = (await client.post("/api/chat/sessions", json={})).json()
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
+        _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
 
         updated = make_resume_payload(summary="A punchier summary for the resume.")
         fake_llm.queue(json.dumps(updated))
@@ -433,15 +316,10 @@ class TestChatMessageStreamRefineClientResumeOverride:
             assert "clientResumeOverride" not in meta
 
     async def test_invalid_client_resume_override_is_a_clean_422_with_no_stream_started(
-        self, client, fake_llm, write_profile
+        self, client, fake_llm, test_db_engine
     ):
-        write_profile(make_profile())
-        fake_llm.queue(json.dumps(make_resume_payload()))  # the generate turn only
         created = (await client.post("/api/chat/sessions", json={})).json()
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
+        _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
 
         resp = await client.post(
             f"/api/chat/sessions/{created['id']}/messages/stream",
@@ -450,7 +328,7 @@ class TestChatMessageStreamRefineClientResumeOverride:
 
         assert resp.status_code == 422
         assert "detail" in resp.json()
-        assert fake_llm.call_count == 1  # only the earlier generate call -- refine never ran
+        assert fake_llm.call_count == 0  # refine never ran -- the override failed validation first
 
 
 class TestChatMessageStreamProfileUpdateIntent:
@@ -520,19 +398,12 @@ class TestChatMessageStreamProfileUpdateIntent:
             assert version.chat_message_id == user_msg.id
 
     async def test_profile_update_leaves_the_active_resume_untouched_and_offers_regeneration(
-        self, client, fake_llm, write_profile, parse_sse
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
     ):
         write_profile(make_profile(phone=None))
         strong_resume = make_resume_payload()
-        fake_llm.queue(json.dumps(strong_resume))  # the generate turn
         created = (await client.post("/api/chat/sessions", json={})).json()
-        await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": GENERIC_JOB_DESCRIPTION},
-        )
-        before = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
-        active_resume_version_id = before["session"]["activeResumeVersionId"]
-        assert active_resume_version_id is not None
+        active_resume_version_id = _seed_active_resume(test_db_engine, created["id"], strong_resume)
 
         fake_llm.queue(
             json.dumps(

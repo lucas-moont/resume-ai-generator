@@ -27,7 +27,7 @@ from typing import Literal
 
 from app.domain.keywords import extract_jd_keywords
 
-Intent = Literal["generate", "refine", "profile_update", "question"]
+Intent = Literal["generate", "refine", "profile_update", "proposal_turn", "question"]
 
 # A message needs to be substantial to be treated as a pasted job description outright; a
 # shorter message can still count if it is dense with recognizable tech/role keywords (e.g.
@@ -117,13 +117,27 @@ def _looks_like_profile_update(message: str) -> bool:
     return _mentions_any(tokens, _ACTION_VERBS) and _mentions_any(tokens, _PROFILE_FACT_NOUNS)
 
 
-def classify_intent(*, message: str, has_active_resume: bool) -> Intent:
+def classify_intent(
+    *, message: str, has_active_resume: bool, has_pending_proposal: bool = False
+) -> Intent:
     """The single seam ``chat_service.handle_chat_turn`` calls to route a turn. No LLM call is
     spent deciding it (CONTEXT.md: Intent). ``profile_update`` is checked FIRST -- it wins even
     over an active resume (a user mid-refine-session can still correct a profile fact without
-    it being swallowed into a refine turn); the rest is the untouched v1 3-way routing."""
+    it being swallowed into a refine turn); the rest is the untouched v1 3-way routing.
+
+    ``has_pending_proposal`` (v4 ticket B3, docs/v4-improvement-proposal.md SS2): a session with
+    a Pending Proposal routes to ``proposal_turn`` next -- AFTER the profile_update check above,
+    BEFORE the v1 3-way routing below. Defaults to False so every pre-v4 call site (and every
+    pinning test that predates this kwarg) is byte-identical. The profile_update-vs-proposal_turn
+    guard the spec also calls for (a message naming proposal scope, e.g. "ajusta a sugestao 2",
+    must not be hijacked into profile_update) is deliberately NOT implemented here -- v4 ticket B4
+    owns it; until then a pending proposal's turn can still be misrouted to profile_update by an
+    unlucky message, same as any other un-guarded ambiguity in this function.
+    """
     if _looks_like_profile_update(message):
         return "profile_update"
+    if has_pending_proposal:
+        return "proposal_turn"
     if not has_active_resume and looks_like_job_description(message):
         return "generate"
     if has_active_resume:

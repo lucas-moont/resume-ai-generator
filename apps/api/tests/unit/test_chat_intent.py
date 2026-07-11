@@ -170,3 +170,45 @@ class TestProfileUpdateVsRefineBoundary:
             "Experience with Docker, Kubernetes, and CI/CD pipelines is a strong plus."
         )
         assert classify_intent(message=jd, has_active_resume=False) == "generate"
+
+
+class TestProposalTurnRouting:
+    """v4 ticket B3 (docs/v4-improvement-proposal.md SS2): ``has_pending_proposal`` defaults to
+    False, so every test above (written before this kwarg existed) is unaffected -- proving the
+    new routing is additive, not a rewrite of the v1/v2 behavior."""
+
+    def test_pending_proposal_routes_to_proposal_turn_regardless_of_message_shape(self) -> None:
+        assert (
+            classify_intent(message="Aprova a proposta", has_active_resume=False, has_pending_proposal=True)
+            == "proposal_turn"
+        )
+        assert (
+            classify_intent(message="ok", has_active_resume=False, has_pending_proposal=True)
+            == "proposal_turn"
+        )
+
+    def test_pending_proposal_wins_over_a_pasted_job_description(self) -> None:
+        # New JD while a proposal is pending is itself a proposal_turn case (the "new_jd"
+        # short-circuit inside _handle_proposal_turn, per spec SS2) -- NOT a fresh `generate`.
+        assert (
+            classify_intent(
+                message=GENERIC_JOB_DESCRIPTION, has_active_resume=False, has_pending_proposal=True
+            )
+            == "proposal_turn"
+        )
+
+    def test_profile_update_still_wins_over_a_pending_proposal(self) -> None:
+        # The spec's profile_update-vs-proposal_turn guard is B4's job (see classify_intent's
+        # docstring) -- for B3, an unguarded profile-fact-shaped message still wins, exactly as
+        # it would with no pending proposal at all.
+        assert (
+            classify_intent(
+                message="Mudei meu telefone para 11 91234-5678",
+                has_active_resume=False,
+                has_pending_proposal=True,
+            )
+            == "profile_update"
+        )
+
+    def test_has_pending_proposal_defaults_to_false(self) -> None:
+        assert classify_intent(message="hi there", has_active_resume=False) == "question"

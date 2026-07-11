@@ -47,30 +47,49 @@ other intent; the resulting ``ResumeVersion`` still chains off the previously-ac
 ``parent_version_id`` (unchanged provenance), with the fact that it started from a client
 override recorded honestly on the assistant message's ``meta`` JSON
 (``{"clientResumeOverride": true}``) rather than inventing a new column.
+
+As of v4 ticket B3 (docs/v4-improvement-proposal.md -- "Proposta Conversacional de Melhorias"),
+pasting a job description no longer generates a resume directly: ``handle_chat_turn`` also fetches
+the session's Pending Proposal (``proposal_repo.get_pending``) and threads it into
+``classify_intent`` as ``has_pending_proposal``. A session with neither an active resume nor a
+pending proposal whose message looks like a job description still classifies as "generate", but
+that intent now runs the **Analysis** (``_handle_propose_turn``) instead of
+``_handle_generate_turn``: it compares the Living Profile against the job and proposes a detailed,
+itemized Improvement Proposal (new "proposal" event, ``{proposalId, status, revision, items}``) for
+the user to converse about, rather than generating anything yet. ``_handle_generate_turn`` itself
+is unchanged and un-deleted -- v4 ticket B5's approve branch calls it (or an equivalent pipeline
+entry point) once a proposal is actually agreed to. A fifth intent, "proposal_turn" (any turn in a
+session with a Pending Proposal), is a stub through ticket B4 -- routed to the same canned
+"question" reply as today, spending no LLM call; B4 replaces it with the real conversational
+classification (approve/adjust/question/new_jd).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
 from sqlmodel import Session
 
-from app.config import PROMPTS_DIR
+from app.config import LLM_TIMEOUT_SECONDS, PROMPTS_DIR
 from app.db.tables import ChatMessage, ChatSession, SourceDocument
 from app.domain.chat_intent import classify_intent
 from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, resolve_locale
 from app.domain.profile_patch import PatchOp, PatchValidationFailed, apply_patch
+from app.domain.prompts_builder import build_proposal_analysis_user_msg
 from app.domain.schemas import ProfileMaster, ResumeDocument
-from app.prompt_loader import load_profile_update_system_prompt
-from app.repositories import chat_repo, profile_repo, resume_repo
-from app.services import llm_client
+from app.prompt_loader import load_profile_update_system_prompt, load_propose_improvements_system_prompt
+from app.repositories import chat_repo, profile_repo, proposal_repo, resume_repo
+from app.services import llm_client, streaming
 from app.services.html_sanitize import sanitize_resume_for_display
 from app.services.generation_service import generate_resume_events
 from app.services.ingestion.merge_service import parse_patch_ops_from_llm_response, resolve_profile_for_merge
+from app.services.llm.proposal_json_parser import parse_proposal_json
 from app.services.profile_resolution import resolve_active_profile
 from app.services.refine_service import refine_resume_events
 from app.services.secret_redaction import redact_secrets
+from app.services.streaming import run_with_heartbeat
 
 # How many of the most recent messages (user + assistant, combined) are folded into a refine
 # turn's instruction as context.
@@ -300,6 +319,100 @@ async def _handle_generate_turn(
     yield "done", {"progress": 100, "messageId": assistant_msg.id, "resumeVersionId": resume_row.id}
 
 
+async def _handle_propose_turn(
+    *,
+    session: Session,
+    chat_session: ChatSession,
+    user_message: str,
+    job_description: str | None,
+    model: str | None,
+    locale: str | None,
+    backend_label: str,
+) -> AsyncIterator[tuple[str, dict]]:
+    """v4 ticket B3 ("Analysis"): a pasted job description in a session with neither an active
+    resume nor a Pending Proposal no longer generates a resume directly (that was v1-v3's
+    ``_handle_generate_turn``, still used unchanged by the approve branch B5 wires up inside the
+    Proposal Turn) -- it runs the Analysis instead, comparing the Living Profile against the job
+    and proposing a detailed, itemized set of changes for the user to converse about before
+    anything is generated (docs/v4-improvement-proposal.md SS0/SS3.6).
+
+    Unlike ``_handle_generate_turn``, this does NOT write ``chat_session.job_description`` --
+    the JD that produced THIS proposal lives on the ``ImprovementProposal`` row itself (the
+    source of truth the eventual approve turn reads from); the session-level field is only
+    written once a proposal is actually approved (B5), mirroring how ``active_resume_version_id``
+    only ever points at a resume that was actually generated, never a merely-proposed one.
+    """
+    jd_text = job_description or user_message
+    resolved_profile = resolve_active_profile(session)
+    resolved_locale = resolve_locale(locale, jd_text, resolved_profile.profile.locale)
+
+    system = load_propose_improvements_system_prompt(PROMPTS_DIR)
+    user_msg = build_proposal_analysis_user_msg(
+        profile=resolved_profile.profile, job_description=jd_text, locale=resolved_locale
+    )
+
+    llm_task = asyncio.create_task(llm_client.chat_json(system, user_msg, model=model))
+    async for is_timeout, data in run_with_heartbeat(
+        llm_task,
+        heartbeat_seconds=streaming.HEARTBEAT_SECONDS,
+        timeout_seconds=LLM_TIMEOUT_SECONDS,
+        tick=lambda elapsed: {
+            "step": "analyzing_job",
+            "progress": 50,
+            "message": f"Analyzing job description... ({elapsed}s)",
+        },
+        on_timeout=lambda elapsed: {
+            "message": f"Timed out waiting for LLM response after {LLM_TIMEOUT_SECONDS}s."
+        },
+    ):
+        if is_timeout:
+            raise TimeoutError(data["message"])
+        yield "stage", data
+    raw = llm_task.result()
+
+    parsed = parse_proposal_json(raw)
+    if parsed is None:
+        # Analysis-specific failure (spec SS6): garbage/unusable LLM output is an error frame,
+        # same as any other main-generation LLM failure -- unlike the Proposal Turn's OWN
+        # parser (B4), which never treats garbage as an error. Zero rows are committed: nothing
+        # below this point has run yet.
+        raise ValueError(
+            "LLM returned an unusable Improvement Proposal (invalid JSON or no valid items)."
+        )
+
+    proposal_row = proposal_repo.create_pending(
+        session,
+        session_id=chat_session.id,
+        job_description=jd_text,
+        items=parsed.items,
+        model_used=model,
+    )
+    assistant_msg = chat_repo.append_message(
+        session,
+        session_id=chat_session.id,
+        role="assistant",
+        content=parsed.message,
+        intent="propose",
+        meta=json.dumps({"proposalId": proposal_row.id}),
+    )
+    chat_repo.touch_session(session, chat_session.id)
+    session.commit()
+
+    yield "proposal", {
+        "proposalId": proposal_row.id,
+        "status": proposal_row.status,
+        "revision": proposal_row.revision,
+        "items": [item.model_dump() for item in parsed.items],
+    }
+    yield "message", {"content": parsed.message}
+    yield "done", {
+        "progress": 100,
+        "messageId": assistant_msg.id,
+        "proposalId": proposal_row.id,
+        "resumeVersionId": None,
+    }
+
+
 def _sanitize_client_resume_override(resume: ResumeDocument) -> ResumeDocument:
     """v2 ticket 11 review fix: the client-supplied refine override is untrusted input arriving
     fresh at this seam (unlike the DB's active row, already sanitized by construction), and it
@@ -510,8 +623,13 @@ async def handle_chat_turn(
     active_resume_row = None
     if chat_session.active_resume_version_id is not None:
         active_resume_row = resume_repo.get(session, chat_session.active_resume_version_id)
+    pending_proposal = proposal_repo.get_pending(session, chat_session.id)
 
-    intent = classify_intent(message=user_message, has_active_resume=active_resume_row is not None)
+    intent = classify_intent(
+        message=user_message,
+        has_active_resume=active_resume_row is not None,
+        has_pending_proposal=pending_proposal is not None,
+    )
 
     if intent == "question":
         async for event, data in _handle_question_turn(
@@ -520,9 +638,20 @@ async def handle_chat_turn(
             yield event, data
         return
 
+    if intent == "proposal_turn":
+        # v4 B4 fills this branch (the real conversational classification -- approve/adjust/
+        # question/new_jd, docs/v4-improvement-proposal.md SS2). Until then: an honest stub,
+        # per B3's ticket -- treated exactly like a canned "question" reply, no LLM call spent,
+        # proposal left untouched.
+        async for event, data in _handle_question_turn(
+            session=session, chat_session=chat_session, locale=locale, user_message=user_message
+        ):
+            yield event, data
+        return
+
     try:
         if intent == "generate":
-            async for event, data in _handle_generate_turn(
+            async for event, data in _handle_propose_turn(
                 session=session,
                 chat_session=chat_session,
                 user_message=user_message,
