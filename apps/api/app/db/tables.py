@@ -160,3 +160,28 @@ class ChatMessage(SQLModel, table=True):
     resume_version_id: int | None = Field(default=None, foreign_key="resume_versions.id")
     meta: str | None = None  # JSON-serialized {model, provider, elapsed_ms, error?, sourceDocumentId?}
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class ImprovementProposal(SQLModel, table=True):
+    """An Improvement Proposal (v4 -- CONTEXT.md: Improvement Proposal, Proposal Item): the
+    LLM's Analysis of Profile vs. a pasted job description, as a list of per-section changes
+    the user converses over (approve / adjust / question / new JD) before generation runs.
+    Lifecycle enforced entirely by app/repositories/proposal_repo.py, never here or in a
+    router: 'proposed' -> 'approved' | 'superseded' (a newer Analysis or New JD replaces the
+    pending one) | 'discarded' (reserved, no UI path in v4). Same CASCADE-on-session-delete
+    treatment as ChatMessage.session_id above -- a proposal has no meaning once its chat
+    session is gone.
+    """
+
+    __tablename__ = "improvement_proposals"
+
+    id: int | None = Field(default=None, primary_key=True)
+    session_id: int = Field(foreign_key="chat_sessions.id", ondelete="CASCADE")
+    job_description: str  # the JD that produced this Analysis -- source of truth for approve
+    items: str  # JSON-serialized list[ProposalItem] (app/domain/schemas.py)
+    revision: int = 1  # +1 each `adjust` turn (items replaced in place, never appended)
+    status: str = "proposed"  # 'proposed' | 'approved' | 'superseded' | 'discarded'
+    resume_version_id: int | None = None  # soft ref, filled by mark_approved -- see module docstring
+    model_used: str | None = None
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)

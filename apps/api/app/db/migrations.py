@@ -55,10 +55,25 @@ def _add_missing_source_documents_diff_summary_column(engine: Engine) -> None:
         conn.commit()
 
 
+def _note_improvement_proposals_table_added(engine: Engine) -> None:
+    """v4 ticket B1 adds the brand-new `improvement_proposals` table straight to
+    app/db/tables.py. Unlike the two migrations above (which ALTER an existing table),
+    a wholly new table needs no ALTER-style work here: `SQLModel.metadata.create_all()`
+    (app/db/engine.py's `init_db`, which always runs before `run_migrations`) creates any
+    table missing from the engine's tables -- a real, pre-v4 on-disk DB goes through the exact
+    same `CREATE TABLE IF NOT EXISTS` path a brand-new DB does. By the time this entry runs,
+    the table already exists either way. Kept as a documented no-op so MIGRATIONS' ordered
+    history stays complete and a future reader scanning this list sees v4's schema change
+    accounted for, rather than wondering whether it was missed.
+    """
+    return
+
+
 # Ordered, append-only -- see module docstring.
 MIGRATIONS: list[Callable[[Engine], None]] = [
     _drop_legacy_resume_versions_template_id_column,
     _add_missing_source_documents_diff_summary_column,
+    _note_improvement_proposals_table_added,
 ]
 
 
