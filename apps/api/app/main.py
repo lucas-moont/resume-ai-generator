@@ -13,6 +13,7 @@ from app import config as config_module
 from app.db.engine import create_db_engine, init_db
 from app.db.seed import seed_profile_from_disk_if_empty
 from app.routers import catalog, chat, documents, export, generate, github, health, profile, refine, settings
+from app.services.ingestion.reaper import reconcile
 
 
 @asynccontextmanager
@@ -26,6 +27,10 @@ async def lifespan(app: FastAPI):
     # happens -- wasteful, and the lazy path's double-checked locking is only a fallback for
     # non-FastAPI callers (scripts, tests without this fixture), not the production path.
     config_module.set_settings_engine(engine)
+    # Ticket 04, debt c: reconciles any Source Document rows/files an interrupted upload left
+    # behind from a PREVIOUS run before this boot ever serves a request -- see
+    # services/ingestion/reaper.py's module docstring for the two crash-window shapes.
+    reconcile(engine)
     yield
     config_module.set_settings_engine(None)
 
