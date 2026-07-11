@@ -14,6 +14,7 @@ from sqlmodel import Session, text
 from sqlmodel.pool import StaticPool
 
 from app.db.engine import create_db_engine, init_db
+from app.db.tables import AppSettings
 from app.domain.schemas import ProfileMaster, ResumeDocument
 from app.repositories import app_settings_repo, chat_repo, profile_repo, resume_repo
 
@@ -219,7 +220,7 @@ class TestAppSettingsRepo:
         app_settings_repo.set(session, "ai_provider", "claude")
         session.commit()
 
-        row = session.get(app_settings_repo.AppSettings, "ai_provider")
+        row = session.get(AppSettings, "ai_provider")
         assert row is not None
         assert json.loads(row.value) == "claude"
 

@@ -39,6 +39,21 @@ class TestStoreSecret(unittest.TestCase):
         with patch("keyring.set_password", side_effect=RuntimeError("no backend")):
             self.assertFalse(store_secret(self._VAR, "value"))
 
+    def test_rejects_empty_value(self) -> None:
+        """Fix-round decision (v3 ticket 01 review): an empty/whitespace value is invalid
+        input for PUT /api/settings/keys, not a silent alias for delete_secret -- deletion
+        must stay an explicit DELETE. The API layer maps this ValueError to 422."""
+        with patch("keyring.set_password") as set_password:
+            with self.assertRaises(ValueError):
+                store_secret(self._VAR, "")
+            set_password.assert_not_called()
+
+    def test_rejects_whitespace_only_value(self) -> None:
+        with patch("keyring.set_password") as set_password:
+            with self.assertRaises(ValueError):
+                store_secret(self._VAR, "   ")
+            set_password.assert_not_called()
+
 
 class TestDeleteSecret(unittest.TestCase):
     _VAR = "RESUME_AGENT_TEST_SECRET"

@@ -44,8 +44,14 @@ def store_secret(name: str, value: str, *, service: str = KEYCHAIN_SERVICE) -> b
     Returns ``True`` on success, ``False`` when ``keyring`` (or a backend) is unavailable --
     the same graceful degradation as ``resolve_secret`` on the read side, rather than raising.
     Never writes to ``app_settings``/SQLite: API keys live in the keychain only.
+
+    Raises ``ValueError`` for an empty/whitespace-only ``value``: that is invalid input for a
+    PUT, not a silent alias for ``delete_secret`` -- deletion of a key must stay an explicit
+    DELETE. The API layer is expected to map this to HTTP 422.
     """
     cleaned = (value or "").strip()
+    if not cleaned:
+        raise ValueError("value must not be empty; call delete_secret to remove a key")
     try:
         import keyring
     except ModuleNotFoundError:

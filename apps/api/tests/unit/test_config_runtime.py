@@ -100,6 +100,18 @@ class TestGetRuntimeConfig:
         assert runtime.default_gemini_model == "gemini-2.5-flash"
         assert runtime.default_ollama_model == "llama3.2"
 
+    def test_repr_never_leaks_api_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fix-round hardening (v3 ticket 01 review): a stray `logger.info(f"{runtime}")`
+        during ticket 03 debugging must not leak either key."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-never-appear-in-repr")  # pragma: allowlist secret
+        monkeypatch.setenv("GEMINI_API_KEY", "AIza-should-never-appear-in-repr")  # pragma: allowlist secret
+
+        runtime = config.get_runtime_config()
+        rendered = repr(runtime)
+
+        assert "sk-ant-should-never-appear-in-repr" not in rendered
+        assert "AIza-should-never-appear-in-repr" not in rendered
+
     def test_resolves_api_keys_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")  # pragma: allowlist secret
         monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")  # pragma: allowlist secret

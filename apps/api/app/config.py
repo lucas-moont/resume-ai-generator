@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -77,35 +77,45 @@ CLAUDE_THINKING = os.getenv("CLAUDE_THINKING", "off").strip().lower() or "off"
 #   - provider/model preferences: env var -> app_settings row -> hardcoded default.
 #   - API keys: env var -> OS keychain (resolve_secret) -- NEVER app_settings/SQLite.
 #
-# app_settings reads/writes go through a lazily-created SQLAlchemy engine on DATABASE_URL
-# (see _get_settings_engine below), independent of the FastAPI app's own engine
-# (app.state.db_engine) -- two Engine objects on the same on-disk SQLite file is fine (SQLite
-# supports multiple connections); tests inject an isolated in-memory engine via
+# app_settings reads/writes go through main.py's lifespan-owned engine (app.state.db_engine),
+# wired in via set_settings_engine -- a second Engine object on the same on-disk SQLite file
+# would otherwise get built the first time a setting is resolved. The lazy path in
+# _get_settings_engine below is only a fallback for callers outside the FastAPI app (a
+# standalone script, or a test that doesn't go through tests/conftest.py's
+# isolated_runtime_settings_engine fixture); tests inject an isolated in-memory engine via
 # set_settings_engine so no test ever touches the real data/app.db.
 
 _settings_engine: Any = None
+_settings_engine_lock = Lock()
 _app_settings_cache: dict[str, Any] | None = None
 _app_settings_cache_lock = Lock()
 
 
 def set_settings_engine(engine: Any) -> None:
-    """Test seam (module-qualified, like resolve_uploads_dir): inject the engine app_settings
-    resolution should use. Pass ``None`` to reset to the lazy on-demand default."""
+    """Test seam (module-qualified, like resolve_uploads_dir) -- also called by main.py's
+    lifespan with its own app.state.db_engine, so production never falls through to the lazy
+    fallback below. Pass ``None`` to reset to that lazy on-demand default."""
     global _settings_engine
-    _settings_engine = engine
+    with _settings_engine_lock:
+        _settings_engine = engine
     invalidate_runtime_config_cache()
 
 
 def _get_settings_engine() -> Any:
     global _settings_engine
     if _settings_engine is None:
-        # Local import: app.db.engine imports this module at top level, so importing it back
-        # here at module scope would be a circular import. Deferred to call time, it resolves
-        # fine because both modules are already fully loaded by then.
-        from app.db.engine import create_db_engine, init_db
+        # Double-checked locking: two concurrent first callers (fallback path only -- see the
+        # comment above) must not each build their own Engine+pool on the same file.
+        with _settings_engine_lock:
+            if _settings_engine is None:
+                # Local import: app.db.engine imports this module at top level, so importing
+                # it back here at module scope would be a circular import. Deferred to call
+                # time, it resolves fine because both modules are already fully loaded by then.
+                from app.db.engine import create_db_engine, init_db
 
-        _settings_engine = create_db_engine()
-        init_db(_settings_engine)
+                engine = create_db_engine()
+                init_db(engine)
+                _settings_engine = engine
     return _settings_engine
 
 
@@ -212,9 +222,10 @@ def resolve_default_ollama_model() -> str:
 class RuntimeConfig:
     ai_provider: str
     ai_default_model: str | None
-    anthropic_api_key: str | None
+    # repr=False: a stray `logger.info(f"{runtime}")`/log line must not leak either key.
+    anthropic_api_key: str | None = field(repr=False)
     default_claude_model: str
-    gemini_api_key: str | None
+    gemini_api_key: str | None = field(repr=False)
     default_gemini_model: str
     default_ollama_model: str
 
