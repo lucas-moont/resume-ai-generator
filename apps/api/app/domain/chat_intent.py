@@ -117,6 +117,25 @@ def _looks_like_profile_update(message: str) -> bool:
     return _mentions_any(tokens, _ACTION_VERBS) and _mentions_any(tokens, _PROFILE_FACT_NOUNS)
 
 
+# --- proposal_turn vs. profile_update guard (v4 ticket B4, spec SS2) -----------------------
+#
+# A Pending Proposal introduces a second kind of "scope" a message can name (on top of the
+# resume-scope gate above): the proposal itself. "remove a sugestao sobre skills" reads exactly
+# like a profile_update ("remove" + "skills") to the pattern above, but with a proposal pending
+# it means "adjust the proposal", not "delete the skill from my permanent profile" -- the same
+# vocabulary the spec hands us verbatim.
+_PROPOSAL_SCOPE_WORDS = frozenset(
+    {
+        "sugestao", "sugestão", "proposta", "melhoria", "melhorias", "item",
+        "suggestion", "suggestions", "proposal", "improvement", "improvements",
+    }
+)
+
+
+def _mentions_proposal_scope(message: str) -> bool:
+    return _mentions_any(_tokenize(message), _PROPOSAL_SCOPE_WORDS)
+
+
 def classify_intent(
     *, message: str, has_active_resume: bool, has_pending_proposal: bool = False
 ) -> Intent:
@@ -128,13 +147,18 @@ def classify_intent(
     ``has_pending_proposal`` (v4 ticket B3, docs/v4-improvement-proposal.md SS2): a session with
     a Pending Proposal routes to ``proposal_turn`` next -- AFTER the profile_update check above,
     BEFORE the v1 3-way routing below. Defaults to False so every pre-v4 call site (and every
-    pinning test that predates this kwarg) is byte-identical. The profile_update-vs-proposal_turn
-    guard the spec also calls for (a message naming proposal scope, e.g. "ajusta a sugestao 2",
-    must not be hijacked into profile_update) is deliberately NOT implemented here -- v4 ticket B4
-    owns it; until then a pending proposal's turn can still be misrouted to profile_update by an
-    unlucky message, same as any other un-guarded ambiguity in this function.
+    pinning test that predates this kwarg) is byte-identical.
+
+    v4 ticket B4 adds the guard the spec calls for: while a proposal is pending, a message that
+    names PROPOSAL scope (``_PROPOSAL_SCOPE_WORDS`` -- "sugestao"/"proposta"/"melhoria"/"item"/
+    their English counterparts) is exempted from the profile_update check entirely, even when it
+    would otherwise match (action verb + profile-fact noun) -- "remove a sugestao sobre skills"
+    means "adjust the proposal's skills item", not "delete skills from my permanent profile".
+    Without a pending proposal this guard never fires (there is no proposal to be talking
+    about), so every pre-B4 profile_update test is unaffected.
     """
-    if _looks_like_profile_update(message):
+    profile_update_guarded = has_pending_proposal and _mentions_proposal_scope(message)
+    if not profile_update_guarded and _looks_like_profile_update(message):
         return "profile_update"
     if has_pending_proposal:
         return "proposal_turn"

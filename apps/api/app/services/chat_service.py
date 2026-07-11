@@ -56,36 +56,60 @@ pending proposal whose message looks like a job description still classifies as 
 that intent now runs the **Analysis** (``_handle_propose_turn``) instead of
 ``_handle_generate_turn``: it compares the Living Profile against the job and proposes a detailed,
 itemized Improvement Proposal (new "proposal" event, ``{proposalId, status, revision, items}``) for
-the user to converse about, rather than generating anything yet. ``_handle_generate_turn`` itself
-is unchanged and un-deleted -- v4 ticket B5's approve branch calls it (or an equivalent pipeline
-entry point) once a proposal is actually agreed to. A fifth intent, "proposal_turn" (any turn in a
-session with a Pending Proposal), is a stub through ticket B4 -- routed to the same canned
-"question" reply as today, spending no LLM call; B4 replaces it with the real conversational
-classification (approve/adjust/question/new_jd).
+the user to converse about, rather than generating anything yet.
+
+As of v4 ticket B4, the fifth intent, "proposal_turn" (any turn in a session with a Pending
+Proposal, MINUS the ``_looks_like_profile_update`` guard's own proposal-scope exemption --
+``app.domain.chat_intent``), is the real conversational classification
+(``_handle_proposal_turn``): a message that itself reads like a brand-new job description
+short-circuits straight into another Analysis (superseding the pending one); otherwise ONE
+combined LLM call (``proposal_turn.md``) decides approve/adjust/question/new_jd against the
+current proposal + recent history. `adjust` replaces the proposal's items wholesale
+(``proposal_repo.revise``) and bumps its revision; `question` (real or a canned fallback for
+unparseable LLM output -- NEVER an error frame, spec SS6) leaves the proposal untouched; `new_jd`
+takes the same short-circuit Analysis route; `approve` hands off to ticket B5's approve branch.
+
+As of v4 ticket B5, ``_handle_generate_turn`` -- unchanged and un-deleted since B3 specifically
+for this -- is what the approve branch (``_handle_approve_branch``) calls once a proposal is
+actually agreed to, reached two ways with zero LLM classification spent: the "Aprovar e gerar"
+button (``ChatMessageRequest.proposalAction == "approve"``, checked BEFORE ordinary intent
+routing, ignored when there is no Pending Proposal) and a natural-language approval the Proposal
+Turn's own classification already recognized. Either way: an assistant confirmation message,
+then the SAME generation pipeline every other "generate"/"refine" turn uses, with the proposal's
+items injected into the prompt as an APPROVED IMPROVEMENT PLAN
+(``generation_service.generate_resume_events``'s ``agreed_improvements`` -- v4 ticket B2's
+``build_generation_user_msg`` parameter, finally threaded end to end). The proposal is marked
+`approved` (``proposal_repo.mark_approved``) in the SAME commit as the new ``ResumeVersion`` (see
+``_finalize_resume_turn``'s ``on_before_commit`` hook) -- so a generation failure, raised before
+that point is ever reached, leaves the proposal `proposed` and reapprovable, per spec SS6.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 from sqlmodel import Session
 
 from app.config import LLM_TIMEOUT_SECONDS, PROMPTS_DIR
-from app.db.tables import ChatMessage, ChatSession, SourceDocument
-from app.domain.chat_intent import classify_intent
+from app.db.tables import ChatMessage, ChatSession, ImprovementProposal, ResumeVersion, SourceDocument
+from app.domain.chat_intent import classify_intent, looks_like_job_description
 from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, resolve_locale
 from app.domain.profile_patch import PatchOp, PatchValidationFailed, apply_patch
-from app.domain.prompts_builder import build_proposal_analysis_user_msg
-from app.domain.schemas import ProfileMaster, ResumeDocument
-from app.prompt_loader import load_profile_update_system_prompt, load_propose_improvements_system_prompt
+from app.domain.prompts_builder import build_proposal_analysis_user_msg, build_proposal_turn_user_msg
+from app.domain.schemas import ProfileMaster, ProposalItem, ResumeDocument
+from app.prompt_loader import (
+    load_profile_update_system_prompt,
+    load_proposal_turn_system_prompt,
+    load_propose_improvements_system_prompt,
+)
 from app.repositories import chat_repo, profile_repo, proposal_repo, resume_repo
 from app.services import llm_client, streaming
 from app.services.html_sanitize import sanitize_resume_for_display
 from app.services.generation_service import generate_resume_events
 from app.services.ingestion.merge_service import parse_patch_ops_from_llm_response, resolve_profile_for_merge
-from app.services.llm.proposal_json_parser import parse_proposal_json
+from app.services.llm.proposal_json_parser import parse_proposal_json, parse_proposal_turn_json
 from app.services.profile_resolution import resolve_active_profile
 from app.services.refine_service import refine_resume_events
 from app.services.secret_redaction import redact_secrets
@@ -137,6 +161,32 @@ _PROFILE_UPDATE_OFFER_REGENERATE = {
 _PROFILE_UPDATE_APPLIED_TEXT = {
     "en": "Updated your profile: {summary}.",
     "pt-BR": "Atualizei seu perfil: {summary}.",
+}
+
+# v4 ticket B4 (spec SS2/SS6): the Proposal Turn classification LLM call NEVER produces an error
+# frame over garbage output -- unparseable JSON, an unknown `action`, or an `adjust` with no
+# usable items (`parse_proposal_turn_json` -> None) all fall back to this canned, locale-aware
+# `question` reply, proposal left completely untouched. It also fills in for a *valid*
+# classification whose own `reply` came back blank (B2 decision: the parser itself never
+# fabricates fallback prose for the Proposal Turn, unlike the Analysis's `_fallback_message` --
+# so the caller here is the one place responsible for it).
+_PROPOSAL_TURN_FALLBACK_TEXT = {
+    "en": (
+        "I didn't quite catch that -- want me to apply the proposal, adjust something in it, "
+        "or do you have another question?"
+    ),
+    "pt-BR": (
+        "Não entendi -- quer que eu aplique a proposta, ajuste algo nela, ou tem outra dúvida?"
+    ),
+}
+
+# v4 ticket B5 (spec SS2 approve branch): the confirmation bubble the approve branch sends
+# BEFORE generation starts -- used verbatim for the "Aprovar e gerar" button shortcut (no LLM
+# involved) and as the fallback when a natural-language approval's own LLM `reply` came back
+# blank (same blank-reply policy as the fallback text above).
+_PROPOSAL_APPROVE_CONFIRMATION_TEXT = {
+    "en": "Generating your resume from the approved plan now...",
+    "pt-BR": "Gerando seu currículo com o plano aprovado agora...",
 }
 
 
@@ -218,6 +268,7 @@ def _finalize_resume_turn(
     profile_version_id: int | None,
     parent_version_id: int | None = None,
     extra_meta: dict | None = None,
+    on_before_commit: Callable[[ResumeVersion], None] | None = None,
 ):
     """Shared tail of the generate/refine turns (v2 ticket 05 AC: "insert_version deduplicado
     entre generate/refine"): inserts the new ``ResumeVersion``, points the session's active
@@ -229,6 +280,14 @@ def _finalize_resume_turn(
     assistant message's ``meta`` JSON -- e.g. ``{"clientResumeOverride": True}`` for a refine
     that started from the client's in-memory doc rather than the DB's active version -- without
     ``resume_versions`` itself needing a new column for it.
+
+    ``on_before_commit`` (v4 ticket B5): lets the approve branch fold
+    ``proposal_repo.mark_approved(resume_version_id=...)`` into this SAME commit -- spec SS2
+    requires the ResumeVersion insert, the assistant message, and the proposal's approval to
+    land atomically, but ``mark_approved`` needs the just-inserted ``resume_row.id`` that only
+    exists once THIS function is already mid-flight. Called with the freshly-flushed
+    ``resume_row`` right before ``session.commit()``; every other caller leaves it ``None``
+    (no behavior change).
     """
     resume_row = resume_repo.insert_version(
         session,
@@ -259,6 +318,8 @@ def _finalize_resume_turn(
         meta=json.dumps(meta),
     )
     chat_repo.touch_session(session, chat_session.id)
+    if on_before_commit is not None:
+        on_before_commit(resume_row)
     session.commit()
     return resume_row, content, assistant_msg
 
@@ -287,7 +348,20 @@ async def _handle_generate_turn(
     model: str | None,
     locale: str | None,
     backend_label: str,
+    agreed_improvements: list[ProposalItem] | None = None,
+    on_before_commit: Callable[[ResumeVersion], None] | None = None,
+    extra_done_data: dict | None = None,
 ) -> AsyncIterator[tuple[str, dict]]:
+    """The v1-v3 "paste a JD, get a resume" pipeline -- unused by the "generate" intent as of
+    v4 ticket B3 (that now runs the Analysis instead, see ``_handle_propose_turn``), but kept
+    alive for v4 ticket B5's approve branch (``_handle_approve_branch``), which calls this once
+    a Pending Proposal is actually agreed to: ``agreed_improvements`` threads the proposal's
+    items into the generation prompt (spec SS4.3), ``on_before_commit`` lets that same caller
+    fold ``proposal_repo.mark_approved`` into this function's own commit (see
+    ``_finalize_resume_turn``'s docstring), and ``extra_done_data`` lets it add ``proposalId``
+    to the terminal ``done`` frame -- all three default to ``None``/unused, so this function's
+    behavior for its own hypothetical direct callers is unchanged.
+    """
     jd_text = job_description or user_message
     resolved_profile = resolve_active_profile(session)
     resume_doc: ResumeDocument | None = None
@@ -297,6 +371,7 @@ async def _handle_generate_turn(
         model=model,
         locale=locale,
         backend_label=backend_label,
+        agreed_improvements=agreed_improvements,
     ):
         if event == "done":
             resume_doc = data["resume"]
@@ -313,10 +388,14 @@ async def _handle_generate_turn(
         model=model,
         backend_label=backend_label,
         profile_version_id=resolved_profile.profile_version_id,
+        on_before_commit=on_before_commit,
     )
     yield "resume", {"resume": resume_doc, "resumeVersionId": resume_row.id}
     yield "message", {"content": content}
-    yield "done", {"progress": 100, "messageId": assistant_msg.id, "resumeVersionId": resume_row.id}
+    done_data = {"progress": 100, "messageId": assistant_msg.id, "resumeVersionId": resume_row.id}
+    if extra_done_data:
+        done_data.update(extra_done_data)
+    yield "done", done_data
 
 
 async def _handle_propose_turn(
@@ -409,6 +488,237 @@ async def _handle_propose_turn(
         "progress": 100,
         "messageId": assistant_msg.id,
         "proposalId": proposal_row.id,
+        "resumeVersionId": None,
+    }
+
+
+async def _handle_approve_branch(
+    *,
+    session: Session,
+    chat_session: ChatSession,
+    proposal: ImprovementProposal,
+    confirmation_text: str | None,
+    model: str | None,
+    locale: str | None,
+    backend_label: str,
+) -> AsyncIterator[tuple[str, dict]]:
+    """v4 ticket B5 (spec SS2/SS3.6 approve branch): reached two ways -- the "Aprovar e gerar"
+    button (``proposalAction == "approve"``, ``confirmation_text=None`` so the canned copy
+    below is used) and a natural-language approval the Proposal Turn's own classification
+    recognized (``confirmation_text=parsed.reply`` -- still falls back to the same canned copy
+    if that reply came back blank, same policy as the fallback/question text). Either way, ZERO
+    further LLM classification is spent here; only the generation pipeline itself calls the LLM.
+
+    Reuses ``_handle_generate_turn`` (the v1-v3 pipeline, un-deleted since B3 precisely for
+    this) rather than duplicating it: ``agreed_improvements`` injects the proposal's items into
+    the generation prompt (spec SS4.3), and ``on_before_commit`` marks the proposal `approved`
+    in the SAME commit as the new ``ResumeVersion`` -- so a generation failure (raised before
+    that point is ever reached) leaves the proposal `proposed` and reapprovable, exactly as spec
+    SS6 requires, with no extra try/except needed here: ``mark_approved`` simply never runs.
+    """
+    resolved_locale = _resolve_concrete_locale(locale, proposal.job_description, None)
+    confirmation = confirmation_text or _PROPOSAL_APPROVE_CONFIRMATION_TEXT[resolved_locale]
+    chat_repo.append_message(
+        session,
+        session_id=chat_session.id,
+        role="assistant",
+        content=confirmation,
+        intent="proposal_approve",
+        meta=json.dumps({"proposalId": proposal.id}),
+    )
+    chat_repo.touch_session(session, chat_session.id)
+    session.commit()
+    yield "message", {"content": confirmation}
+
+    async for event, data in _handle_generate_turn(
+        session=session,
+        chat_session=chat_session,
+        user_message="",
+        job_description=proposal.job_description,
+        model=model,
+        locale=locale,
+        backend_label=backend_label,
+        agreed_improvements=proposal_repo.get_items(proposal),
+        on_before_commit=lambda resume_row: proposal_repo.mark_approved(
+            session, proposal, resume_version_id=resume_row.id
+        ),
+        extra_done_data={"proposalId": proposal.id},
+    ):
+        yield event, data
+
+
+async def _handle_proposal_turn(
+    *,
+    session: Session,
+    chat_session: ChatSession,
+    user_message: str,
+    prior_messages: list,
+    proposal: ImprovementProposal,
+    model: str | None,
+    locale: str | None,
+    backend_label: str,
+) -> AsyncIterator[tuple[str, dict]]:
+    """v4 ticket B4 (spec SS2): with a Pending Proposal, the turn is conversational rather than
+    routed by the v1 3-way heuristic. Three ways in, evaluated in order:
+
+    1. The message itself reads like a brand-new job description (``looks_like_job_description``,
+       the SAME deterministic heuristic "generate" uses) -- a short-circuit straight into the
+       Analysis (``_handle_propose_turn``), zero extra LLM calls beyond the Analysis itself.
+       ``proposal_repo.create_pending`` (inside it) supersedes THIS proposal atomically.
+    2. Otherwise, one combined classification LLM call (``proposal_turn.md``) decides
+       approve/adjust/question/new_jd against the CURRENT proposal + recent history. `new_jd`
+       from the LLM takes the exact same Analysis route as (1) (so this path costs 2 LLM calls
+       total: classification + Analysis); `approve` takes the SAME branch the button shortcut
+       does (``_handle_approve_branch``, B5).
+    3. Garbage/unparseable classification output (``parse_proposal_turn_json`` -> ``None``) is
+       NEVER an error frame here (unlike the Analysis's OWN parser failure, which still is) --
+       it falls back to a canned, locale-aware `question` reply, proposal completely untouched
+       (spec SS6).
+
+    `adjust` replaces the proposal's items wholesale (``proposal_repo.revise`` -- never a
+    delta) and bumps its revision; `question` (real or fallback) never touches the proposal.
+    """
+    if looks_like_job_description(user_message):
+        async for event, data in _handle_propose_turn(
+            session=session,
+            chat_session=chat_session,
+            user_message=user_message,
+            job_description=user_message,
+            model=model,
+            locale=locale,
+            backend_label=backend_label,
+        ):
+            yield event, data
+        return
+
+    resolved_locale = _resolve_concrete_locale(locale, user_message, None)
+    items = proposal_repo.get_items(proposal)
+    history_text = _format_history(prior_messages, _HISTORY_MESSAGES_FOR_REFINE)
+    system = load_proposal_turn_system_prompt(PROMPTS_DIR)
+    user_msg = build_proposal_turn_user_msg(
+        items=items,
+        revision=proposal.revision,
+        history_text=history_text,
+        message=user_message,
+        locale=resolved_locale,
+    )
+
+    llm_task = asyncio.create_task(llm_client.chat_json(system, user_msg, model=model))
+    async for is_timeout, data in run_with_heartbeat(
+        llm_task,
+        heartbeat_seconds=streaming.HEARTBEAT_SECONDS,
+        timeout_seconds=LLM_TIMEOUT_SECONDS,
+        tick=lambda elapsed: {
+            "step": "analyzing_job",
+            "progress": 50,
+            "message": f"Thinking about your message... ({elapsed}s)",
+        },
+        on_timeout=lambda elapsed: {
+            "message": f"Timed out waiting for LLM response after {LLM_TIMEOUT_SECONDS}s."
+        },
+    ):
+        if is_timeout:
+            raise TimeoutError(data["message"])
+        yield "stage", data
+    raw = llm_task.result()
+
+    parsed = parse_proposal_turn_json(raw)
+    if parsed is None:
+        content = _PROPOSAL_TURN_FALLBACK_TEXT[resolved_locale]
+        assistant_msg = chat_repo.append_message(
+            session,
+            session_id=chat_session.id,
+            role="assistant",
+            content=content,
+            intent="proposal_question",
+            meta=json.dumps({"proposalId": proposal.id}),
+        )
+        chat_repo.touch_session(session, chat_session.id)
+        session.commit()
+        yield "message", {"content": content}
+        yield "done", {
+            "progress": 100,
+            "messageId": assistant_msg.id,
+            "proposalId": proposal.id,
+            "resumeVersionId": None,
+        }
+        return
+
+    # A valid classification whose own `reply` came back blank falls back to the SAME canned
+    # copy as outright garbage (B2 decision: the parser never fabricates fallback prose here,
+    # unlike the Analysis's `_fallback_message` -- ticket B4 item 3).
+    reply = parsed.reply or _PROPOSAL_TURN_FALLBACK_TEXT[resolved_locale]
+
+    if parsed.action == "approve":
+        async for event, data in _handle_approve_branch(
+            session=session,
+            chat_session=chat_session,
+            proposal=proposal,
+            confirmation_text=parsed.reply or None,
+            model=model,
+            locale=locale,
+            backend_label=backend_label,
+        ):
+            yield event, data
+        return
+
+    if parsed.action == "new_jd":
+        async for event, data in _handle_propose_turn(
+            session=session,
+            chat_session=chat_session,
+            user_message=user_message,
+            job_description=user_message,
+            model=model,
+            locale=locale,
+            backend_label=backend_label,
+        ):
+            yield event, data
+        return
+
+    if parsed.action == "adjust":
+        assert parsed.items is not None  # guaranteed by parse_proposal_turn_json for `adjust`
+        updated = proposal_repo.revise(session, proposal, items=parsed.items)
+        assistant_msg = chat_repo.append_message(
+            session,
+            session_id=chat_session.id,
+            role="assistant",
+            content=reply,
+            intent="proposal_adjust",
+            meta=json.dumps({"proposalId": updated.id}),
+        )
+        chat_repo.touch_session(session, chat_session.id)
+        session.commit()
+        yield "proposal", {
+            "proposalId": updated.id,
+            "status": updated.status,
+            "revision": updated.revision,
+            "items": [item.model_dump() for item in parsed.items],
+        }
+        yield "message", {"content": reply}
+        yield "done", {
+            "progress": 100,
+            "messageId": assistant_msg.id,
+            "proposalId": updated.id,
+            "resumeVersionId": None,
+        }
+        return
+
+    # action == "question"
+    assistant_msg = chat_repo.append_message(
+        session,
+        session_id=chat_session.id,
+        role="assistant",
+        content=reply,
+        intent="proposal_question",
+        meta=json.dumps({"proposalId": proposal.id}),
+    )
+    chat_repo.touch_session(session, chat_session.id)
+    session.commit()
+    yield "message", {"content": reply}
+    yield "done", {
+        "progress": 100,
+        "messageId": assistant_msg.id,
+        "proposalId": proposal.id,
         "resumeVersionId": None,
     }
 
@@ -607,6 +917,7 @@ async def handle_chat_turn(
     job_description: str | None,
     backend_label: str,
     client_resume: ResumeDocument | None = None,
+    proposal_action: str | None = None,
 ) -> AsyncIterator[tuple[str, dict]]:
     _, prior_messages = chat_repo.get_session_with_messages(session, chat_session.id)
     user_msg_row = chat_repo.append_message(
@@ -638,19 +949,25 @@ async def handle_chat_turn(
             yield event, data
         return
 
-    if intent == "proposal_turn":
-        # v4 B4 fills this branch (the real conversational classification -- approve/adjust/
-        # question/new_jd, docs/v4-improvement-proposal.md SS2). Until then: an honest stub,
-        # per B3's ticket -- treated exactly like a canned "question" reply, no LLM call spent,
-        # proposal left untouched.
-        async for event, data in _handle_question_turn(
-            session=session, chat_session=chat_session, locale=locale, user_message=user_message
-        ):
-            yield event, data
-        return
-
     try:
-        if intent == "generate":
+        # v4 ticket B5 (spec SS2/SS3.1): the "Aprovar e gerar" button shortcut wins over
+        # classification entirely -- zero LLM calls spent deciding it -- whenever there is a
+        # Pending Proposal to approve, regardless of what `intent` resolved to (the button
+        # always sends a fixed confirmation message that would not usually misroute anyway).
+        # `proposalAction` on a session with NO Pending Proposal is silently ignored (spec
+        # SS3.1) -- falls through to ordinary intent-based routing below.
+        if pending_proposal is not None and proposal_action == "approve":
+            async for event, data in _handle_approve_branch(
+                session=session,
+                chat_session=chat_session,
+                proposal=pending_proposal,
+                confirmation_text=None,
+                model=model,
+                locale=locale,
+                backend_label=backend_label,
+            ):
+                yield event, data
+        elif intent == "generate":
             async for event, data in _handle_propose_turn(
                 session=session,
                 chat_session=chat_session,
@@ -671,6 +988,19 @@ async def handle_chat_turn(
                 model=model,
                 backend_label=backend_label,
                 client_resume_override=client_resume,
+            ):
+                yield event, data
+        elif intent == "proposal_turn":
+            assert pending_proposal is not None  # guaranteed by classify_intent's own contract
+            async for event, data in _handle_proposal_turn(
+                session=session,
+                chat_session=chat_session,
+                user_message=user_message,
+                prior_messages=prior_messages,
+                proposal=pending_proposal,
+                model=model,
+                locale=locale,
+                backend_label=backend_label,
             ):
                 yield event, data
         else:  # profile_update

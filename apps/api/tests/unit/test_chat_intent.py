@@ -197,10 +197,42 @@ class TestProposalTurnRouting:
             == "proposal_turn"
         )
 
-    def test_profile_update_still_wins_over_a_pending_proposal(self) -> None:
-        # The spec's profile_update-vs-proposal_turn guard is B4's job (see classify_intent's
-        # docstring) -- for B3, an unguarded profile-fact-shaped message still wins, exactly as
-        # it would with no pending proposal at all.
+    def test_has_pending_proposal_defaults_to_false(self) -> None:
+        assert classify_intent(message="hi there", has_active_resume=False) == "question"
+
+
+class TestProfileUpdateVsProposalTurnBoundary:
+    """v4 ticket B4 (spec SS2): with a Pending Proposal, a message naming PROPOSAL scope
+    (``sugestao``/``proposta``/``melhoria``/``item``/their English counterparts) is exempted
+    from the profile_update check entirely, even when it would otherwise match (action verb +
+    profile-fact noun) -- it means "adjust the proposal", not "change my permanent profile"."""
+
+    def test_removing_a_suggestion_about_skills_with_pending_proposal_is_proposal_turn(self) -> None:
+        # Would read as profile_update ("remove" + "skills") with no guard -- but "sugestao"
+        # names the proposal's own scope, so the guard exempts it and the pending-proposal
+        # routing below fires instead.
+        assert (
+            classify_intent(
+                message="remove a sugestão sobre skills",
+                has_active_resume=False,
+                has_pending_proposal=True,
+            )
+            == "proposal_turn"
+        )
+
+    def test_removing_a_suggestion_about_skills_en_with_pending_proposal_is_proposal_turn(self) -> None:
+        assert (
+            classify_intent(
+                message="remove the suggestion about skills",
+                has_active_resume=False,
+                has_pending_proposal=True,
+            )
+            == "proposal_turn"
+        )
+
+    def test_changed_phone_number_with_pending_proposal_still_wins_as_profile_update(self) -> None:
+        # No proposal-scope word here -- the guard never fires, so profile_update still wins
+        # over a pending proposal exactly as it would with no pending proposal at all.
         assert (
             classify_intent(
                 message="Mudei meu telefone para 11 91234-5678",
@@ -210,5 +242,33 @@ class TestProposalTurnRouting:
             == "profile_update"
         )
 
-    def test_has_pending_proposal_defaults_to_false(self) -> None:
-        assert classify_intent(message="hi there", has_active_resume=False) == "question"
+    def test_changed_phone_number_with_pending_proposal_still_wins_as_profile_update_en(self) -> None:
+        assert (
+            classify_intent(
+                message="I changed my phone number to 11 99999-0000",
+                has_active_resume=False,
+                has_pending_proposal=True,
+            )
+            == "profile_update"
+        )
+
+    def test_the_same_message_with_no_pending_proposal_is_still_profile_update(self) -> None:
+        # The guard is a NO-OP without a pending proposal (there is no proposal to be talking
+        # about) -- proves the guard is additive, not a rewrite of the v2 boundary.
+        assert (
+            classify_intent(message="remove a sugestão sobre skills", has_active_resume=False)
+            == "profile_update"
+        )
+
+    def test_adjust_the_proposal_item_2_with_pending_proposal_is_proposal_turn(self) -> None:
+        # "item" alone (no action-verb+noun match at all) is unambiguous proposal-turn material
+        # regardless of the guard -- pinned here as a plain has_pending_proposal case, same as
+        # TestProposalTurnRouting's own tests above.
+        assert (
+            classify_intent(
+                message="ajusta o item 2 da proposta",
+                has_active_resume=False,
+                has_pending_proposal=True,
+            )
+            == "proposal_turn"
+        )
