@@ -1,7 +1,9 @@
 import os
 import unittest
+from unittest.mock import patch
 
 from app.services.secret_redaction import redact_secrets
+from app.services.secret_store import store_secret
 
 
 class TestSecretRedaction(unittest.TestCase):
@@ -33,6 +35,26 @@ class TestSecretRedaction(unittest.TestCase):
 
     def test_handles_empty_text(self) -> None:
         self.assertEqual(redact_secrets(""), "")
+
+    def test_redacts_a_key_added_to_the_keychain_at_runtime(self) -> None:
+        """v3 ticket 01 acceptance criterion: secret_redaction collects secret values at CALL
+        time (not from a frozen config constant), so a key written to the keychain mid-process
+        -- e.g. via a future PUT /api/settings/keys -- is redacted on the very next call, no
+        restart or reload needed."""
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        runtime_secret = "sk-ant-runtime-secret-added-mid-process"  # pragma: allowlist secret
+
+        # Not configured yet: passes through untouched.
+        before = redact_secrets(f"error mentions {runtime_secret}")
+        self.assertIn(runtime_secret, before)
+
+        with patch("keyring.set_password"), patch("keyring.get_password", return_value=runtime_secret):
+            self.assertTrue(store_secret("ANTHROPIC_API_KEY", runtime_secret))
+
+            after = redact_secrets(f"error mentions {runtime_secret}")
+
+        self.assertNotIn(runtime_secret, after)
+        self.assertIn("«redacted»", after)
 
 
 if __name__ == "__main__":
