@@ -187,3 +187,25 @@ class TestRuntimeConfigCache:
         config.delete_app_setting("ai_provider")
 
         assert config.get_runtime_config().ai_provider == "auto"
+
+
+class TestEnvLockIndicator:
+    """v3 ticket 11: the cheap "is this env-pinned?" helper settings_service builds the
+    GET /api/settings/providers lock indicator from."""
+
+    def test_is_env_locked_false_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("AI_PROVIDER", raising=False)
+        assert config.is_env_locked("AI_PROVIDER") is False
+
+    def test_is_env_locked_false_for_whitespace_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_PROVIDER", "   ")
+        assert config.is_env_locked("AI_PROVIDER") is False
+
+    def test_is_env_locked_true_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CLAUDE_MODEL", "claude-opus-4-8")
+        assert config.is_env_locked("CLAUDE_MODEL") is True
+
+    def test_default_model_env_var_maps_each_concrete_provider(self) -> None:
+        assert config.default_model_env_var("claude") == "CLAUDE_MODEL"
+        assert config.default_model_env_var("gemini") == "GEMINI_MODEL"
+        assert config.default_model_env_var("ollama") == "OLLAMA_MODEL"

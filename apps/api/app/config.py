@@ -218,6 +218,30 @@ def resolve_default_ollama_model() -> str:
     return _app_setting_str("default_ollama_model") or "llama3.2"
 
 
+# v3 ticket 11: which env var pins the active provider, and which one pins each concrete
+# provider's own default model -- single source of truth so settings_service can report a
+# per-preference "locked by env" indicator without hand-duplicating these names.
+AI_PROVIDER_ENV_VAR = "AI_PROVIDER"
+_DEFAULT_MODEL_ENV_VARS: dict[str, str] = {
+    "claude": "CLAUDE_MODEL",
+    "gemini": "GEMINI_MODEL",
+    "ollama": "OLLAMA_MODEL",
+}
+
+
+def is_env_locked(var_name: str) -> bool:
+    """Cheap call-time check (module-qualified, same idiom as the resolve_* accessors above):
+    true when `var_name` is set (non-empty) in the environment, meaning the runtime-config
+    field it backs is pinned there -- a settings write to it has no visible effect until the
+    var is unset (the P2 QA gate bug ticket 11 surfaces in the UI instead of hiding)."""
+    return bool(os.getenv(var_name, "").strip())
+
+
+def default_model_env_var(provider: str) -> str:
+    """The env var that pins `default_{provider}_model` (see resolve_default_*_model above)."""
+    return _DEFAULT_MODEL_ENV_VARS[provider]
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     ai_provider: str

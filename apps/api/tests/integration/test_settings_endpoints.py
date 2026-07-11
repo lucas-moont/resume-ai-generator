@@ -78,6 +78,74 @@ class TestGetProviders:
         assert claude["available"] is True
 
 
+class TestEnvLockIndicator:
+    """v3 ticket 11 (P2 QA gate bug): env var precedence over app_settings (ticket 01) means a
+    PUT to a pinned preference 200s but never actually changes the effective value -- these
+    additive fields let the UI say so instead of pretending the write worked."""
+
+    async def test_no_lock_when_no_ai_env_vars_are_set(self, client) -> None:
+        # The autouse `_isolated_ai_settings_env` fixture already strips every AI env var, so
+        # this is the "nothing pinned" baseline the QA repro's opposite case.
+        resp = await client.get("/api/settings/providers")
+
+        body = resp.json()
+        assert body["activeLockedByEnv"] is False
+        assert body["activeEnvVar"] == "AI_PROVIDER"
+        for p in body["providers"]:
+            assert p["defaultModelLockedByEnv"] is False
+
+    async def test_active_locked_when_ai_provider_env_var_is_set(
+        self, client, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AI_PROVIDER", "claude")
+
+        resp = await client.get("/api/settings/providers")
+
+        body = resp.json()
+        assert body["active"] == "claude"
+        assert body["activeLockedByEnv"] is True
+        assert body["activeEnvVar"] == "AI_PROVIDER"
+
+    async def test_a_put_while_active_is_env_locked_still_200s_but_has_no_effect(
+        self, client, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The exact QA repro (P2): PUT returns 200, but the env-pinned value never actually
+        changes -- the fix is the UI knowing to not offer the control, not a backend rejection."""
+        monkeypatch.setenv("AI_PROVIDER", "claude")
+
+        resp = await client.put("/api/settings/providers", json={"provider": "gemini"})
+
+        assert resp.status_code == 200
+        assert resp.json()["active"] == "claude"
+
+    async def test_default_model_locked_only_for_the_provider_whose_env_var_is_set(
+        self, client, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_MODEL", "claude-opus-4-8")
+
+        resp = await client.get("/api/settings/providers")
+
+        providers = {p["name"]: p for p in resp.json()["providers"]}
+        assert providers["claude"]["defaultModelLockedByEnv"] is True
+        assert providers["claude"]["defaultModelEnvVar"] == "CLAUDE_MODEL"
+        assert providers["gemini"]["defaultModelLockedByEnv"] is False
+        assert providers["gemini"]["defaultModelEnvVar"] == "GEMINI_MODEL"
+        assert providers["ollama"]["defaultModelLockedByEnv"] is False
+        assert providers["ollama"]["defaultModelEnvVar"] == "OLLAMA_MODEL"
+
+    async def test_existing_shape_is_preserved_alongside_the_new_fields(self, client) -> None:
+        """Compat guard: the ticket 03 shape (active/providers[name,available,auth,defaultModel,
+        models]) is untouched -- the new fields are purely additive."""
+        resp = await client.get("/api/settings/providers")
+
+        body = resp.json()
+        assert body["active"] == "auto"
+        claude = next(p for p in body["providers"] if p["name"] == "claude")
+        assert claude["auth"] == "cli"
+        assert claude["defaultModel"] == "claude-sonnet-5"
+        assert isinstance(claude["models"], list)
+
+
 class TestPutProviders:
     async def test_switches_the_active_provider_with_immediate_effect(self, client) -> None:
         resp = await client.put("/api/settings/providers", json={"provider": "claude"})

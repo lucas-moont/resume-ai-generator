@@ -39,11 +39,17 @@ async def _provider_entry(name: ProviderName, runtime: RuntimeConfig) -> dict:
         # is a sync, no-I/O check that is always True -- a real reachability probe here gives
         # the UI a genuine "is the local server actually up" signal instead.
         available = await model_catalog.ollama_reachable()
+    env_var = config_module.default_model_env_var(name)
     return {
         "name": name,
         "available": available,
         "auth": provider.auth_mode,
         "defaultModel": default_model,
+        # v3 ticket 11 (additive): a PUT changing this provider's default is a silent no-op
+        # while its env var is set (config.py's env-wins precedence) -- surfaced here instead
+        # of the UI pretending the change took effect.
+        "defaultModelLockedByEnv": config_module.is_env_locked(env_var),
+        "defaultModelEnvVar": env_var,
         "models": models,
     }
 
@@ -51,7 +57,14 @@ async def _provider_entry(name: ProviderName, runtime: RuntimeConfig) -> dict:
 async def get_providers_settings() -> dict:
     runtime = config_module.get_runtime_config()
     providers = [await _provider_entry(name, runtime) for name in _PROVIDER_NAMES]
-    return {"active": runtime.ai_provider, "providers": providers}
+    return {
+        "active": runtime.ai_provider,
+        # v3 ticket 11 (additive): same "env pins it, PUT is a no-op" signal as
+        # defaultModelLockedByEnv above, for the active provider itself.
+        "activeLockedByEnv": config_module.is_env_locked(config_module.AI_PROVIDER_ENV_VAR),
+        "activeEnvVar": config_module.AI_PROVIDER_ENV_VAR,
+        "providers": providers,
+    }
 
 
 def update_providers_settings(provider: str, default_model: str | None) -> None:
