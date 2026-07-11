@@ -17,7 +17,7 @@ const AUTH_LABELS: Record<ProviderAuthMode, string> = {
 }
 
 const FIELDSET_LEGEND_CLASS =
-  'mb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-500'
+  'mb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-300'
 
 function ProviderOption({
   label,
@@ -45,7 +45,7 @@ function ProviderOption({
         />
         {label}
       </span>
-      {badge && <span className="text-xs text-stone-500 dark:text-zinc-500">{badge}</span>}
+      {badge && <span className="text-xs text-stone-500 dark:text-zinc-300">{badge}</span>}
     </label>
   )
 }
@@ -57,7 +57,7 @@ function ProviderOption({
  * reach a keyboard/screen-reader user who tabs past the whole fieldset without pausing on it. */
 function EnvLockNote({ id, envVar }: { id?: string; envVar: string }) {
   return (
-    <p id={id} className="mb-2 flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-500">
+    <p id={id} className="mb-2 flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-300">
       <span aria-hidden="true">🔒</span>
       Pinned by the <code className="font-mono">{envVar}</code> environment variable — unset it
       to change this here.
@@ -155,7 +155,11 @@ export function ProviderForm() {
 
       <fieldset>
         <legend className={FIELDSET_LEGEND_CLASS}>API keys</legend>
-        <div className="space-y-3">
+        {/* Design fix round (P1): overflow-y-auto is scoped to JUST this list, not the whole
+            dialog — this is the section that actually grows (more managed keys over time), and
+            keeping the scroll boundary here means the Default model Combobox above never has a
+            scroll-clipping ancestor between it and the dialog panel. */}
+        <div className="max-h-56 space-y-3 overflow-y-auto pr-1">
           {keys.map((k) => (
             <KeyRow key={k.name} entry={k} />
           ))}

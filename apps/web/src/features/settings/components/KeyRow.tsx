@@ -31,7 +31,7 @@ export function KeyRow({ entry }: KeyRowProps) {
     return (
       <div className="flex items-center justify-between text-sm">
         <span className="text-stone-800 dark:text-zinc-200">{label}</span>
-        <span className="text-xs text-stone-500 dark:text-zinc-500">Configured via environment</span>
+        <span className="text-xs text-stone-500 dark:text-zinc-300">Configured via environment</span>
       </div>
     )
   }
@@ -42,13 +42,13 @@ export function KeyRow({ entry }: KeyRowProps) {
         <div className="flex items-center justify-between text-sm">
           <span className="text-stone-800 dark:text-zinc-200">{label}</span>
           <span className="flex items-center gap-2">
-            <span className="text-xs text-stone-500 dark:text-zinc-500">Configured via keychain</span>
+            <span className="text-xs text-stone-500 dark:text-zinc-300">Configured via keychain</span>
             <button
               type="button"
               onClick={() => deleteKey.mutate(entry.name)}
               disabled={deleteKey.isPending}
               aria-label={`Remove ${label}`}
-              className="rounded-md border border-stone-200 px-2 py-1 text-xs font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              className="rounded-md border border-stone-200 px-2 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
             >
               Remove
             </button>
@@ -85,13 +85,13 @@ export function KeyRow({ entry }: KeyRowProps) {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="Paste a new key…"
-          className="w-40 rounded-lg border border-stone-200 bg-white px-2 py-1 text-xs text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-400"
+          className="w-40 rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-300"
         />
         <button
           type="submit"
           disabled={!value.trim() || upsertKey.isPending}
           aria-label={`Save ${label}`}
-          className="rounded-md bg-stone-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-950"
+          className="rounded-md bg-stone-900 px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-950"
         >
           Save
         </button>

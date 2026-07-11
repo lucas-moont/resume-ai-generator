@@ -41,10 +41,11 @@ export function SettingsDialog() {
       >
         {/* Dialog's panel is a fixed max-w-sm (ticket 05) — not overridden here via a
             colliding Tailwind width utility (fragile: cascade order, not class-list order,
-            decides which wins). The content scrolls within that width instead. */}
-        <div className="max-h-[70vh] w-full overflow-y-auto">
-          <ProviderForm />
-        </div>
+            decides which wins). No overflow-auto wrapper here (design fix round, P1): the
+            ModelPicker's absolutely-positioned Combobox list must never sit inside a
+            scroll-clipping ancestor, so ProviderForm renders unclipped and scopes its OWN
+            overflow-y-auto to just the API-keys list — the section that actually grows. */}
+        <ProviderForm />
         <div className="mt-4 flex justify-end">
           <button
             type="button"

@@ -32,8 +32,8 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onClose={onCancel} title={title} description={description} initialFocusRef={cancelRef}>
-      <div className="flex items-center justify-end gap-2">
-        <p className="mr-auto text-xs text-stone-400 dark:text-zinc-500">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <p className="mr-auto text-xs text-stone-500 dark:text-zinc-300">
           Press <kbd className="rounded border border-stone-300 px-1 py-0.5 font-sans dark:border-zinc-600">Esc</kbd> to cancel
         </p>
         <button

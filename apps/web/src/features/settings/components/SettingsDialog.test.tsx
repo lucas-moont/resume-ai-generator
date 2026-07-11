@@ -34,4 +34,22 @@ describe('SettingsDialog', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
+
+  // Design fix round (P1): the ModelPicker's absolutely-positioned Combobox list must never
+  // sit inside a scroll-clipping ancestor, or it gets visually cut off mid-scroll. jsdom can't
+  // compute actual clipping, but it CAN tell us whether any ancestor between the open listbox
+  // and the document opts into overflow-y-auto -- which is the structural precondition for that
+  // clip to happen at all.
+  it("keeps the model picker's dropdown list free of any overflow-y-auto ancestor", async () => {
+    const user = userEvent.setup()
+    renderApp(<SettingsDialog />)
+
+    await user.click(screen.getByRole('button', { name: /^settings$/i }))
+    await user.click(await screen.findByRole('combobox', { name: /default model/i }))
+
+    const listbox = await screen.findByRole('listbox')
+    for (let node = listbox.parentElement; node; node = node.parentElement) {
+      expect(node.className).not.toMatch(/overflow-y-auto/)
+    }
+  })
 })

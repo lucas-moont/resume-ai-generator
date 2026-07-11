@@ -49,7 +49,7 @@ export function ModelPicker({ id, provider, value, onSelect }: ModelPickerProps)
     <div>
       <label
         htmlFor={id}
-        className="mb-1 block text-[0.6875rem] font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-500"
+        className="mb-1 block text-[0.6875rem] font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-300"
       >
         Default model
       </label>
