@@ -228,7 +228,11 @@ test.describe('Improvement Proposal chat flow (v4)', () => {
               id: 2,
               role: 'assistant',
               content: proposalContent,
-              intent: null,
+              // The real backend stamps the Analysis message with intent "propose"
+              // (chat_service._handle_propose_turn) — and since QA-01, rehydration only
+              // rebuilds a ProposalCard for the proposal-emitting intents. An unfaithful
+              // `intent: null` here silently drops the card and fails this scenario.
+              intent: 'propose',
               resumeVersionId: null,
               createdAt,
               sourceDocument: null,
