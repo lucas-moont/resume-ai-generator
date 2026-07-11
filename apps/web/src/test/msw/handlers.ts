@@ -15,12 +15,18 @@ export const DEFAULT_GITHUB_REPOS = [
 // 'auto', nothing available, static per-provider model suggestions.
 export const DEFAULT_PROVIDERS_SETTINGS: ProvidersSettingsResponse = {
   active: 'auto',
+  // v3 ticket 11: baseline is "nothing pinned" — no AI_* env vars set, matching the backend's
+  // own unlocked default (tests/conftest.py's autouse _isolated_ai_settings_env).
+  activeLockedByEnv: false,
+  activeEnvVar: 'AI_PROVIDER',
   providers: [
     {
       name: 'claude',
       available: false,
       auth: 'cli',
       defaultModel: 'claude-sonnet-5',
+      defaultModelLockedByEnv: false,
+      defaultModelEnvVar: 'CLAUDE_MODEL',
       models: [
         { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
         { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
@@ -32,12 +38,22 @@ export const DEFAULT_PROVIDERS_SETTINGS: ProvidersSettingsResponse = {
       available: false,
       auth: 'none',
       defaultModel: 'gemini-2.5-flash',
+      defaultModelLockedByEnv: false,
+      defaultModelEnvVar: 'GEMINI_MODEL',
       models: [
         { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
         { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
       ],
     },
-    { name: 'ollama', available: false, auth: 'local', defaultModel: 'llama3.2', models: [] },
+    {
+      name: 'ollama',
+      available: false,
+      auth: 'local',
+      defaultModel: 'llama3.2',
+      defaultModelLockedByEnv: false,
+      defaultModelEnvVar: 'OLLAMA_MODEL',
+      models: [],
+    },
   ],
 }
 

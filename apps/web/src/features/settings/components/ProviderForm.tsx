@@ -24,26 +24,41 @@ function ProviderOption({
   checked,
   badge,
   onChange,
+  disabled,
 }: {
   label: string
   checked: boolean
   badge?: string
   onChange: () => void
+  disabled?: boolean
 }) {
   return (
-    <label className="flex items-center justify-between gap-2 rounded-lg border border-stone-200 px-3 py-2 text-sm text-stone-800 has-[:checked]:border-stone-400 dark:border-zinc-700 dark:text-zinc-200 dark:has-[:checked]:border-zinc-500">
+    <label className="flex items-center justify-between gap-2 rounded-lg border border-stone-200 px-3 py-2 text-sm text-stone-800 has-[:checked]:border-stone-400 has-[:disabled]:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:has-[:checked]:border-zinc-500">
       <span className="flex items-center gap-2">
         <input
           type="radio"
           name="provider-mode"
           checked={checked}
           onChange={onChange}
+          disabled={disabled}
           className="h-3.5 w-3.5"
         />
         {label}
       </span>
       {badge && <span className="text-xs text-stone-500 dark:text-zinc-500">{badge}</span>}
     </label>
+  )
+}
+
+/** v3 ticket 11: the env-lock explanation shared by the active-provider fieldset and the
+ * default-model row — same "badge/lock + which var" language in both places. */
+function EnvLockNote({ envVar }: { envVar: string }) {
+  return (
+    <p className="mb-2 flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-500">
+      <span aria-hidden="true">🔒</span>
+      Pinned by the <code className="font-mono">{envVar}</code> environment variable — unset it
+      to change this here.
+    </p>
   )
 }
 
@@ -73,7 +88,7 @@ export function ProviderForm() {
     )
   }
 
-  const { active, providers } = providersQuery.data
+  const { active, providers, activeLockedByEnv, activeEnvVar } = providersQuery.data
   const { keys } = keysQuery.data
   const activeEntry = active === 'auto' ? null : (providers.find((p) => p.name === active) ?? null)
 
@@ -81,10 +96,12 @@ export function ProviderForm() {
     <div className="space-y-5">
       <fieldset>
         <legend className={FIELDSET_LEGEND_CLASS}>Active provider</legend>
+        {activeLockedByEnv && <EnvLockNote envVar={activeEnvVar} />}
         <div className="space-y-1.5">
           <ProviderOption
             label="Auto (best available)"
             checked={active === 'auto'}
+            disabled={activeLockedByEnv}
             onChange={() => updateProvider.mutate({ provider: 'auto' })}
           />
           {providers.map((p) => (
@@ -92,6 +109,7 @@ export function ProviderForm() {
               key={p.name}
               label={PROVIDER_LABELS[p.name]}
               checked={active === p.name}
+              disabled={activeLockedByEnv}
               badge={`${p.available ? 'Available' : 'Unavailable'} · ${AUTH_LABELS[p.auth]}`}
               onChange={() => updateProvider.mutate({ provider: p.name })}
             />
@@ -99,16 +117,30 @@ export function ProviderForm() {
         </div>
       </fieldset>
 
-      <ModelPicker
-        // Keyed by the active provider: switching providers should reset the picker's local
-        // text to THAT provider's own defaultModel, which a remount gives for free (see
-        // ModelPicker's own doc comment on why this isn't a setState-in-effect instead).
-        key={active}
-        id="settings-model-picker"
-        provider={active}
-        value={activeEntry?.defaultModel ?? ''}
-        onSelect={(model) => updateProvider.mutate({ provider: active, defaultModel: model })}
-      />
+      {activeEntry?.defaultModelLockedByEnv ? (
+        // Locked: a static readout instead of the ModelPicker control, same idea as KeyRow's
+        // read-only "env" row — no interactive control means no theatrical PUT, and it avoids
+        // teaching the shared Combobox primitive (ticket 07) a disabled state it doesn't need
+        // anywhere else.
+        <div>
+          <p className={FIELDSET_LEGEND_CLASS}>Default model</p>
+          <EnvLockNote envVar={activeEntry.defaultModelEnvVar} />
+          <p className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-sm text-stone-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+            {activeEntry.defaultModel}
+          </p>
+        </div>
+      ) : (
+        <ModelPicker
+          // Keyed by the active provider: switching providers should reset the picker's local
+          // text to THAT provider's own defaultModel, which a remount gives for free (see
+          // ModelPicker's own doc comment on why this isn't a setState-in-effect instead).
+          key={active}
+          id="settings-model-picker"
+          provider={active}
+          value={activeEntry?.defaultModel ?? ''}
+          onSelect={(model) => updateProvider.mutate({ provider: active, defaultModel: model })}
+        />
+      )}
 
       {updateProvider.isError && (
         <p role="alert" className="text-xs text-red-600 dark:text-red-400">

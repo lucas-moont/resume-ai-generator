@@ -208,11 +208,20 @@ export interface ProviderEntry {
   available: boolean
   auth: ProviderAuthMode
   defaultModel: string
+  /** v3 ticket 11 (additive): true when `defaultModel` is pinned by this provider's own env
+   * var (`defaultModelEnvVar`, e.g. `CLAUDE_MODEL`) — config.py's env-wins precedence means a
+   * PUT changing it 200s but has no effect until that var is unset. */
+  defaultModelLockedByEnv: boolean
+  defaultModelEnvVar: string
   models: ProviderCatalogModel[]
 }
 
 export interface ProvidersSettingsResponse {
   active: ProviderMode
+  /** v3 ticket 11 (additive): same "env pins it, PUT is a no-op" signal as
+   * ProviderEntry.defaultModelLockedByEnv, for `active` itself (`AI_PROVIDER`). */
+  activeLockedByEnv: boolean
+  activeEnvVar: string
   providers: ProviderEntry[]
 }
 

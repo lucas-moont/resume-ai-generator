@@ -86,6 +86,44 @@ describe('ProviderForm', () => {
     })
   })
 
+  describe('env-lock indicator (v3 ticket 11)', () => {
+    it('unlocked baseline: every provider radio and the model picker stay enabled', async () => {
+      mockProviders()
+      renderApp(<ProviderForm />)
+
+      const autoRadio = await screen.findByRole('radio', { name: /auto/i })
+      expect(autoRadio).toBeEnabled()
+      expect(screen.getByRole('radio', { name: /^Claude \(Anthropic\)/ })).toBeEnabled()
+      expect(screen.queryByText(/pinned by/i)).not.toBeInTheDocument()
+    })
+
+    it('disables every provider radio and shows which env var pins the active provider', async () => {
+      mockProviders({ activeLockedByEnv: true, activeEnvVar: 'AI_PROVIDER' })
+      renderApp(<ProviderForm />)
+
+      const autoRadio = await screen.findByRole('radio', { name: /auto/i })
+      expect(autoRadio).toBeDisabled()
+      expect(screen.getByRole('radio', { name: /^Claude \(Anthropic\)/ })).toBeDisabled()
+      expect(screen.getByText(/AI_PROVIDER/)).toBeInTheDocument()
+      expect(screen.getByText(/pinned by/i)).toBeInTheDocument()
+    })
+
+    it('replaces the model picker with a read-only value when the active provider default is env-locked', async () => {
+      mockProviders({
+        active: 'claude',
+        providers: DEFAULT_PROVIDERS_SETTINGS.providers.map((p) =>
+          p.name === 'claude' ? { ...p, defaultModelLockedByEnv: true, defaultModelEnvVar: 'CLAUDE_MODEL' } : p,
+        ),
+      })
+      renderApp(<ProviderForm />)
+
+      await screen.findByText('Claude (Anthropic)')
+      expect(screen.getByText('claude-sonnet-5')).toBeInTheDocument()
+      expect(screen.getByText(/CLAUDE_MODEL/)).toBeInTheDocument()
+      expect(screen.queryByLabelText('Default model')).not.toBeInTheDocument()
+    })
+  })
+
   describe('API keys section', () => {
     it('renders one KeyRow per managed key from the keys query — KeyRow itself owns the save/remove/badge mechanics (see KeyRow.test.tsx)', async () => {
       mockProviders()

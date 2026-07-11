@@ -31,10 +31,37 @@ export async function mockBaseline(page: Page): Promise<void> {
     return route.fulfill({
       json: {
         active: 'auto',
+        // v3 ticket 11: nothing pinned by default — same unlocked baseline as the MSW/Vitest side.
+        activeLockedByEnv: false,
+        activeEnvVar: 'AI_PROVIDER',
         providers: [
-          { name: 'claude', available: false, auth: 'cli', defaultModel: 'claude-sonnet-5', models: [] },
-          { name: 'gemini', available: false, auth: 'none', defaultModel: 'gemini-2.5-flash', models: [] },
-          { name: 'ollama', available: false, auth: 'local', defaultModel: 'llama3.2', models: [] },
+          {
+            name: 'claude',
+            available: false,
+            auth: 'cli',
+            defaultModel: 'claude-sonnet-5',
+            defaultModelLockedByEnv: false,
+            defaultModelEnvVar: 'CLAUDE_MODEL',
+            models: [],
+          },
+          {
+            name: 'gemini',
+            available: false,
+            auth: 'none',
+            defaultModel: 'gemini-2.5-flash',
+            defaultModelLockedByEnv: false,
+            defaultModelEnvVar: 'GEMINI_MODEL',
+            models: [],
+          },
+          {
+            name: 'ollama',
+            available: false,
+            auth: 'local',
+            defaultModel: 'llama3.2',
+            defaultModelLockedByEnv: false,
+            defaultModelEnvVar: 'OLLAMA_MODEL',
+            models: [],
+          },
         ],
       },
     })
