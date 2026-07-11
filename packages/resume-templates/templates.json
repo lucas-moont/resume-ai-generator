@@ -1,0 +1,53 @@
+{
+  "$comment": "Single source of truth for resume template identity. apps/web/src/features/resume/templates/registry.ts imports this at build time (Vite resolves JSON natively); apps/api/app/services/pdf_export.py reads it at import time. Each id must have a matching `.tpl-<id>` block in resume.css (enforced by apps/api/tests/unit/test_pdf_export_templates.py).",
+  "templates": [
+    {
+      "id": "modern",
+      "label": "Modern",
+      "description": "Sidebar · indigo accent",
+      "tags": ["colorful", "two-column"]
+    },
+    {
+      "id": "classic",
+      "label": "Classic",
+      "description": "Serif · single column",
+      "tags": ["single-column", "serif", "conservative"]
+    },
+    {
+      "id": "minimal",
+      "label": "Minimal",
+      "description": "Airy · monochrome",
+      "tags": ["single-column", "monochrome", "airy"]
+    },
+    {
+      "id": "compact",
+      "label": "Compact",
+      "description": "Dense · content-rich",
+      "tags": ["two-column", "dense"]
+    },
+    {
+      "id": "ats-plain",
+      "label": "ATS Plain",
+      "description": "Single column · no color · max ATS compatibility",
+      "tags": ["ats-friendly", "single-column", "monochrome"]
+    },
+    {
+      "id": "two-column-ats",
+      "label": "Two-Column ATS",
+      "description": "2 columns · linear DOM order · ATS-safe",
+      "tags": ["ats-friendly", "two-column", "monochrome"]
+    },
+    {
+      "id": "executive",
+      "label": "Executive",
+      "description": "Spacious serif · centered header",
+      "tags": ["single-column", "serif", "spacious"]
+    },
+    {
+      "id": "tech",
+      "label": "Tech",
+      "description": "Monospace accents · skills up top",
+      "tags": ["two-column", "monospace", "skills-first"]
+    }
+  ]
+}
