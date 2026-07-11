@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 
 export interface ComboboxOption {
   value: string
@@ -61,7 +61,10 @@ export function Combobox({
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const blurTimeoutRef = useRef<number | undefined>(undefined)
-  const listboxId = `${id}-listbox`
+  // Generated rather than derived from the `id` prop: two instances that happen
+  // to share an `id` (e.g. two Comboboxes rendered from the same reusable form
+  // field) must not collide on their listbox/option ids.
+  const listboxId = useId()
 
   const close = () => {
     setOpen(false)
@@ -94,16 +97,10 @@ export function Combobox({
         setOpen(true)
         moveActive(-1)
         break
-      case 'Home':
-        if (!open || options.length === 0) return
-        e.preventDefault()
-        setActiveIndex(0)
-        break
-      case 'End':
-        if (!open || options.length === 0) return
-        e.preventDefault()
-        setActiveIndex(options.length - 1)
-        break
+      // Home/End are deliberately not wired to jump to the first/last option: the
+      // popup opens on every focus, so intercepting these keys would permanently
+      // break "move cursor to start/end of the typed text" for this field. Arrow
+      // keys already wrap, so list reachability doesn't depend on Home/End.
       case 'Enter':
         if (!open || activeIndex == null || !options[activeIndex]) return
         e.preventDefault()
@@ -113,6 +110,13 @@ export function Combobox({
         if (!open) return
         e.preventDefault()
         close()
+        break
+      case 'Tab':
+        // Close immediately rather than waiting on the blur-close delay: left
+        // open, the listbox would linger in the DOM with aria-activedescendant
+        // pointing at a now-stale option for up to BLUR_CLOSE_DELAY_MS. No
+        // preventDefault — focus still moves to the next element normally.
+        if (open) close()
         break
       default:
         break

@@ -84,18 +84,26 @@ describe('Combobox — arrow key navigation', () => {
     expect(options[2]).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('jumps to the first option on Home and the last option on End', async () => {
+  it('leaves Home/End to native caret movement instead of hijacking them for list navigation', async () => {
+    // Home/End are deliberately NOT wired to jump to the first/last option (unlike
+    // arrows): the popup opens on every focus, so intercepting these keys would
+    // permanently break "move cursor to start/end of the typed text" — the exact
+    // regression a caret-position probe caught in review. WAI-ARIA APG's editable
+    // combobox examples omit Home/End for this reason; arrows already wrap, so list
+    // reachability isn't lost.
     const user = userEvent.setup()
-    renderCombobox()
-    await user.click(screen.getByRole('combobox', { name: 'AI model' }))
-
-    await user.keyboard('{ArrowDown}{End}')
-    let options = screen.getAllByRole('option')
-    expect(options[2]).toHaveAttribute('aria-selected', 'true')
+    renderCombobox({ value: 'hello' })
+    const input = screen.getByRole('combobox', { name: 'AI model' }) as HTMLInputElement
+    await user.click(input)
+    input.setSelectionRange(5, 5)
 
     await user.keyboard('{Home}')
-    options = screen.getAllByRole('option')
-    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+    expect(input.selectionStart).toBe(0)
+    expect(screen.getAllByRole('option').every((opt) => opt.getAttribute('aria-selected') === 'false')).toBe(true)
+
+    await user.keyboard('{End}')
+    expect(input.selectionStart).toBe(5)
+    expect(screen.getAllByRole('option').every((opt) => opt.getAttribute('aria-selected') === 'false')).toBe(true)
   })
 })
 
@@ -157,6 +165,34 @@ describe('Combobox — selection and dismissal', () => {
     fireEvent.blur(screen.getByRole('combobox', { name: 'AI model' }))
 
     await vi.waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument())
+  })
+
+  it('closes the listbox synchronously on Tab, without waiting for the blur-close delay', async () => {
+    renderCombobox()
+    fireEvent.focus(screen.getByRole('combobox', { name: 'AI model' }))
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'AI model' }), { key: 'Tab' })
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+})
+
+describe('Combobox — multiple instances', () => {
+  it('derives independent internal listbox/option ids, even when two instances share the id prop', async () => {
+    const user = userEvent.setup()
+    render(
+      <>
+        <Combobox id="model" value="" onChange={vi.fn()} options={OPTIONS} aria-label="First" />
+        <Combobox id="model" value="" onChange={vi.fn()} options={OPTIONS} aria-label="Second" />
+      </>,
+    )
+
+    await user.click(screen.getByRole('combobox', { name: 'First' }))
+    await user.click(screen.getByRole('combobox', { name: 'Second' }))
+
+    const [firstListbox, secondListbox] = screen.getAllByRole('listbox')
+    expect(firstListbox.id).not.toBe(secondListbox.id)
   })
 })
 

@@ -4,7 +4,7 @@ import { fetchModels } from '../../../lib/api/endpoints'
 import { useChatStore } from '../store/chatStore'
 import type { UploadAttachment } from '../../upload/useFileUpload'
 import { AttachmentChip } from '../../upload/components/AttachmentChip'
-import { Combobox } from '../../../ui/Combobox'
+import { Combobox, type ComboboxOption } from '../../../ui/Combobox'
 import { zIndex } from '../../../ui/zIndex'
 
 const MAX_TEXTAREA_HEIGHT_PX = 220
@@ -40,7 +40,12 @@ export function Composer({
   const streaming = useChatStore((s) => s.streaming)
 
   const modelsQuery = useQuery({ queryKey: ['models'], queryFn: fetchModels })
-  const modelSuggestions = modelsQuery.data?.models ?? []
+  // ModelSuggestion (lib/api/dto.ts) and ComboboxOption (ui/Combobox.tsx) are
+  // intentionally structurally identical ({ value, label }) but declared
+  // independently — ui must not import from lib/api. `satisfies` makes that
+  // alignment an explicit, compiler-checked fact here instead of an
+  // incidental one discovered only if the shapes ever drift apart.
+  const modelSuggestions = (modelsQuery.data?.models ?? []) satisfies ComboboxOption[]
   const modelEmptyState = modelsQuery.isLoading
     ? 'Loading models…'
     : modelsQuery.isError
