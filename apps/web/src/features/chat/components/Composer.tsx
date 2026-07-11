@@ -109,7 +109,9 @@ export function Composer({
       }`}
     >
       {isDragging && (
-        <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-stone-400 bg-white/90 text-sm font-medium text-stone-600 dark:border-zinc-500 dark:bg-zinc-950/90 dark:text-zinc-300">
+        <div
+          className={`pointer-events-none absolute inset-2 ${zIndex.dropzone} flex items-center justify-center rounded-xl border-2 border-dashed border-stone-400 bg-white/90 text-sm font-medium text-stone-600 dark:border-zinc-500 dark:bg-zinc-950/90 dark:text-zinc-300`}
+        >
           Drop to attach — .json, .md, or .pdf
         </div>
       )}

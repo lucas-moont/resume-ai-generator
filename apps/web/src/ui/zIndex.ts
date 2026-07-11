@@ -4,6 +4,8 @@
  * between existing ones rather than reusing raw numbers.
  */
 export const zIndex = {
+  /** Composer's drag-and-drop overlay indicator. */
+  dropzone: 'z-10',
   /** Composer's model suggestion dropdown. */
   dropdown: 'z-20',
   /** Dialog primitive: backdrop + panel (see ./Dialog.tsx). Above any dropdown. */
