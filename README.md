@@ -1,6 +1,8 @@
 # Resume agent (local)
 
-**Chat-based resume tailoring**: paste a job description into a conversation and watch an ATS-friendly resume come to life in the A4 preview beside it — then refine it by talking ("make the summary shorter", "translate to English"), switch layouts instantly, and download a pixel-faithful PDF. Conversations are **persisted sessions** (local SQLite): close the app, come back, resume where you left off.
+**Chat-based resume tailoring**: paste a job description into a conversation and watch an ATS-friendly resume come to life in the A4 preview beside it — then refine it by talking ("make the summary shorter", "translate to English"), **edit any field inline right on the preview** (with undo/redo), switch layouts instantly, and download a pixel-faithful PDF. Conversations are **persisted sessions** (local SQLite): close the app, come back, resume where you left off.
+
+Your professional data is a **Living Profile**: drop a `.json`, `.md` or `.pdf` into the chat and an incremental merge pipeline (deterministic diff → LLM adjudicates only what's new or divergent → deterministic validator) proposes a reviewable patch — approve or reject it from the conversation. Every change is versioned with provenance (which upload or chat message caused it), history is append-only, and any version can be reverted. Quick fact changes work straight from chat: "I changed my phone number to X".
 
 Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Haiku, authenticated by the Claude login already on your machine or an API key), **Ollama** (local HTTP API) and/or **Google Gemini**, selected via `.env` (`AI_PROVIDER` and related keys). Stack: **React + Vite** frontend (Zustand + TanStack Query), **FastAPI** backend (layered: `domain/` → `services/` → `routers/`), SQLite persistence, project sources as Markdown files under `data/projects/`.
 
@@ -15,8 +17,10 @@ Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Ha
 - Download PDF without the browser print dialog (server-side Playwright, same CSS as the preview).
 - Merge **GitHub public repos** (optional token) with **local project `.md` files** (including private work).
 - Generation system prompt includes a **tailored-resume** skill block (job analysis, honest keyword mapping, ATS-oriented structure) composed with `generate.md` — see `apps/api/prompts/skills/tailored-resume-generator.md`.
+- **Living Profile (v2)**: upload `.json`/`.md`/`.pdf` via drag & drop in the composer (progress, sha256 dedup, actionable errors for scanned PDFs); **incremental merge** that never rewrites what didn't change and never lets an upload delete data ("upload never removes"); approve/reject cards that survive page reloads; profile version history + revert (`GET /api/profile/versions`, `POST /api/profile/revert`); chat intent `profile_update` ("mudei meu telefone…") applies validated patches with provenance and offers — never forces — a resume regeneration.
+- **Inline editing (v2)**: pencil toggle on the preview toolbar; edit any field via contenteditable (commit on blur/Enter, no caret jumps, same sanitization allowlist as rendering), add/remove list items, undo/redo via buttons or Ctrl-Z/Ctrl-Shift-Z (including undoing a bad refine that arrived over SSE); chat refines start from **exactly what you see**, edits included; non-blocking zod validation.
 - **Light / dark theme** (persisted in `localStorage`).
-- **Test suite + CI**: 122 pytest (unit + integration, LLM always faked) · 176 Vitest/Testing-Library/MSW · 6 Playwright e2e flows (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api.
+- **Test suite + CI**: 359 pytest (unit + integration, LLM always faked; 3 e2e render a real PDF) · 375 Vitest/Testing-Library/MSW · 17 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api.
 
 ## Prerequisites
 
@@ -36,7 +40,8 @@ These files are **gitignored** and must be created on each machine:
 | `data/profile/Profile.pdf` (optional) | **Plain text is extracted** ([pypdf](https://pypdf.readthedocs.io/)) and sent to the LLM together with your JSON; structured facts stay anchored in `resume.json`. Alternatives: `profile.pdf`, `resume.pdf`, or `PROFILE_PDF_PATH`. |
 | `data/profile_master.json` | **Legacy** path — still supported if `resume.json` does not exist. |
 | `data/projects/*.md` | One Markdown file per project (YAML frontmatter + narrative body). Copy samples from `data/examples/projects/` if helpful. |
-| `data/app.db` (auto-created) | **Local SQLite database** for chat sessions, messages, resume versions and the seeded profile. Created on first API boot (WAL mode); gitignored. Override the location/URL with `DATABASE_URL`. Delete it to start fresh — the profile re-seeds from `data/profile/` on next boot. |
+| `data/app.db` (auto-created) | **Local SQLite database** for chat sessions, messages, resume versions, profile versions, source documents and the seeded profile. Created on first API boot (WAL mode); gitignored. Override the location/URL with `DATABASE_URL`. Delete it to start fresh — the profile re-seeds from `data/profile/` on next boot. |
+| `data/uploads/` (auto-created) | **Uploaded source documents** (v2 Living Profile), stored as `<sha256>.<ext>`; gitignored — personal data never leaves your machine. |
 | `.env` | Optional `GITHUB_TOKEN`; **`AI_PROVIDER`** (`auto` \| `claude` \| `gemini` \| `ollama`); **`AI_DEFAULT_MODEL`** (optional global model override for the active provider); `ANTHROPIC_API_KEY` / `CLAUDE_MODEL`; `OLLAMA_BASE_URL` / `OLLAMA_MODEL`; `GEMINI_API_KEY` / `GEMINI_MODEL`; `PROFILE_JSON_PATH`; `DATABASE_URL`, etc. Copy from `.env.example`. |
 
 **LLM routing (summary):**
@@ -143,7 +148,16 @@ Free-form markdown: problem, your role, stack, outcomes.
 - `GET /api/chat/sessions` — list sessions (most recently updated first)
 - `GET /api/chat/sessions/{id}` — session detail: `{ session, messages, activeResume }`
 - `DELETE /api/chat/sessions/{id}` — delete a session (messages cascade; resume versions are kept)
-- `POST /api/chat/sessions/{id}/messages/stream` — body: `{ "message", "model?", "locale?", "jobDescription?" }` → **SSE** stream with `stage` (progress), `resume` (`{ resume, resumeVersionId }` when the turn changes the resume), `message` (assistant text for the chat bubble), `done` and `error` events. Intent (generate / refine / plain reply) is decided deterministically server-side.
+- `POST /api/chat/sessions/{id}/messages/stream` — body: `{ "message", "model?", "locale?", "jobDescription?", "resume?" }` → **SSE** stream with `stage` (progress), `resume` (`{ resume, resumeVersionId }` when the turn changes the resume), `profile_update` (`{ profileVersion, summary }` when the turn changes the Living Profile), `message` (assistant text for the chat bubble), `done` and `error` events. Intent (generate / refine / profile_update / plain reply) is decided deterministically server-side. The optional `resume` field lets the client supply the document as currently displayed (inline edits included) as the base for a refine.
+
+**Living Profile (v2):**
+
+- `POST /api/profile/documents` — multipart (`file`, optional `model` and `sessionId`) → synchronous `202 { documentId, status, proposedPatch?, diffSummary?, extractedPreview?, error? }`. Successful extractions always end `proposed` (empty proposal = "nothing new"); scanned PDFs with no text end `failed` with an actionable message. Re-uploading the same bytes (sha256) reuses the existing document. With `sessionId`, the proposal card is persisted into that chat session and survives reloads.
+- `GET /api/profile/documents` — list uploads (newest first, live status)
+- `POST /api/profile/documents/{id}/apply` — body `{ ops?: [indices] }` (subset or all) → `{ profileVersion, applied, skipped }`; `POST /api/profile/documents/{id}/reject` → 204. Non-`proposed` documents → 409.
+- `GET /api/profile/versions` · `GET /api/profile/versions/{n}` — append-only version history with provenance (`sourceKind`: seed_disk | upload | chat | manual | revert)
+- `PATCH /api/profile` — body `{ ops: [PatchOp] }` (direct manual edits, same deterministic validator)
+- `POST /api/profile/revert` — body `{ "toVersion": n }` → creates a new version copying an older one (history is never rewritten)
 
 **Legacy/direct endpoints (still supported — the UI falls back to them if the chat API is absent):**
 
@@ -164,9 +178,9 @@ Free-form markdown: problem, your role, stack, outcomes.
 
 ## Tests
 
-**Backend** (from `apps/api`, venv active): `python -m pytest` — 122 tests. Fast unit + integration suites use a fake LLM and an in-memory SQLite (never a real network call); the 3 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
+**Backend** (from `apps/api`, venv active): `python -m pytest` — 359 tests. Fast unit + integration suites use a fake LLM and an in-memory SQLite (never a real network call); the 3 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
 
-**Web** (from `apps/web`): `npm run test:run` (176 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (6 Playwright flows against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`).
+**Web** (from `apps/web`): `npm run test:run` (375 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (17 Playwright tests against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`).
 
 **CI:** `.github/workflows/web.yml` and `api.yml` run lint/build/tests on every push touching each app.
 
