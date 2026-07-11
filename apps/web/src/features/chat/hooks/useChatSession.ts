@@ -105,6 +105,18 @@ function toProposalCard(proposal: ChatMessageProposalDto): ProposalCard {
   }
 }
 
+/** v4 QA-01: only the two intents that emit a live `proposal` SSE event get a ProposalCard on
+ * reload. `question`/`adjust` conversational turns (`proposal_question`) and the approve
+ * confirmation turn (`proposal_approve`) also carry `dto.proposal` (via meta.proposalId,
+ * joined live by the backend) but purely as Provenance -- live, they render as plain text (or,
+ * for approve, the FINAL `generate` turn of that exchange gets the ResumeUpdatedCard below).
+ * Mapping `proposal != null` unconditionally to a card here would fabricate a card reload never
+ * had live, and it was doing so for EVERY question/approve turn (ghost "Aplicada" cards,
+ * multiplying each turn -- see the ticket). */
+function isProposalEmittingIntent(intent: ChatMessageDto['intent']): boolean {
+  return intent === 'propose' || intent === 'proposal_adjust'
+}
+
 function toChatMessage(dto: ChatMessageDto): ChatMessage {
   return {
     id: String(dto.id),
@@ -113,7 +125,7 @@ function toChatMessage(dto: ChatMessageDto): ChatMessage {
     createdAt: new Date(dto.createdAt).getTime(),
     ...(dto.role === 'assistant' && dto.sourceDocument != null
       ? { card: toProfileUpdatedCard(dto.sourceDocument) }
-      : dto.role === 'assistant' && dto.proposal != null
+      : dto.role === 'assistant' && dto.proposal != null && isProposalEmittingIntent(dto.intent)
         ? { card: toProposalCard(dto.proposal) }
         : // A chat-only `profile_update` turn (no upload behind it) never carries a
           // sourceDocument -- ChatMessageDto only has `intent` for it, not the profileVersion/

@@ -490,6 +490,64 @@ describe('useResumeChatSession — proposal rehydration (v4 F5)', () => {
     expect(useChatStore.getState().pendingProposalId).toBe(8)
   })
 
+  it('a proposal_question turn carries meta.proposalId (Provenance) but never emitted a `proposal` event live, so it gets no ProposalCard on reload (QA-01)', async () => {
+    server.use(
+      http.get('/api/chat/sessions/26', () =>
+        HttpResponse.json({
+          session: { id: 26, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: 'Essa sugestão troca "gerenciei" por "liderei" para reforçar impacto.',
+              intent: 'proposal_question',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: null,
+              proposal: makeProposal({ proposalId: 9, revision: 1 }),
+            },
+          ],
+          activeResume: null,
+          pendingProposal: makeProposal({ proposalId: 9, revision: 1 }),
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(26)
+
+    expect(useChatStore.getState().messages[0].card).toBeUndefined()
+  })
+
+  it('a proposal_approve turn (the confirmation, not the generate turn) also gets no ProposalCard on reload (QA-01)', async () => {
+    server.use(
+      http.get('/api/chat/sessions/27', () =>
+        HttpResponse.json({
+          session: { id: 27, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: 'Proposta aprovada.',
+              intent: 'proposal_approve',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: null,
+              proposal: makeProposal({ proposalId: 10, status: 'approved', revision: 1 }),
+            },
+          ],
+          activeResume: null,
+          pendingProposal: null,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(27)
+
+    expect(useChatStore.getState().messages[0].card).toBeUndefined()
+  })
+
   it('a session with no proposal at all leaves v3 restore behavior intact and pendingProposalId null', async () => {
     server.use(
       http.get('/api/chat/sessions/23', () =>
