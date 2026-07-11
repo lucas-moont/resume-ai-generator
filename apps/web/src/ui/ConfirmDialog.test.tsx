@@ -21,6 +21,13 @@ describe('ConfirmDialog', () => {
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
   })
 
+  it('documents the Escape-to-cancel shortcut visibly next to the actions', () => {
+    render(
+      <ConfirmDialog open title="Delete this chat?" confirmLabel="Delete" onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    )
+    expect(screen.getByText(/esc/i)).toBeInTheDocument()
+  })
+
   it('calls onConfirm when the confirm button is clicked', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()

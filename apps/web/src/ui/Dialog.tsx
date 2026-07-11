@@ -113,6 +113,10 @@ export function Dialog({ open, onClose, title, description, children, initialFoc
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
+        // Documents the shortcut this primitive already implements above
+        // (capture-phase keydown listener) — every dialog in the app (v3
+        // ticket 09's keyboard-shortcuts polish) closes on Escape.
+        aria-keyshortcuts="Escape"
         tabIndex={-1}
         className={`w-full max-w-sm rounded-2xl border border-stone-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900 ${className ?? ''}`}
       >

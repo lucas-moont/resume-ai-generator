@@ -25,6 +25,15 @@ describe('Dialog', () => {
     expect(screen.getByText("This can't be undone.")).toBeInTheDocument()
   })
 
+  it('documents the Escape shortcut via aria-keyshortcuts', () => {
+    render(
+      <Dialog open onClose={vi.fn()} title="Delete this chat?">
+        <button type="button">Confirm</button>
+      </Dialog>,
+    )
+    expect(screen.getByRole('dialog')).toHaveAttribute('aria-keyshortcuts', 'Escape')
+  })
+
   it('closes on Escape', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()

@@ -20,7 +20,8 @@ Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Ha
 - **Living Profile (v2)**: upload `.json`/`.md`/`.pdf` via drag & drop in the composer (progress, sha256 dedup, actionable errors for scanned PDFs); **incremental merge** that never rewrites what didn't change and never lets an upload delete data ("upload never removes"); approve/reject cards that survive page reloads; profile version history + revert (`GET /api/profile/versions`, `POST /api/profile/revert`); chat intent `profile_update` ("mudei meu telefone…") applies validated patches with provenance and offers — never forces — a resume regeneration.
 - **Inline editing (v2)**: pencil toggle on the preview toolbar; edit any field via contenteditable (commit on blur/Enter, no caret jumps, same sanitization allowlist as rendering), add/remove list items, undo/redo via buttons or Ctrl-Z/Ctrl-Shift-Z (including undoing a bad refine that arrived over SSE); chat refines start from **exactly what you see**, edits included; non-blocking zod validation.
 - **Light / dark theme** (persisted in `localStorage`).
-- **Test suite + CI**: 359 pytest (unit + integration, LLM always faked; 3 e2e render a real PDF) · 375 Vitest/Testing-Library/MSW · 17 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api.
+- **Keyboard shortcuts**: `Enter` sends a chat message (`Shift+Enter` for a newline), `Esc` closes any open dialog, `Ctrl`/`Cmd`-`Z` and `Ctrl`/`Cmd`-`Shift`-`Z` undo/redo resume edits — all left alone while typing in a text field or contenteditable region, so they never fight native per-field editing.
+- **Test suite + CI**: 359 pytest (unit + integration, LLM always faked; 3 e2e render a real PDF) · 445 Vitest/Testing-Library/MSW · 18 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api.
 
 ## Prerequisites
 
