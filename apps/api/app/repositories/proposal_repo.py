@@ -19,7 +19,7 @@ import json
 
 from sqlmodel import Session, select
 
-from app.db.tables import ImprovementProposal
+from app.db.tables import ImprovementProposal, _utcnow
 from app.domain.schemas import ProposalItem
 
 
@@ -56,6 +56,7 @@ def create_pending(
     previous = get_pending(session, session_id)
     if previous is not None:
         previous.status = "superseded"
+        previous.updated_at = _utcnow()
         session.add(previous)
 
     row = ImprovementProposal(
@@ -103,6 +104,7 @@ def revise(
         )
     row.items = _serialize_items(items)
     row.revision += 1
+    row.updated_at = _utcnow()
     session.add(row)
     session.flush()
     session.refresh(row)
@@ -119,6 +121,7 @@ def mark_approved(session: Session, row: ImprovementProposal, *, resume_version_
         )
     row.status = "approved"
     row.resume_version_id = resume_version_id
+    row.updated_at = _utcnow()
     session.add(row)
     session.flush()
     session.refresh(row)

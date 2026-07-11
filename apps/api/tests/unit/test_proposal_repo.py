@@ -123,6 +123,25 @@ class TestCreatePending:
         session.refresh(proposal_a)
         assert proposal_a.status == "proposed"
 
+    def test_create_pending_supersede_bumps_the_previous_rows_updated_at(self, session):
+        chat_session = chat_repo.create_session(session, title="Vaga X")
+        session.commit()
+        first = proposal_repo.create_pending(
+            session, session_id=chat_session.id, job_description="JD 1", items=_items()
+        )
+        session.commit()
+        original_updated_at = first.updated_at
+        original_created_at = first.created_at
+
+        proposal_repo.create_pending(
+            session, session_id=chat_session.id, job_description="JD 2", items=_items(id_=2)
+        )
+        session.commit()
+        session.refresh(first)
+
+        assert first.updated_at > original_updated_at
+        assert first.created_at == original_created_at
+
 
 class TestGet:
     def test_get_returns_the_row_by_id(self, session):
@@ -208,6 +227,22 @@ class TestRevise:
 
         assert updated.revision == 3
 
+    def test_revise_bumps_updated_at_but_not_created_at(self, session):
+        chat_session = chat_repo.create_session(session, title="Vaga X")
+        session.commit()
+        row = proposal_repo.create_pending(
+            session, session_id=chat_session.id, job_description="JD", items=_items()
+        )
+        session.commit()
+        original_updated_at = row.updated_at
+        original_created_at = row.created_at
+
+        updated = proposal_repo.revise(session, row, items=_items(proposed="v2"))
+        session.commit()
+
+        assert updated.updated_at > original_updated_at
+        assert updated.created_at == original_created_at
+
     def test_revise_raises_when_status_is_not_proposed(self, session):
         chat_session = chat_repo.create_session(session, title="Vaga X")
         session.commit()
@@ -236,6 +271,22 @@ class TestMarkApproved:
 
         assert updated.status == "approved"
         assert updated.resume_version_id == 99
+
+    def test_mark_approved_bumps_updated_at_but_not_created_at(self, session):
+        chat_session = chat_repo.create_session(session, title="Vaga X")
+        session.commit()
+        row = proposal_repo.create_pending(
+            session, session_id=chat_session.id, job_description="JD", items=_items()
+        )
+        session.commit()
+        original_updated_at = row.updated_at
+        original_created_at = row.created_at
+
+        updated = proposal_repo.mark_approved(session, row, resume_version_id=99)
+        session.commit()
+
+        assert updated.updated_at > original_updated_at
+        assert updated.created_at == original_created_at
 
     def test_mark_approved_raises_when_status_is_not_proposed(self, session):
         chat_session = chat_repo.create_session(session, title="Vaga X")
