@@ -8,6 +8,40 @@
 }
 
 /* ---------------------------------------------------------------------------
+   Inline-edit affordance (ticket 08) — ONLY ever matches when EditableText
+   renders its contentEditable branch (editable === true), which never
+   happens for the read-only preview or the server-rendered PDF (both render
+   plain nodes with no contenteditable attribute). Safe to keep in the file
+   the PDF export shares. Background + box-shadow only (no padding/border) so
+   toggling edit mode never shifts layout; the ring reads var(--c-accent) so
+   it stays on-brand across all six templates instead of a fixed color that
+   would clash with Classic's monochrome or Compact's teal.
+--------------------------------------------------------------------------- */
+.resume-doc [contenteditable='true'] {
+  cursor: text;
+  border-radius: 4px;
+  outline: none;
+  transition:
+    background-color 150ms ease-out,
+    box-shadow 150ms ease-out;
+}
+
+.resume-doc [contenteditable='true']:hover {
+  background-color: color-mix(in srgb, var(--c-accent) 10%, transparent);
+}
+
+.resume-doc [contenteditable='true']:focus {
+  background-color: color-mix(in srgb, var(--c-accent) 6%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 55%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resume-doc [contenteditable='true'] {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Shared base — single source of truth for the live web preview AND the
    exported PDF (apps/api/app/services/pdf_export.py reads this same file via
    a relative path, and apps/api/templates/resume_print.html wraps its markup

@@ -84,7 +84,10 @@ describe('ProfileUpdatedCard — settled states', () => {
   it('shows an applied state with no action buttons', () => {
     render(<ProfileUpdatedCard card={makeCard({ status: 'applied' })} onApprove={vi.fn()} onReject={vi.fn()} />)
 
-    expect(screen.getByText(/applied/i)).toBeInTheDocument()
+    // Exact match on the headline: the opsCount line below now also says "applied"
+    // (ticket 08 polish -- "N changes applied/discarded" instead of a stale "proposed"
+    // once the document is settled), so a loose /applied/i would match both.
+    expect(screen.getByText('Applied to your profile')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /reject/i })).not.toBeInTheDocument()
   })
@@ -92,7 +95,8 @@ describe('ProfileUpdatedCard — settled states', () => {
   it('shows a rejected (discarded) state with no action buttons', () => {
     render(<ProfileUpdatedCard card={makeCard({ status: 'rejected' })} onApprove={vi.fn()} onReject={vi.fn()} />)
 
-    expect(screen.getByText(/discarded|rejected/i)).toBeInTheDocument()
+    // Exact match: the opsCount line also says "discarded" now, see note above.
+    expect(screen.getByText('Discarded')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
   })
 

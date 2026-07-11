@@ -153,7 +153,9 @@ describe('Upload flow — approve / reject', () => {
     const rejectButton = await screen.findByRole('button', { name: /reject/i })
     await user.click(rejectButton)
 
-    await waitFor(() => expect(screen.getByText(/discarded/i)).toBeInTheDocument())
+    // Exact match: the opsCount line under the headline also says "discarded"
+    // now (ticket 08 polish), so a loose /discarded/i would match both.
+    await waitFor(() => expect(screen.getByText('Discarded')).toBeInTheDocument())
     expect(capturedDocumentId).toBe('9')
   })
 })

@@ -82,7 +82,10 @@ test.describe('Upload a profile document (Living Profile)', () => {
     await expect(page.getByText(/1 divergent title/i)).toBeVisible()
     await page.getByRole('button', { name: 'Reject', exact: true }).click()
 
-    await expect(page.getByText(/discarded/i)).toBeVisible()
+    // Exact match: the opsCount line under the headline also says "discarded"
+    // now (ticket 08 polish: "N changes applied/discarded" instead of a stale
+    // "proposed" once settled), so a loose /discarded/i matches both.
+    await expect(page.getByText('Discarded', { exact: true })).toBeVisible()
   })
 
   // Ticket 12 (QA gate v2 finding): approve/reject used to 409 with a generic

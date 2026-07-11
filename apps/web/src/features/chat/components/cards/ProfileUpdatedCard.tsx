@@ -53,6 +53,16 @@ function statusHeadline(status: ProfileUpdatedCardData['status']): string {
   }
 }
 
+/** Only ever read for proposed/applied/rejected (the three statuses that
+ * reach the opsCount line below) -- 'proposed' is a safe fallback for the
+ * others rather than another assertUnreachable, since a stale word here is
+ * cosmetic, not a wrong-state bug like statusHeadline/statusPalette would be. */
+function opsCountVerb(status: ProfileUpdatedCardData['status']): string {
+  if (status === 'applied') return 'applied'
+  if (status === 'rejected') return 'discarded'
+  return 'proposed'
+}
+
 export function ProfileUpdatedCard({
   card,
   onApprove,
@@ -118,7 +128,7 @@ export function ProfileUpdatedCard({
           )}
           {hasChanges && (
             <p className="mt-1 text-xs font-medium opacity-80">
-              {card.opsCount} {card.opsCount === 1 ? 'change' : 'changes'} proposed
+              {card.opsCount} {card.opsCount === 1 ? 'change' : 'changes'} {opsCountVerb(card.status)}
             </p>
           )}
         </>
