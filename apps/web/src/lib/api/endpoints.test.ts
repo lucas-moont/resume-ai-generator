@@ -2,7 +2,7 @@ import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup'
 import { sseResponse } from '../../test/msw/sse'
-import { makeResume, makeStageEvents, makeUploadResponse } from '../../test/factories'
+import { makeProposal, makeResume, makeStageEvents, makeUploadResponse } from '../../test/factories'
 import {
   ApiError,
   applySourceDocument,
@@ -260,6 +260,32 @@ describe('chatMessageStream', () => {
       caught = e
     }
     expect(caught).toBeInstanceOf(ApiError)
+  })
+
+  // v4 ticket 00 (dto.ts) / F2: ChatMessageStreamRequest.proposalAction is a plain field on
+  // the same JSON body — no separate wiring needed in chatMessageStream, but this pins that
+  // the button's deterministic shortcut actually reaches the wire, and that a `proposal`
+  // event survives the SSE round trip untouched.
+  it('threads proposalAction in the request body and yields a proposal event untouched', async () => {
+    const proposal = makeProposal({ proposalId: 7, revision: 2 })
+    let capturedBody: unknown
+    server.use(
+      http.post('/api/chat/sessions/6/messages/stream', async ({ request }) => {
+        capturedBody = await request.json()
+        return sseResponse([
+          { event: 'proposal', data: proposal },
+          { event: 'message', data: { content: 'Vou gerar o currículo com essas melhorias…' } },
+          { event: 'done', data: { progress: 100, messageId: 3, resumeVersionId: 1, proposalId: 7 } },
+        ])
+      }),
+    )
+
+    const generator = await chatMessageStream(6, { message: 'Aprovar e gerar', proposalAction: 'approve' })
+    const events = []
+    for await (const evt of generator) events.push(evt)
+
+    expect(capturedBody).toEqual({ message: 'Aprovar e gerar', proposalAction: 'approve' })
+    expect(events[0]).toMatchObject({ event: 'proposal', data: proposal })
   })
 })
 
