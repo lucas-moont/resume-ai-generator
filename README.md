@@ -30,7 +30,7 @@ Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Ha
 
 - **Node.js** 18+ and **npm**
 - **Python** 3.11+
-- **Ollama** installed and a model pulled (e.g. `ollama pull llama3.2`) when you use **`AI_PROVIDER=ollama`** or **`AI_PROVIDER=auto`** without `GEMINI_API_KEY` (see `.env.example`)
+- **Ollama** installed and a model pulled (e.g. `ollama pull llama3.2`) when you want the free/local provider — selected in the Settings UI, via `AI_PROVIDER=ollama`, or as the `auto` fallback when no Claude/Gemini key is configured
 - After Python deps: **Playwright browsers** — `playwright install chromium` (see setup below)
 
 ## Personal data (not in this repository)
@@ -48,16 +48,16 @@ These files are **gitignored** and must be created on each machine:
 | `data/uploads/` (auto-created) | **Uploaded source documents** (v2 Living Profile), stored as `<sha256>.<ext>`; gitignored — personal data never leaves your machine. |
 | `.env` | **Optional since v3** — provider, default model and API keys are all manageable from the Settings UI (persisted in `app_settings`/OS keychain). When a variable IS set here it wins over the UI and the Settings dialog shows a lock naming it. Variables: `GITHUB_TOKEN`; **`AI_PROVIDER`** (`auto` \| `claude` \| `gemini` \| `ollama`); **`AI_DEFAULT_MODEL`**; `ANTHROPIC_API_KEY` / `CLAUDE_MODEL`; `OLLAMA_BASE_URL` / `OLLAMA_MODEL`; `GEMINI_API_KEY` / `GEMINI_MODEL`; `PROFILE_JSON_PATH`; `DATABASE_URL`, etc. Copy from `.env.example`. |
 
-**LLM routing (summary):**
+**LLM routing (summary):** since v3 the active provider is a **runtime setting** — change it in the Settings UI (gear icon) with immediate effect, persisted in `app_settings`. The `AI_PROVIDER` env var is optional; when set it **overrides** the UI choice and the Settings dialog shows a lock naming it. The values mean the same in both places:
 
-| `AI_PROVIDER` | Behavior |
+| Provider | Behavior |
 |---------------|----------|
 | `auto` | Claude if `ANTHROPIC_API_KEY` is set; else Gemini if `GEMINI_API_KEY` is set; otherwise Ollama. A local `ant auth login` sets no key, so use `claude` explicitly to select it that way. |
 | `claude` | Always Claude. Auth resolves from `ant auth login` (the Claude session on your machine) or `ANTHROPIC_API_KEY`. Model from `CLAUDE_MODEL` (default `claude-sonnet-5`). |
 | `gemini` | Always Gemini (requires `GEMINI_API_KEY`). |
 | `ollama` | Always Ollama (uses `OLLAMA_MODEL` / `OLLAMA_BASE_URL`). |
 
-**Claude "linked on your machine":** run `ant auth login` once (ships with the Claude / `ant` CLI) and the app uses that local session automatically — no key in the repo. Set `AI_PROVIDER=claude`, or simply pick **Claude Opus 4.8** / **Claude Sonnet 5** in the UI model selector: a `claude-*` (or `gemini-*`) model chosen in the UI routes to that backend regardless of `AI_PROVIDER`. Prefer not to keep a static key in `.env`? Store it in the **OS keychain** instead (see [Security](#security)).
+**Claude "linked on your machine":** run `ant auth login` once (ships with the Claude / `ant` CLI) and the app uses that local session automatically — no key anywhere (the Settings UI shows Claude with auth mode `cli`). Select Claude in Settings, or simply pick **Claude Opus 4.8** / **Claude Sonnet 5** in the model selector: a `claude-*` (or `gemini-*`) model chosen in the UI routes to that backend regardless of the active provider. Have an API key? Paste it in **Settings → API keys** and it goes straight to the **OS keychain** (see [Security](#security)) — never to a file.
 
 Optional **`AI_DEFAULT_MODEL`** applies when the UI does not send a `model` field (empty override). Per-request `model` in the API body still wins when provided.
 
@@ -125,7 +125,7 @@ npm run dev
 
 Open `http://localhost:5173`. The UI proxies `/api/*` to the FastAPI server on port **8000** (override the proxy target with the `VITE_API_PROXY_TARGET` env var when the API runs elsewhere).
 
-If the resolved backend is **Ollama** (`AI_PROVIDER=ollama`, or `auto` without `GEMINI_API_KEY`), ensure **Ollama** is running (`ollama serve` if needed).
+If the active provider resolves to **Ollama** (chosen in Settings, `AI_PROVIDER=ollama`, or the `auto` fallback with no keys), ensure **Ollama** is running (`ollama serve` if needed) — the Settings dialog shows its live reachability.
 
 ## Project Markdown format
 
@@ -233,11 +233,11 @@ Runs **detect-secrets** plus `detect-private-key` and a large-file guard (`.pre-
 
 **HTTP 404 on `/api/generate` with `model '…' not found`:** Ollama uses 404 for a missing local model. Run `ollama pull llama3.2` (or whatever tag you want), or set `OLLAMA_MODEL` in `.env` to an **exact** name from `ollama list`.
 
-**Gemini errors:** Confirm the key from [Google AI Studio](https://aistudio.google.com/apikey), optional `GEMINI_MODEL` (default `gemini-2.5-flash`), and that the [Generative Language API](https://ai.google.dev/gemini-api/docs) is enabled for the project. To use Ollama instead, set **`AI_PROVIDER=ollama`** or use **`AI_PROVIDER=auto`** and remove/unset `GEMINI_API_KEY` (there is no automatic failover from Gemini to Ollama on HTTP errors).
+**Gemini errors:** Confirm the key from [Google AI Studio](https://aistudio.google.com/apikey), optional `GEMINI_MODEL` (default `gemini-2.5-flash`), and that the [Generative Language API](https://ai.google.dev/gemini-api/docs) is enabled for the project. To use Ollama instead, switch the provider in **Settings** (or set `AI_PROVIDER=ollama`); there is no automatic failover from Gemini to Ollama on HTTP errors.
 
-**Claude authentication errors (HTTP 401/403):** With `AI_PROVIDER=claude` (or a `claude-*` model picked in the UI), the SDK needs a credential. Either run `ant auth login` once (uses the Claude session on your machine — no key in the repo), or set `ANTHROPIC_API_KEY` in `.env` from [the console](https://console.anthropic.com/settings/keys). A `403` usually means the authenticated account cannot access the chosen `CLAUDE_MODEL`. If you see "The 'anthropic' package is not installed", re-run `pip install -r apps/api/requirements.txt`.
+**Claude authentication errors (HTTP 401/403):** With Claude active (or a `claude-*` model picked in the UI), the SDK needs a credential. Either run `ant auth login` once (uses the Claude session on your machine — no key anywhere), or add `ANTHROPIC_API_KEY` via **Settings → API keys** (keychain) or `.env`, from [the console](https://console.anthropic.com/settings/keys). A `403` usually means the authenticated account cannot access the chosen model. If you see "The 'anthropic' package is not installed", re-run `pip install -r apps/api/requirements.txt`.
 
-**Wrong backend selected:** Set `AI_PROVIDER` explicitly (`claude`, `gemini`, or `ollama`) instead of `auto` for a fixed provider regardless of which keys exist in `.env`. Selecting a `claude-*`/`gemini-*` model in the UI overrides `AI_PROVIDER` for that request.
+**Wrong backend selected:** Pick the provider explicitly in **Settings** (`claude`, `gemini`, or `ollama`) instead of `auto` for a fixed choice. If the Settings dialog shows a lock, an `AI_PROVIDER` env var is pinning the value — unset it in `.env` to manage it from the UI. Selecting a `claude-*`/`gemini-*` model in the composer overrides the active provider for that request.
 
 ## License
 
