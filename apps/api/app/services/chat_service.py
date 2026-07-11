@@ -94,7 +94,7 @@ from sqlmodel import Session
 
 from app.config import LLM_TIMEOUT_SECONDS, PROMPTS_DIR
 from app.db.tables import ChatMessage, ChatSession, ImprovementProposal, ResumeVersion, SourceDocument
-from app.domain.chat_intent import classify_intent, looks_like_job_description
+from app.domain.chat_intent import classify_intent
 from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, resolve_locale
 from app.domain.profile_patch import PatchOp, PatchValidationFailed, apply_patch
 from app.domain.prompts_builder import build_proposal_analysis_user_msg, build_proposal_turn_user_msg
@@ -558,39 +558,36 @@ async def _handle_proposal_turn(
     locale: str | None,
     backend_label: str,
 ) -> AsyncIterator[tuple[str, dict]]:
-    """v4 ticket B4 (spec SS2): with a Pending Proposal, the turn is conversational rather than
-    routed by the v1 3-way heuristic. Three ways in, evaluated in order:
+    """v4 ticket B4 (spec SS2), revised by QA-05 (P2, QA live): with a Pending Proposal, the
+    turn is conversational rather than routed by the v1 3-way heuristic. Two ways in, evaluated
+    in order:
 
-    1. The message itself reads like a brand-new job description (``looks_like_job_description``,
-       the SAME deterministic heuristic "generate" uses) -- a short-circuit straight into the
-       Analysis (``_handle_propose_turn``), zero extra LLM calls beyond the Analysis itself.
-       ``proposal_repo.create_pending`` (inside it) supersedes THIS proposal atomically.
-    2. Otherwise, one combined classification LLM call (``proposal_turn.md``) decides
+    1. One combined classification LLM call (``proposal_turn.md``) decides
        approve/adjust/question/new_jd against the CURRENT proposal + recent history. `new_jd`
-       from the LLM takes the exact same Analysis route as (1) (so this path costs 2 LLM calls
-       total: classification + Analysis); `approve` takes the SAME branch the button shortcut
-       does (``_handle_approve_branch``, B5).
-    3. Garbage/unparseable classification output (``parse_proposal_turn_json`` -> ``None``) is
+       takes the same route as the Analysis (``_handle_propose_turn``), whose OWN
+       ``proposal_repo.create_pending`` supersedes THIS proposal atomically; `approve` takes the
+       SAME branch the button shortcut does (``_handle_approve_branch``, B5).
+    2. Garbage/unparseable classification output (``parse_proposal_turn_json`` -> ``None``) is
        NEVER an error frame here (unlike the Analysis's OWN parser failure, which still is) --
        it falls back to a canned, locale-aware `question` reply, proposal completely untouched
        (spec SS6).
 
+    QA-05: this used to short-circuit straight into a new Analysis, zero classification calls
+    spent, whenever the message itself read like a brand-new job description
+    (``looks_like_job_description`` -- the SAME deterministic, content-blind heuristic "generate"
+    uses for a session with no pending proposal). That heuristic trips on word count alone (30+
+    words), so a long, perfectly ordinary natural-language `adjust` message ("add FastAPI to my
+    skills, don't remove anything else, and reorder projects...") tripped it exactly like a real
+    JD paste -- DESTROYING the pending proposal (supersede) instead of revising it. The
+    short-circuit is gone: with a pending proposal, EVERY message (except the button's
+    ``proposalAction`` shortcut) goes through classification first, and `new_jd` from the LLM is
+    the ONLY way left to supersede. Accepted cost: a real JD pasted while a proposal is pending
+    now spends 2 LLM calls (classification + Analysis) instead of 1.
+    ``looks_like_job_description`` is untouched for the NO-pending routing (v1's heuristic).
+
     `adjust` replaces the proposal's items wholesale (``proposal_repo.revise`` -- never a
     delta) and bumps its revision; `question` (real or fallback) never touches the proposal.
     """
-    if looks_like_job_description(user_message):
-        async for event, data in _handle_propose_turn(
-            session=session,
-            chat_session=chat_session,
-            user_message=user_message,
-            job_description=user_message,
-            model=model,
-            locale=locale,
-            backend_label=backend_label,
-        ):
-            yield event, data
-        return
-
     resolved_locale = _resolve_concrete_locale(locale, user_message, None)
     items = proposal_repo.get_items(proposal)
     history_text = _format_history(prior_messages, _HISTORY_MESSAGES_FOR_REFINE)

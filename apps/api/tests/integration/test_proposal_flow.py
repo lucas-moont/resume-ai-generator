@@ -383,6 +383,75 @@ class TestProposalTurnAdjust:
             assert [item.section for item in proposal_repo.get_items(row)] == ["headline"]
 
 
+class TestProposalTurnQA05LongAdjustNotHijacked:
+    """v4 ticket QA-05 (P2, QA live): a long, natural-language `adjust` message used to trip
+    `looks_like_job_description`'s strong-word-count signal (30+ words, content-blind) and get
+    short-circuited straight into a brand-new Analysis -- DESTROYING the pending proposal
+    (supersede) instead of revising it. The classification LLM is now the ONLY thing deciding
+    `new_jd` vs `adjust` with a pending proposal (see `_handle_proposal_turn`'s docstring)."""
+
+    async def test_long_adjust_message_revises_instead_of_superseding(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        proposal_id = _seed_pending_proposal(test_db_engine, created["id"])
+
+        long_adjust_message = (
+            "na proposta, adiciona também FastAPI como item de skills, sem remover nenhuma "
+            "skill existente da lista, e muda o item de projetos para reordenar colocando "
+            "Space Tourism Website em primeiro lugar entre todos"
+        )
+        assert len(long_adjust_message.split()) >= 30  # must trip the OLD heuristic's strong signal
+
+        revised_items = [
+            {
+                "id": 1,
+                "section": "skills",
+                "current": None,
+                "proposed": "Python, FastAPI, PostgreSQL",
+                "rationale": "Adicionado FastAPI sem remover as skills existentes.",
+            },
+            {
+                "id": 2,
+                "section": "projects",
+                "current": None,
+                "proposed": "Space Tourism Website (reordenado para primeiro lugar)",
+                "rationale": "Reordenado conforme pedido do usuário.",
+            },
+        ]
+        fake_llm.queue(
+            _proposal_turn_llm_response(
+                "adjust",
+                reply="Adicionei FastAPI às skills e reordenei os projetos.",
+                items=revised_items,
+            )
+        )
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": long_adjust_message},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "error" not in kinds
+
+        proposal_event = next(data for e, data in events if e == "proposal")
+        assert proposal_event["proposalId"] == proposal_id  # NEVER a new id -- revised, not superseded
+        assert proposal_event["status"] == "proposed"
+        assert proposal_event["revision"] == 2
+
+        assert fake_llm.call_count == 1  # classification only -- `adjust` never triggers a 2nd call
+
+        with Session(test_db_engine) as session:
+            row = proposal_repo.get(session, proposal_id)
+            assert row.status == "proposed"  # NEVER "superseded"
+            assert row.revision == 2
+            assert [item.section for item in proposal_repo.get_items(row)] == ["skills", "projects"]
+
+
 class TestProposalTurnQuestion:
     """`question` never touches the proposal -- only a `message` + `done` frame."""
 
@@ -498,55 +567,23 @@ class TestProposalTurnGarbageFallback:
         assert "proposal" not in kinds
 
 
-class TestProposalTurnNewJdViaHeuristic:
-    """`looks_like_job_description(message)` short-circuits straight into another Analysis --
-    zero LLM calls spent on classification, only the Analysis itself."""
-
-    async def test_pasting_a_new_job_description_supersedes_the_pending_proposal(
-        self, client, fake_llm, write_profile, parse_sse, test_db_engine
-    ):
-        write_profile(make_profile())
-        created = (await client.post("/api/chat/sessions", json={})).json()
-        old_proposal_id = _seed_pending_proposal(test_db_engine, created["id"])
-        fake_llm.queue(_proposal_llm_response())
-
-        new_jd = (
-            "We are hiring a Staff Frontend Engineer to lead our design system team. You will "
-            "build accessible React components, own our Storybook and visual regression "
-            "pipeline, and collaborate closely with product designers. Experience with "
-            "TypeScript, Vite, and CSS architecture is a strong plus. We value craftsmanship "
-            "and clear written communication."
-        )
-        resp = await client.post(
-            f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": new_jd},
-        )
-
-        assert resp.status_code == 200
-        events = parse_sse(resp.text)
-        kinds = [e for e, _ in events]
-        assert "error" not in kinds
-        assert kinds[-1] == "done"
-        proposal_event = next(data for e, data in events if e == "proposal")
-        new_proposal_id = proposal_event["proposalId"]
-        assert new_proposal_id != old_proposal_id
-        assert proposal_event["status"] == "proposed"
-        assert proposal_event["revision"] == 1
-
-        assert fake_llm.call_count == 1  # only the new Analysis -- no classification call spent
-
-        with Session(test_db_engine) as session:
-            old_row = proposal_repo.get(session, old_proposal_id)
-            new_row = proposal_repo.get(session, new_proposal_id)
-            assert old_row.status == "superseded"
-            assert new_row.status == "proposed"
-            assert new_row.job_description == new_jd
+# v4 ticket QA-05 (P2, QA live): `TestProposalTurnNewJdViaHeuristic` used to live here, asserting
+# that a real JD paste with a pending proposal short-circuited straight into a new Analysis at
+# only 1 LLM call (zero spent on classification). That SAME content-blind, 30+-word heuristic
+# also hijacked long, ordinary `adjust` messages and destroyed the pending proposal -- the bug
+# QA-05 fixes (see `TestProposalTurnQA05LongAdjustNotHijacked` above and `_handle_proposal_turn`'s
+# docstring). The short-circuit is gone; a real JD paste with a pending proposal now ALWAYS goes
+# through classification first, at the accepted cost of 2 LLM calls instead of 1 -- see
+# `TestProposalTurnNewJdViaLlm.test_pasting_a_real_job_description_with_pending_still_costs_two_llm_calls`
+# below, which replaces the removed heuristic test's coverage.
 
 
 class TestProposalTurnNewJdViaLlm:
-    """A message that does NOT look like a JD by the heuristic, but the classification LLM
-    itself decides is a new job description (`action=new_jd`) -- costs 2 LLM calls
-    (classification + the Analysis it triggers)."""
+    """v4 ticket QA-05 fix: with a pending proposal, `new_jd` is decided ONLY by the
+    classification LLM -- never by the `looks_like_job_description` heuristic (which stays
+    intact for the NO-pending routing, v1's 3-way heuristic, but no longer gets a say once a
+    proposal is pending). Always costs 2 LLM calls (classification + the Analysis it triggers),
+    whether the message is a short mention of a new job or an obvious, full JD paste."""
 
     async def test_llm_classified_new_jd_supersedes_the_pending_proposal(
         self, client, fake_llm, write_profile, parse_sse, test_db_engine
@@ -582,6 +619,51 @@ class TestProposalTurnNewJdViaLlm:
         with Session(test_db_engine) as session:
             old_row = proposal_repo.get(session, old_proposal_id)
             assert old_row.status == "superseded"
+
+    async def test_pasting_a_real_job_description_with_pending_still_costs_two_llm_calls(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        old_proposal_id = _seed_pending_proposal(test_db_engine, created["id"])
+
+        new_jd = (
+            "We are hiring a Staff Frontend Engineer to lead our design system team. You will "
+            "build accessible React components, own our Storybook and visual regression "
+            "pipeline, and collaborate closely with product designers. Experience with "
+            "TypeScript, Vite, and CSS architecture is a strong plus. We value craftsmanship "
+            "and clear written communication."
+        )
+        fake_llm.queue(
+            _proposal_turn_llm_response("new_jd", reply="Beleza, vou analisar a nova vaga."),
+            _proposal_llm_response(),
+        )
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": new_jd},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "error" not in kinds
+        assert kinds[-1] == "done"
+        proposal_event = next(data for e, data in events if e == "proposal")
+        new_proposal_id = proposal_event["proposalId"]
+        assert new_proposal_id != old_proposal_id
+        assert proposal_event["status"] == "proposed"
+        assert proposal_event["revision"] == 1
+
+        # QA-05: classification is NEVER skipped now, even for an obvious, full JD paste.
+        assert fake_llm.call_count == 2
+
+        with Session(test_db_engine) as session:
+            old_row = proposal_repo.get(session, old_proposal_id)
+            new_row = proposal_repo.get(session, new_proposal_id)
+            assert old_row.status == "superseded"
+            assert new_row.status == "proposed"
+            assert new_row.job_description == new_jd
 
 
 class TestApproveViaButton:
