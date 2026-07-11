@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Callable
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlmodel import Session
@@ -14,6 +15,7 @@ from app.db.engine import create_db_engine, init_db
 from app.main import create_app
 from app.routers import deps
 from app.services import llm_client as llm_client_module
+from app.services import model_catalog as model_catalog_module
 from app.services import streaming as streaming_module
 from app.services import generation_service as generation_service_module
 
@@ -83,6 +85,33 @@ def write_profile(isolated_data_env: Path) -> Callable[[dict], Path]:
         return path
 
     return _write
+
+
+def _blackhole_transport_handler(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError(
+        "network access is disabled in tests by default (see "
+        "_no_real_network_for_model_catalog in tests/conftest.py)",
+        request=request,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_network_for_model_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """v3 ticket 03: the dynamic model catalog makes a real HTTP call (Anthropic/Gemini/Ollama
+    listing) whenever a usable key/server is configured -- and this repo's own root ``.env``
+    ships a real ``GEMINI_API_KEY`` (loaded into the process env by ``app.config`` at import
+    time), so simply not mocking anything would let a test make a genuine call to Google's API
+    with that real key. This autouse fixture forces every test onto a transport that always
+    fails closed (the catalog degrades to its static fallback / reports Ollama unreachable),
+    regardless of what secrets happen to be configured (env OR OS keychain) on the machine
+    running the suite. Tests exercising the real success/failure parsing paths (see
+    tests/unit/test_model_catalog.py) explicitly monkeypatch ``model_catalog._transport`` to
+    their own ``httpx.MockTransport``, which simply overrides this default for their scope.
+    """
+    monkeypatch.setattr(
+        model_catalog_module, "_transport", httpx.MockTransport(_blackhole_transport_handler)
+    )
+    model_catalog_module.invalidate_catalog_cache()
 
 
 @pytest.fixture(autouse=True)

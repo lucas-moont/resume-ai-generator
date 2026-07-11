@@ -38,6 +38,31 @@ def resolve_secret(env_var: str, *, service: str = KEYCHAIN_SERVICE) -> str | No
     return stored or None
 
 
+def secret_source(env_var: str, *, service: str = KEYCHAIN_SERVICE) -> str | None:
+    """Which tier ``resolve_secret`` would resolve ``env_var`` from -- ``"env"``, ``"keychain"``,
+    or ``None`` -- WITHOUT returning the value itself. Used by ``GET /api/settings/keys``
+    (v3 ticket 03) to report ``{name, configured, source}`` for each managed key: the value
+    must never be echoed, only where it currently comes from. Mirrors ``resolve_secret``'s
+    precedence exactly (env, then keychain), duplicated rather than refactored out of it so
+    ``resolve_secret``'s existing, well-tested contract (return the value) is untouched.
+    """
+    value = (os.getenv(env_var) or "").strip()
+    if value:
+        return "env"
+
+    try:
+        import keyring
+    except ModuleNotFoundError:
+        return None
+
+    try:
+        stored = keyring.get_password(service, env_var)
+    except Exception:
+        return None
+
+    return "keychain" if (stored or "").strip() else None
+
+
 def store_secret(name: str, value: str, *, service: str = KEYCHAIN_SERVICE) -> bool:
     """Write a credential to the OS keychain (v3 ticket 01: PUT /api/settings/keys).
 

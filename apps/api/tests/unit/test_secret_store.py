@@ -2,7 +2,13 @@ import os
 import unittest
 from unittest.mock import patch
 
-from app.services.secret_store import KEYCHAIN_SERVICE, delete_secret, resolve_secret, store_secret
+from app.services.secret_store import (
+    KEYCHAIN_SERVICE,
+    delete_secret,
+    resolve_secret,
+    secret_source,
+    store_secret,
+)
 
 
 class TestResolveSecret(unittest.TestCase):
@@ -72,6 +78,41 @@ class TestDeleteSecret(unittest.TestCase):
     def test_returns_false_when_backend_unavailable(self) -> None:
         with patch("keyring.delete_password", side_effect=RuntimeError("no backend")):
             self.assertFalse(delete_secret(self._VAR))
+
+
+class TestSecretSource(unittest.TestCase):
+    """v3 ticket 03: GET /api/settings/keys reports WHERE a key resolves from (env|keychain|
+    None) without ever echoing the value itself."""
+
+    _VAR = "RESUME_AGENT_TEST_SECRET"
+
+    def tearDown(self) -> None:
+        os.environ.pop(self._VAR, None)
+
+    def test_env_takes_precedence_and_reports_env(self) -> None:
+        os.environ[self._VAR] = "from-env"
+        with patch("keyring.get_password", return_value="from-keychain"):
+            self.assertEqual(secret_source(self._VAR), "env")
+
+    def test_reports_keychain_when_env_is_unset(self) -> None:
+        os.environ.pop(self._VAR, None)
+        with patch("keyring.get_password", return_value="from-keychain"):
+            self.assertEqual(secret_source(self._VAR), "keychain")
+
+    def test_reports_none_when_neither_is_configured(self) -> None:
+        os.environ.pop(self._VAR, None)
+        with patch("keyring.get_password", return_value=None):
+            self.assertIsNone(secret_source(self._VAR))
+
+    def test_reports_none_when_keyring_backend_is_unavailable(self) -> None:
+        os.environ.pop(self._VAR, None)
+        with patch("keyring.get_password", side_effect=RuntimeError("no backend")):
+            self.assertIsNone(secret_source(self._VAR))
+
+    def test_blank_environment_value_falls_through_to_keychain(self) -> None:
+        os.environ[self._VAR] = "   "
+        with patch("keyring.get_password", return_value="from-keychain"):
+            self.assertEqual(secret_source(self._VAR), "keychain")
 
 
 if __name__ == "__main__":
