@@ -8,12 +8,19 @@ import type {
   ExportPdfRequest,
   GenerateRequest,
   GithubReposResponse,
+  KeysSettingsResponse,
+  KeyUpsertRequest,
+  ManagedSecretName,
   ModelsResponse,
+  ProvidersSettingsResponse,
+  ProvidersSettingsUpdateRequest,
   RefineRequest,
+  SecretKeyEntry,
   UploadSourceDocumentResponse,
 } from './dto'
 import {
   postInit,
+  putInit,
   requestBlob,
   requestJson,
   requestMultipart,
@@ -117,4 +124,28 @@ export function applySourceDocument(
 
 export function rejectSourceDocument(documentId: number): Promise<void> {
   return requestVoid(`/api/profile/documents/${documentId}/reject`, { method: 'POST' })
+}
+
+// --- Settings: providers/models/keys (v3 ticket 06) ---
+
+export function fetchProviderSettings(): Promise<ProvidersSettingsResponse> {
+  return requestJson<ProvidersSettingsResponse>('/api/settings/providers')
+}
+
+export function updateProviderSettings(
+  payload: ProvidersSettingsUpdateRequest,
+): Promise<ProvidersSettingsResponse> {
+  return requestJson<ProvidersSettingsResponse>('/api/settings/providers', putInit(payload))
+}
+
+export function fetchKeySettings(): Promise<KeysSettingsResponse> {
+  return requestJson<KeysSettingsResponse>('/api/settings/keys')
+}
+
+export function upsertKeySetting(payload: KeyUpsertRequest): Promise<SecretKeyEntry> {
+  return requestJson<SecretKeyEntry>('/api/settings/keys', putInit(payload))
+}
+
+export function deleteKeySetting(name: ManagedSecretName): Promise<void> {
+  return requestVoid(`/api/settings/keys/${name}`, { method: 'DELETE' })
 }

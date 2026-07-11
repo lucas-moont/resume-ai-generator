@@ -186,3 +186,54 @@ export interface ApplySourceDocumentResponse {
   applied: number
   skipped: number
 }
+
+// --- Settings: providers/models/keys (v3, ticket 03 backend / ticket 06 frontend) ---
+// Shapes per docs/v3-agnostic-settings.md §Backend-2 / app/routers/settings.py.
+
+export type ProviderName = 'claude' | 'gemini' | 'ollama'
+export type ProviderMode = 'auto' | ProviderName
+export type ProviderAuthMode = 'api_key' | 'cli' | 'local' | 'none'
+
+export interface ProviderCatalogModel {
+  value: string
+  label: string
+}
+
+export interface ProviderEntry {
+  name: ProviderName
+  available: boolean
+  auth: ProviderAuthMode
+  defaultModel: string
+  models: ProviderCatalogModel[]
+}
+
+export interface ProvidersSettingsResponse {
+  active: ProviderMode
+  providers: ProviderEntry[]
+}
+
+export interface ProvidersSettingsUpdateRequest {
+  provider: ProviderMode
+  defaultModel?: string
+}
+
+/** The three keys PUT/DELETE /api/settings/keys manages — mirrors the backend's
+ * settings_service.MANAGED_SECRET_NAMES (the single source of truth there). */
+export type ManagedSecretName = 'ANTHROPIC_API_KEY' | 'GEMINI_API_KEY' | 'GITHUB_TOKEN' // pragma: allowlist secret
+export type SecretSource = 'env' | 'keychain' | null // pragma: allowlist secret
+
+export interface SecretKeyEntry {
+  name: ManagedSecretName
+  configured: boolean
+  source: SecretSource
+}
+
+export interface KeysSettingsResponse {
+  keys: SecretKeyEntry[]
+}
+
+export interface KeyUpsertRequest {
+  name: ManagedSecretName
+  /** Write-only: never populated from a server response — only ever sent, never received. */
+  value: string
+}

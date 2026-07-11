@@ -31,6 +31,16 @@ export function postInit(body: unknown, signal?: AbortSignal): RequestInit {
   }
 }
 
+/** Same shape as postInit but PUT — settings writes (v3 ticket 06) are idempotent replacements, not creations. */
+export function putInit(body: unknown, signal?: AbortSignal): RequestInit {
+  return {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  }
+}
+
 export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init)
   if (!response.ok) throw new ApiError(await readErrorDetail(response), response.status)
