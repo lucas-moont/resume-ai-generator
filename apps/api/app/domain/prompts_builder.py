@@ -13,7 +13,16 @@ from app.domain.schemas import ProposalItem, ResumeDocument
 def _format_agreed_improvements_block(items: list[ProposalItem]) -> str:
     """Renders the APPROVED IMPROVEMENT PLAN block (docs/v4-improvement-proposal.md §4.3).
     Strings are ``json.dumps``-quoted (not just wrapped in literal quotes) so a ``proposed``/
-    ``rationale`` containing an internal ``"`` can never break the block's own quoting."""
+    ``rationale`` containing an internal ``"`` can never break the block's own quoting.
+
+    QA-02: the hard rules below (see ``build_generation_user_msg``) default to "keep the same
+    set of experience entries, education, and projects" and "reorder/select skills from the
+    profile" -- exactly the conventions an approved plan may need to override (e.g. adding a
+    skill, reordering projects). Without an explicit precedence statement, the LLM was resolving
+    that conflict in favor of the conservative hard rules and silently dropping those plan items.
+    This block now states the plan wins over those default conventions -- only the truthfulness
+    rule (never invent facts) still outranks it -- and ends with a checklist instruction so the
+    model self-checks every item before returning."""
     lines = [
         f"{i}. [{item.section}] current: "
         f"{'null' if item.current is None else json.dumps(item.current, ensure_ascii=False)} "
@@ -22,7 +31,12 @@ def _format_agreed_improvements_block(items: list[ProposalItem]) -> str:
     ]
     return (
         "APPROVED IMPROVEMENT PLAN (agreed with the user in chat — implement EXACTLY these "
-        "changes, nothing beyond them):\n" + "\n".join(lines)
+        "changes, nothing beyond them):\n" + "\n".join(lines) + "\n\n"
+        "This plan takes precedence over the default conventions below regarding skill "
+        "selection/order and experience/project order — it was agreed with the user in chat. "
+        "Only the truthfulness rule (never invent facts not present in the profile) still "
+        "outranks this plan.\n"
+        "Before returning, verify EVERY numbered item above is reflected in the output."
     )
 
 

@@ -140,6 +140,43 @@ class TestBuildGenerationUserMsgWithAgreedImprovements:
         assert '1. [headline] current: "Dev Backend" -> proposed: "Backend Engineer especializado em Python" (rationale: A vaga pede especialização em Python e APIs escaláveis.)' in out
         assert '2. [summary] current: null -> proposed: "Backend engineer focado em sistemas distribuídos." (rationale: A vaga menciona sistemas distribuídos como requisito central.)' in out
 
+    def test_agreed_improvements_declares_precedence_over_default_conventions(self) -> None:
+        # QA-02: the plan must explicitly outrank the hard rules' default conventions on skill
+        # selection/order and experience/project order -- the LLM was resolving that conflict in
+        # favor of the conservative hard rules, silently dropping approved skill additions and
+        # project reorderings. Only the truthfulness rule (never invent facts) should still win.
+        out = build_generation_user_msg(
+            job_description="We need a backend engineer.",
+            profile=_PROFILE,
+            pdf_block="",
+            project_notes="",
+            locale="pt-BR",
+            agreed_improvements=_ITEMS,
+        )
+        plan_marker = (
+            "APPROVED IMPROVEMENT PLAN (agreed with the user in chat — implement EXACTLY these "
+            "changes, nothing beyond them):"
+        )
+        precedence_marker = "This plan takes precedence over the default conventions below"
+        assert precedence_marker in out
+        assert "truthfulness" in out.lower()
+        assert out.index(plan_marker) < out.index(precedence_marker) < out.index(
+            "Tailor a resume for the candidate"
+        )
+
+    def test_agreed_improvements_includes_final_checklist_instruction(self) -> None:
+        out = build_generation_user_msg(
+            job_description="We need a backend engineer.",
+            profile=_PROFILE,
+            pdf_block="",
+            project_notes="",
+            locale="pt-BR",
+            agreed_improvements=_ITEMS,
+        )
+        checklist_marker = "verify EVERY numbered item above is reflected in the output"
+        assert checklist_marker in out
+        assert out.index(checklist_marker) < out.index("Tailor a resume for the candidate")
+
     def test_empty_agreed_improvements_list_behaves_like_none(self) -> None:
         with_empty = build_generation_user_msg(
             job_description="We need a backend engineer.",
