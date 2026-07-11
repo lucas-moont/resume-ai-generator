@@ -70,93 +70,35 @@ describe('ProviderForm', () => {
       await waitFor(() => expect(putBody).toEqual({ provider: 'claude' }))
       await waitFor(() => expect(claudeRadio).toBeChecked())
     })
+
+    it('shows an error alert when the provider switch fails, and does not treat it as applied', async () => {
+      mockProviders()
+      server.use(http.put('/api/settings/providers', () => HttpResponse.json({ detail: 'boom' }, { status: 500 })))
+      const user = userEvent.setup()
+      renderApp(<ProviderForm />)
+
+      const autoRadio = await screen.findByRole('radio', { name: /auto/i })
+      await user.click(screen.getByRole('radio', { name: /^Claude \(Anthropic\)/ }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't update/i)
+      // Nothing was actually persisted -- the previously-active option is still selected.
+      expect(autoRadio).toBeChecked()
+    })
   })
 
-  describe('key set/remove flow', () => {
-    it('a key configured via env is read-only (no input, no remove button)', async () => {
+  describe('API keys section', () => {
+    it('renders one KeyRow per managed key from the keys query — KeyRow itself owns the save/remove/badge mechanics (see KeyRow.test.tsx)', async () => {
       mockProviders()
       mockKeys([
         { name: 'ANTHROPIC_API_KEY', configured: true, source: 'env' },
-        { name: 'GEMINI_API_KEY', configured: false, source: null },
+        { name: 'GEMINI_API_KEY', configured: true, source: 'keychain' },
         { name: 'GITHUB_TOKEN', configured: false, source: null },
       ])
       renderApp(<ProviderForm />)
 
       expect(await screen.findByText(/configured via environment/i)).toBeInTheDocument()
-      expect(screen.queryByLabelText(/anthropic api key/i)).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: /remove anthropic/i })).not.toBeInTheDocument()
-    })
-
-    it('saving a new key PUTs it and clears the input afterward', async () => {
-      mockProviders()
-      mockKeys([
-        { name: 'ANTHROPIC_API_KEY', configured: false, source: null },
-        { name: 'GEMINI_API_KEY', configured: false, source: null },
-        { name: 'GITHUB_TOKEN', configured: false, source: null },
-      ])
-      let putBody: unknown
-      server.use(
-        http.put('/api/settings/keys', async ({ request }) => {
-          putBody = await request.json()
-          return HttpResponse.json({ name: 'GEMINI_API_KEY', configured: true, source: 'keychain' })
-        }),
-      )
-      const user = userEvent.setup()
-      renderApp(<ProviderForm />)
-
-      const input = await screen.findByLabelText('Gemini API key')
-      await user.type(input, 'brand-new-secret-value')
-      await user.click(screen.getByRole('button', { name: /save gemini api key/i }))
-
-      await waitFor(() =>
-        expect(putBody).toEqual({ name: 'GEMINI_API_KEY', value: 'brand-new-secret-value' }),
-      )
-      await waitFor(() => expect(input).toHaveValue(''))
-      // Secret hygiene: the typed value must never linger anywhere in the rendered DOM.
-      expect(screen.queryByText('brand-new-secret-value')).not.toBeInTheDocument()
-    })
-
-    it('removing a keychain-sourced key calls DELETE and the row reverts to unconfigured', async () => {
-      mockProviders()
-      mockKeys([
-        { name: 'ANTHROPIC_API_KEY', configured: false, source: null },
-        { name: 'GEMINI_API_KEY', configured: true, source: 'keychain' },
-        { name: 'GITHUB_TOKEN', configured: false, source: null },
-      ])
-      let deleteCalled = false
-      server.use(
-        http.delete('/api/settings/keys/GEMINI_API_KEY', () => {
-          deleteCalled = true
-          mockKeys([
-            { name: 'ANTHROPIC_API_KEY', configured: false, source: null },
-            { name: 'GEMINI_API_KEY', configured: false, source: null },
-            { name: 'GITHUB_TOKEN', configured: false, source: null },
-          ])
-          return new HttpResponse(null, { status: 204 })
-        }),
-      )
-      const user = userEvent.setup()
-      renderApp(<ProviderForm />)
-
-      await user.click(await screen.findByRole('button', { name: /remove gemini api key/i }))
-
-      await waitFor(() => expect(deleteCalled).toBe(true))
-      await waitFor(() => expect(screen.getByLabelText('Gemini API key')).toBeInTheDocument())
-    })
-
-    it('never renders any key value, configured or not', async () => {
-      mockProviders()
-      mockKeys([
-        { name: 'ANTHROPIC_API_KEY', configured: true, source: 'env' },
-        { name: 'GEMINI_API_KEY', configured: true, source: 'keychain' },
-        { name: 'GITHUB_TOKEN', configured: false, source: null },
-      ])
-      const { container } = renderApp(<ProviderForm />)
-
-      await screen.findByText(/configured via environment/i)
-      // No secret value ever appears — the server never sends one, and inputs stay write-only.
-      const passwordInputs = container.querySelectorAll('input[type="password"]')
-      passwordInputs.forEach((el) => expect(el).toHaveValue(''))
+      expect(screen.getByRole('button', { name: /remove gemini api key/i })).toBeInTheDocument()
+      expect(screen.getByLabelText('GitHub token')).toBeInTheDocument()
     })
   })
 })
