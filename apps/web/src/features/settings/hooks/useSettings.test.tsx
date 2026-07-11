@@ -84,12 +84,22 @@ describe('useUpdateProviderSettings', () => {
 })
 
 describe('useUpsertKeySetting', () => {
-  it('invalidates keys, providers, and models queries on success', async () => {
+  it('invalidates keys, providers, AND models queries on success, so all three refetch without a reload', async () => {
     let keysRefetches = 0
+    let providersRefetches = 0
+    let modelsRefetches = 0
     server.use(
       http.get('/api/settings/keys', () => {
         keysRefetches += 1
         return HttpResponse.json(DEFAULT_KEYS_SETTINGS)
+      }),
+      http.get('/api/settings/providers', () => {
+        providersRefetches += 1
+        return HttpResponse.json(DEFAULT_PROVIDERS_SETTINGS)
+      }),
+      http.get('/api/models', () => {
+        modelsRefetches += 1
+        return HttpResponse.json({ default: 'x', models: [] })
       }),
       http.put('/api/settings/keys', () =>
         HttpResponse.json({ name: 'GEMINI_API_KEY', configured: true, source: 'keychain' }),
@@ -100,27 +110,50 @@ describe('useUpsertKeySetting', () => {
       return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     }
 
+    // All three must be actively observed for invalidateQueries to trigger a real refetch —
+    // mirrors useUpdateProviderSettings's test above.
     const { result } = renderHook(
-      () => ({ keys: useKeySettings(), mutation: useUpsertKeySetting() }),
+      () => ({
+        keys: useKeySettings(),
+        providers: useProviderSettings(),
+        models: useQuery({ queryKey: ['models'], queryFn: fetchModels }),
+        mutation: useUpsertKeySetting(),
+      }),
       { wrapper: localWrapper },
     )
     await waitFor(() => expect(result.current.keys.isSuccess).toBe(true))
-    const before = keysRefetches
+    await waitFor(() => expect(result.current.providers.isSuccess).toBe(true))
+    await waitFor(() => expect(result.current.models.isSuccess).toBe(true))
+    const keysBefore = keysRefetches
+    const providersBefore = providersRefetches
+    const modelsBefore = modelsRefetches
 
     result.current.mutation.mutate({ name: 'GEMINI_API_KEY', value: 'new-secret-value' })
 
     await waitFor(() => expect(result.current.mutation.isSuccess).toBe(true))
-    await waitFor(() => expect(keysRefetches).toBeGreaterThan(before))
+    await waitFor(() => expect(keysRefetches).toBeGreaterThan(keysBefore))
+    await waitFor(() => expect(providersRefetches).toBeGreaterThan(providersBefore))
+    await waitFor(() => expect(modelsRefetches).toBeGreaterThan(modelsBefore))
   })
 })
 
 describe('useDeleteKeySetting', () => {
-  it('invalidates keys, providers, and models queries on success', async () => {
+  it('invalidates keys, providers, AND models queries on success, so all three refetch without a reload', async () => {
     let keysRefetches = 0
+    let providersRefetches = 0
+    let modelsRefetches = 0
     server.use(
       http.get('/api/settings/keys', () => {
         keysRefetches += 1
         return HttpResponse.json(DEFAULT_KEYS_SETTINGS)
+      }),
+      http.get('/api/settings/providers', () => {
+        providersRefetches += 1
+        return HttpResponse.json(DEFAULT_PROVIDERS_SETTINGS)
+      }),
+      http.get('/api/models', () => {
+        modelsRefetches += 1
+        return HttpResponse.json({ default: 'x', models: [] })
       }),
       http.delete('/api/settings/keys/GEMINI_API_KEY', () => new HttpResponse(null, { status: 204 })),
     )
@@ -130,15 +163,26 @@ describe('useDeleteKeySetting', () => {
     }
 
     const { result } = renderHook(
-      () => ({ keys: useKeySettings(), mutation: useDeleteKeySetting() }),
+      () => ({
+        keys: useKeySettings(),
+        providers: useProviderSettings(),
+        models: useQuery({ queryKey: ['models'], queryFn: fetchModels }),
+        mutation: useDeleteKeySetting(),
+      }),
       { wrapper: localWrapper },
     )
     await waitFor(() => expect(result.current.keys.isSuccess).toBe(true))
-    const before = keysRefetches
+    await waitFor(() => expect(result.current.providers.isSuccess).toBe(true))
+    await waitFor(() => expect(result.current.models.isSuccess).toBe(true))
+    const keysBefore = keysRefetches
+    const providersBefore = providersRefetches
+    const modelsBefore = modelsRefetches
 
     result.current.mutation.mutate('GEMINI_API_KEY')
 
     await waitFor(() => expect(result.current.mutation.isSuccess).toBe(true))
-    await waitFor(() => expect(keysRefetches).toBeGreaterThan(before))
+    await waitFor(() => expect(keysRefetches).toBeGreaterThan(keysBefore))
+    await waitFor(() => expect(providersRefetches).toBeGreaterThan(providersBefore))
+    await waitFor(() => expect(modelsRefetches).toBeGreaterThan(modelsBefore))
   })
 })
