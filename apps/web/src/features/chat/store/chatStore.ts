@@ -52,7 +52,24 @@ export interface ProfileUpdateAppliedCard {
   summary?: string
 }
 
-export type ChatCard = ResumeUpdatedCard | ErrorCard | ProfileUpdatedCard | ProfileUpdateAppliedCard
+/** Card for the `proposal` SSE event (v4, F3) — mirrors ChatProposalEventPayload minus the
+ * full `items` list (the prose message already describes them; spec §5: "Items completos
+ * NÃO vivem no card"). `status` tracks the live state machine: a new (different) proposalId
+ * supersedes older proposed cards; the matching id going through `resume` marks it approved. */
+export interface ProposalCard {
+  type: 'proposal'
+  proposalId: number
+  status: 'proposed' | 'approved' | 'superseded'
+  revision: number
+  itemsCount: number
+}
+
+export type ChatCard =
+  | ResumeUpdatedCard
+  | ErrorCard
+  | ProfileUpdatedCard
+  | ProfileUpdateAppliedCard
+  | ProposalCard
 
 export interface ChatMessage {
   id: string
@@ -60,6 +77,10 @@ export interface ChatMessage {
   content: string
   createdAt: number
   card?: ChatCard
+  /** Ephemeral reveal flag (v4, F3): true only for a bubble just appended live by the
+   * current stream — never set by `loadSession` (rehydration) and never persisted (only
+   * `sessionId` survives to localStorage; see `partialize` below). */
+  animate?: boolean
 }
 
 export interface StreamingState {
@@ -74,12 +95,23 @@ interface ChatState {
   sessionId: number | null
   messages: ChatMessage[]
   streaming: StreamingState | null
+  /** The session's single Pending Proposal id (v4, F3), or null. Set by the `proposal`
+   * SSE event, cleared when `resume` approves it. Mirrors ChatSessionDetailResponse's
+   * top-level `pendingProposal` on rehydration (F5), kept here as just the id since the
+   * button/card logic only needs to match it against card.proposalId. */
+  pendingProposalId: number | null
   appendUserMessage: (content: string) => ChatMessage
-  appendAssistantMessage: (content: string, card?: ChatCard) => ChatMessage
+  appendAssistantMessage: (content: string, card?: ChatCard, options?: { animate?: boolean }) => ChatMessage
   /** Replaces a message's card in place (e.g. a ProfileUpdatedCard moving
    * proposed -> applied|rejected after the user acts on it). No-op if the
-   * message id isn't found. */
+   * message id isn't found, OR if it doesn't have a card yet (use
+   * setMessageCard for that). */
   updateMessageCard: (messageId: string, updater: (card: ChatCard) => ChatCard) => void
+  /** Attaches (or replaces) a message's card unconditionally — unlike updateMessageCard,
+   * works even when the message doesn't have one yet (v4, F3: the turn loop's done-time
+   * retrofit of a card-bearing event that arrived after its message already appended).
+   * No-op if the message id isn't found. */
+  setMessageCard: (messageId: string, card: ChatCard) => void
   updateStreaming: (partial: Partial<StreamingState>) => void
   finishStreaming: () => void
   reset: () => void
@@ -89,6 +121,8 @@ interface ChatState {
    * creates a session for the FIRST message of a fresh chat, without
    * touching the user message already appended locally. */
   setSessionId: (sessionId: number) => void
+  /** Sets or clears the session's Pending Proposal id (v4, F3). */
+  setPendingProposalId: (pendingProposalId: number | null) => void
 }
 
 function makeMessageId(): string {
@@ -107,6 +141,7 @@ export const useChatStore = create<ChatState>()(
       sessionId: null,
       messages: [],
       streaming: null,
+      pendingProposalId: null,
 
       appendUserMessage: (content) => {
         const message: ChatMessage = {
@@ -119,13 +154,14 @@ export const useChatStore = create<ChatState>()(
         return message
       },
 
-      appendAssistantMessage: (content, card) => {
+      appendAssistantMessage: (content, card, options) => {
         const message: ChatMessage = {
           id: makeMessageId(),
           role: 'assistant',
           content,
           createdAt: Date.now(),
           ...(card ? { card } : {}),
+          ...(options?.animate ? { animate: true } : {}),
         }
         set((state) => ({ messages: [...state.messages, message] }))
         return message
@@ -136,6 +172,12 @@ export const useChatStore = create<ChatState>()(
           messages: state.messages.map((m) =>
             m.id === messageId && m.card ? { ...m, card: updater(m.card) } : m,
           ),
+        }))
+      },
+
+      setMessageCard: (messageId, card) => {
+        set((state) => ({
+          messages: state.messages.map((m) => (m.id === messageId ? { ...m, card } : m)),
         }))
       },
 
@@ -158,7 +200,7 @@ export const useChatStore = create<ChatState>()(
       },
 
       reset: () => {
-        set({ sessionId: null, messages: [], streaming: null })
+        set({ sessionId: null, messages: [], streaming: null, pendingProposalId: null })
       },
 
       loadSession: (sessionId, messages) => {
@@ -167,6 +209,10 @@ export const useChatStore = create<ChatState>()(
 
       setSessionId: (sessionId) => {
         set({ sessionId })
+      },
+
+      setPendingProposalId: (pendingProposalId) => {
+        set({ pendingProposalId })
       },
     }),
     {

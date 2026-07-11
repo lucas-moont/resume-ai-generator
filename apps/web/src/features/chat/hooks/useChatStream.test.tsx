@@ -8,7 +8,20 @@ import { useChatStore } from '../store/chatStore'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { server } from '../../../test/setup'
 import { sseResponse } from '../../../test/msw/sse'
-import { makeProfileUpdateTurnEvents, makeResume, makeStageEvents } from '../../../test/factories'
+import {
+  makeApproveChainEvents,
+  makeProfileUpdateTurnEvents,
+  makeProposal,
+  makeResume,
+  makeStageEvents,
+} from '../../../test/factories'
+import {
+  mockAdjustTurn,
+  mockAnalysisTurn,
+  mockApproveChain,
+  mockNewJdTurn,
+  mockQuestionTurn,
+} from '../../../test/msw/proposalScenarios'
 
 beforeEach(() => {
   useChatStore.getState().reset()
@@ -468,5 +481,135 @@ describe('useChatStream — client-side commands (no network)', () => {
 
     const messages = useChatStore.getState().messages
     expect(messages.at(-1)?.content).toMatch(/generate one first/i)
+  })
+})
+
+describe('useChatStream — Improvement Proposal turns (v4, F3)', () => {
+  it('an Analysis turn appends one bubble carrying the proposal card, animated, and sets pendingProposalId', async () => {
+    mockSessionCreation()
+    const proposal = makeProposal({ proposalId: 11, revision: 1 })
+    server.use(mockAnalysisTurn(1, proposal, { content: 'Here are my suggestions for this job.' }))
+
+    const { result } = renderChatStream()
+    await result.current.send('Senior backend engineer JD text')
+
+    const assistantMsg = useChatStore.getState().messages.find((m) => m.role === 'assistant')
+    expect(assistantMsg).toMatchObject({
+      content: 'Here are my suggestions for this job.',
+      animate: true,
+      card: { type: 'proposal', proposalId: 11, status: 'proposed', revision: 1, itemsCount: proposal.items.length },
+    })
+    expect(useChatStore.getState().pendingProposalId).toBe(11)
+    expect(useChatStore.getState().streaming).toBeNull()
+  })
+
+  it('an adjust turn appends a new bubble with the revised card and leaves the original card untouched', async () => {
+    mockSessionCreation()
+    const original = makeProposal({ proposalId: 11, revision: 1 })
+    server.use(mockAnalysisTurn(1, original))
+    const { result } = renderChatStream()
+    await result.current.send('Senior backend engineer JD text')
+
+    const revised = makeProposal({ proposalId: 11, revision: 2 })
+    server.use(mockAdjustTurn(1, revised, { content: 'Ajustei a proposta conforme pedido.' }))
+    await result.current.send('Please tone down the headline')
+
+    const assistantMessages = useChatStore.getState().messages.filter((m) => m.role === 'assistant')
+    expect(assistantMessages).toHaveLength(2)
+    expect(assistantMessages[0].card).toMatchObject({ proposalId: 11, revision: 1, status: 'proposed' })
+    expect(assistantMessages[1]).toMatchObject({
+      content: 'Ajustei a proposta conforme pedido.',
+      card: { type: 'proposal', proposalId: 11, status: 'proposed', revision: 2 },
+    })
+    expect(useChatStore.getState().pendingProposalId).toBe(11)
+  })
+
+  it('a new_jd turn supersedes the old proposal card and appends a new one with a different proposalId', async () => {
+    mockSessionCreation()
+    const original = makeProposal({ proposalId: 11, revision: 1 })
+    server.use(mockAnalysisTurn(1, original))
+    const { result } = renderChatStream()
+    await result.current.send('Senior backend engineer JD text')
+
+    const fresh = makeProposal({ proposalId: 12, revision: 1 })
+    server.use(mockNewJdTurn(1, fresh, { content: 'Notei uma nova vaga colada.' }))
+    await result.current.send('Actually here is a different job posting')
+
+    const assistantMessages = useChatStore.getState().messages.filter((m) => m.role === 'assistant')
+    expect(assistantMessages).toHaveLength(2)
+    expect(assistantMessages[0].card).toMatchObject({ proposalId: 11, status: 'superseded' })
+    expect(assistantMessages[1]).toMatchObject({
+      content: 'Notei uma nova vaga colada.',
+      card: { type: 'proposal', proposalId: 12, status: 'proposed', revision: 1 },
+    })
+    expect(useChatStore.getState().pendingProposalId).toBe(12)
+  })
+
+  it('a question turn appends a plain reply with no card and leaves the pending proposal untouched', async () => {
+    mockSessionCreation()
+    const original = makeProposal({ proposalId: 11, revision: 1 })
+    server.use(mockAnalysisTurn(1, original))
+    const { result } = renderChatStream()
+    await result.current.send('Senior backend engineer JD text')
+
+    server.use(mockQuestionTurn(1, 11, { content: 'Essa sugestão já leva em conta sua experiência.' }))
+    await result.current.send('Why did you suggest that?')
+
+    const assistantMessages = useChatStore.getState().messages.filter((m) => m.role === 'assistant')
+    expect(assistantMessages).toHaveLength(2)
+    expect(assistantMessages[1]).toMatchObject({ content: 'Essa sugestão já leva em conta sua experiência.' })
+    expect(assistantMessages[1].card).toBeUndefined()
+    expect(useChatStore.getState().pendingProposalId).toBe(11)
+    expect(assistantMessages[0].card).toMatchObject({ proposalId: 11, status: 'proposed' })
+  })
+
+  it('an approve chain appends the confirmation bubble then the final bubble with the resumeUpdated card, in order, and marks the proposal card approved', async () => {
+    mockSessionCreation()
+    const proposal = makeProposal({ proposalId: 11, revision: 1 })
+    server.use(mockAnalysisTurn(1, proposal))
+    const { result } = renderChatStream()
+    await result.current.send('Senior backend engineer JD text')
+
+    const resume = makeResume({ fullName: 'Approved Person' })
+    server.use(
+      mockApproveChain(1, 11, {
+        resume,
+        resumeVersionId: 9,
+        confirmContent: 'Vou gerar o currículo com essas melhorias…',
+        finalContent: 'Currículo atualizado com as melhorias aprovadas!',
+      }),
+    )
+    await result.current.send('Aprovar e gerar', { proposalAction: 'approve' })
+
+    const assistantMessages = useChatStore.getState().messages.filter((m) => m.role === 'assistant')
+    expect(assistantMessages).toHaveLength(3)
+    expect(assistantMessages[1].content).toBe('Vou gerar o currículo com essas melhorias…')
+    expect(assistantMessages[1].card).toBeUndefined()
+    expect(assistantMessages[2]).toMatchObject({
+      content: 'Currículo atualizado com as melhorias aprovadas!',
+      card: { type: 'resumeUpdated' },
+    })
+    expect(assistantMessages[0].card).toMatchObject({ proposalId: 11, status: 'approved' })
+    expect(useChatStore.getState().pendingProposalId).toBeNull()
+    expect(useResumeStore.getState().resume?.fullName).toBe('Approved Person')
+  })
+
+  it('threads proposalAction: approve in the request body', async () => {
+    mockSessionCreation()
+    const proposal = makeProposal({ proposalId: 11, revision: 1 })
+    server.use(mockAnalysisTurn(1, proposal))
+    const { result } = renderChatStream()
+    await result.current.send('Senior backend engineer JD text')
+
+    let capturedBody: Record<string, unknown> | undefined
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', async ({ request }) => {
+        capturedBody = (await request.json()) as Record<string, unknown>
+        return sseResponse(makeApproveChainEvents(11))
+      }),
+    )
+    await result.current.send('Aprovar e gerar', { proposalAction: 'approve' })
+
+    expect(capturedBody?.proposalAction).toBe('approve')
   })
 })

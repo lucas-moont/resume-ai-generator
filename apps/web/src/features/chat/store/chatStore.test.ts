@@ -141,6 +141,70 @@ describe('chatStore', () => {
     expect(state.streaming).not.toBeNull()
   })
 
+  describe('Improvement Proposal turn support (v4, F3)', () => {
+    it('starts with pendingProposalId null', () => {
+      expect(useChatStore.getState().pendingProposalId).toBeNull()
+    })
+
+    it('setPendingProposalId sets and clears the pending proposal id', () => {
+      useChatStore.getState().setPendingProposalId(7)
+      expect(useChatStore.getState().pendingProposalId).toBe(7)
+
+      useChatStore.getState().setPendingProposalId(null)
+      expect(useChatStore.getState().pendingProposalId).toBeNull()
+    })
+
+    it('reset clears pendingProposalId back to null', () => {
+      useChatStore.getState().setPendingProposalId(3)
+      useChatStore.getState().reset()
+
+      expect(useChatStore.getState().pendingProposalId).toBeNull()
+    })
+
+    it('appendAssistantMessage stores a proposal card with proposalId/status/revision/itemsCount', () => {
+      const msg = useChatStore.getState().appendAssistantMessage('Here are my suggestions for this job.', {
+        type: 'proposal',
+        proposalId: 7,
+        status: 'proposed',
+        revision: 1,
+        itemsCount: 4,
+      })
+
+      expect(msg.card).toEqual({ type: 'proposal', proposalId: 7, status: 'proposed', revision: 1, itemsCount: 4 })
+    })
+
+    it('setMessageCard attaches a card to a message that has none yet, unlike updateMessageCard', () => {
+      const msg = useChatStore.getState().appendAssistantMessage('Updated your profile.')
+      expect(msg.card).toBeUndefined()
+
+      useChatStore.getState().setMessageCard(msg.id, {
+        type: 'profileUpdateApplied',
+        profileVersion: 5,
+        summary: 'Added a certification.',
+      })
+
+      const updated = useChatStore.getState().messages.find((m) => m.id === msg.id)
+      expect(updated?.card).toEqual({ type: 'profileUpdateApplied', profileVersion: 5, summary: 'Added a certification.' })
+    })
+
+    it('setMessageCard is a no-op for a message id that does not exist', () => {
+      useChatStore.getState().appendUserMessage('hello')
+      const before = useChatStore.getState().messages
+
+      useChatStore.getState().setMessageCard('does-not-exist', { type: 'resumeUpdated', changedSections: [] })
+
+      expect(useChatStore.getState().messages).toEqual(before)
+    })
+
+    it('appendAssistantMessage sets the ephemeral animate flag only when requested', () => {
+      const animated = useChatStore.getState().appendAssistantMessage('hello', undefined, { animate: true })
+      expect(animated.animate).toBe(true)
+
+      const plain = useChatStore.getState().appendAssistantMessage('hello again')
+      expect(plain.animate).toBeUndefined()
+    })
+  })
+
   describe('active session persistence (B2)', () => {
     it('persists only sessionId to localStorage — not messages or streaming', () => {
       useChatStore.getState().loadSession(42, [

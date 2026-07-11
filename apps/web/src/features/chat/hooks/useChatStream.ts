@@ -9,8 +9,10 @@ import type {
   ChatDoneEventPayload,
   ChatMessageEventPayload,
   ChatProfileUpdateEventPayload,
+  ChatProposalEventPayload,
   ChatResumeEventPayload,
   CreateChatSessionResponse,
+  ProposalStatus,
   StreamDonePayload,
   StreamErrorPayload,
   StreamStagePayload,
@@ -21,6 +23,7 @@ import { downloadResumePdf } from '../../resume/downloadResumePdf'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { TEMPLATE_REGISTRY } from '../../resume/templates/registry'
 import { parseCommand } from '../commands'
+import type { ChatCard, ProposalCard } from '../store/chatStore'
 import { useChatStore } from '../store/chatStore'
 import { useCreateSession } from './useChatSession'
 
@@ -40,6 +43,10 @@ import { useCreateSession } from './useChatSession'
 
 export interface SendOptions {
   model?: string
+  /** v4, F3: deterministic shortcut carried by the "Aprovar e gerar" button — routes the
+   * turn straight into the approve branch of the Proposal Turn server-side, skipping LLM
+   * classification. Ignored server-side when the session has no Pending Proposal. */
+  proposalAction?: 'approve'
 }
 
 export interface UseChatStreamResult {
@@ -132,6 +139,27 @@ function apiErrorText(e: ApiError, fallback: string): string {
   return typeof e.detail === 'string' ? e.detail : fallback
 }
 
+/** The `proposal` SSE event's `status` is the broader ProposalStatus (includes
+ * `discarded`, "reservado (sem UI na v4)" per spec §1.3) — a live `proposal` frame only
+ * ever carries `proposed` in practice; this narrows defensively rather than trusting that. */
+function toProposalCardStatus(status: ProposalStatus): ProposalCard['status'] {
+  return status === 'approved' || status === 'superseded' ? status : 'proposed'
+}
+
+/** Scans every message currently in the store for a `proposal` card matching `predicate`
+ * and rewrites it via `update` (v4, F3 — supersede-on-new_jd / approve-on-resume). */
+function markProposalCards(
+  predicate: (card: ProposalCard) => boolean,
+  update: (card: ProposalCard) => ProposalCard,
+): void {
+  const { messages, updateMessageCard } = useChatStore.getState()
+  for (const m of messages) {
+    if (m.card?.type === 'proposal' && predicate(m.card)) {
+      updateMessageCard(m.id, (card) => (card.type === 'proposal' ? update(card) : card))
+    }
+  }
+}
+
 function isAbortError(e: unknown): boolean {
   return e instanceof DOMException && e.name === 'AbortError'
 }
@@ -195,18 +223,32 @@ async function runTurn(
       // instead of the last version the server persisted. `resume` is `null` until one is
       // ever generated -- `|| undefined` keeps that out of the JSON body entirely rather than
       // serializing a `"resume": null` the backend would just treat as "no override" anyway.
-      { message, model: options.model || undefined, locale: locale || undefined, resume: resume || undefined },
+      {
+        message,
+        model: options.model || undefined,
+        locale: locale || undefined,
+        resume: resume || undefined,
+        proposalAction: options.proposalAction,
+      },
       controller.signal,
     )
 
-    let resumeEvent: ChatResumeEventPayload | null = null
-    let changedSections: string[] = []
-    // undefined (not []) when there's no prior resume to diff against (first
-    // generate) — same "nothing honest to show" case as a history reload, so
-    // the card falls back to the same label-only rendering for both.
-    let resumeDiff: ReturnType<typeof diffResume> | undefined
-    let profileUpdateEvent: ChatProfileUpdateEventPayload | null = null
-    let assistantText = ''
+    // v4, F3 turn loop (spec §3.3, the only breaking contract change): a turn can emit N
+    // `message` events now, each one a complete, final bubble appended IMMEDIATELY (not
+    // buffered until `done` like the old single-message v3 contract). Card-bearing events
+    // (resume/proposal/profile_update) don't append anything themselves — they set
+    // `pendingCard`, which attaches to whichever `message` bubble comes next.
+    //
+    // v3 compat: some v3 turns emit their lone card-bearing event AFTER the message event
+    // (see the profile_update-after-message regression test) — in that case there's no
+    // "next" message left to attach to. `lastCardlessMessageId` tracks the most recent
+    // bubble in THIS turn that doesn't have a card yet, so `done` can retrofit the
+    // leftover pendingCard onto it instead of opening a second bubble. Only when no such
+    // bubble exists (no message ever fired) does `done` fall back to a synthetic bubble —
+    // this is what makes 1 message + 1 card-event, in EITHER order, always collapse into
+    // exactly one bubble, matching v3's old buffered behavior byte-for-byte.
+    let pendingCard: ChatCard | undefined
+    let lastCardlessMessageId: string | undefined
 
     for await (const { event, data } of events) {
       if (controller.signal.aborted) return
@@ -219,33 +261,68 @@ async function runTurn(
           message: s.message ?? '',
         })
       } else if (event === 'resume') {
-        resumeEvent = data as ChatResumeEventPayload
+        const payload = data as ChatResumeEventPayload
         const prevResume = useResumeStore.getState().resume
-        useResumeStore.getState().setResume(resumeEvent.resume)
-        changedSections = diffResumeSections(prevResume, resumeEvent.resume)
-        resumeDiff = prevResume ? diffResume(prevResume, resumeEvent.resume) : undefined
+        useResumeStore.getState().setResume(payload.resume)
+        const changedSections = diffResumeSections(prevResume, payload.resume)
+        const resumeDiff = prevResume ? diffResume(prevResume, payload.resume) : undefined
+        pendingCard = { type: 'resumeUpdated', changedSections, diff: resumeDiff }
+
+        // v4: a `resume` event while a proposal is pending means this turn just approved
+        // and generated from it (spec §2 "ramo approve") — mark its card(s) approved and
+        // clear the pending state so the "Aprovar e gerar" button (F4) disappears.
+        const { pendingProposalId } = useChatStore.getState()
+        if (pendingProposalId !== null) {
+          markProposalCards(
+            (card) => card.proposalId === pendingProposalId && card.status === 'proposed',
+            (card) => ({ ...card, status: 'approved' }),
+          )
+          useChatStore.getState().setPendingProposalId(null)
+        }
+      } else if (event === 'proposal') {
+        const payload = data as ChatProposalEventPayload
+        // A different proposalId than any existing card means a fresh Analysis
+        // superseded the old pending one (new_jd) — mark those old cards superseded.
+        // The same id (adjust) is just a revision bump; older cards with that id are
+        // left alone (F4's button-visibility rule, keyed on revision, handles that).
+        markProposalCards(
+          (card) => card.proposalId !== payload.proposalId && card.status === 'proposed',
+          (card) => ({ ...card, status: 'superseded' }),
+        )
+        useChatStore.getState().setPendingProposalId(payload.proposalId)
+        pendingCard = {
+          type: 'proposal',
+          proposalId: payload.proposalId,
+          status: toProposalCardStatus(payload.status),
+          revision: payload.revision,
+          itemsCount: payload.items.length,
+        }
       } else if (event === 'message') {
-        assistantText = (data as ChatMessageEventPayload).content
+        const content = (data as ChatMessageEventPayload).content
+        const card = pendingCard
+        pendingCard = undefined
+        const appended = useChatStore.getState().appendAssistantMessage(content, card, { animate: true })
+        lastCardlessMessageId = card ? undefined : appended.id
       } else if (event === 'profile_update') {
         // The `profile_update` intent (v2, ticket 05) never regenerates the
         // active resume — the Patch Validator applies straight to the Living
         // Profile server-side. No `resume` event fires in the same turn, so
-        // this and resumeEvent are mutually exclusive in practice; resumeEvent
-        // still wins below if both were ever present, since only one intent
-        // fires per turn.
-        profileUpdateEvent = data as ChatProfileUpdateEventPayload
+        // this and the resume branch above are mutually exclusive in practice.
+        const payload = data as ChatProfileUpdateEventPayload
+        pendingCard = {
+          type: 'profileUpdateApplied',
+          profileVersion: payload.profileVersion,
+          summary: payload.summary,
+        }
       } else if (event === 'done') {
         void (data as ChatDoneEventPayload)
-        const card = resumeEvent
-          ? { type: 'resumeUpdated' as const, changedSections, diff: resumeDiff }
-          : profileUpdateEvent
-            ? {
-                type: 'profileUpdateApplied' as const,
-                profileVersion: profileUpdateEvent.profileVersion,
-                summary: profileUpdateEvent.summary,
-              }
-            : undefined
-        useChatStore.getState().appendAssistantMessage(assistantText || 'Done.', card)
+        if (pendingCard) {
+          if (lastCardlessMessageId) {
+            useChatStore.getState().setMessageCard(lastCardlessMessageId, pendingCard)
+          } else {
+            useChatStore.getState().appendAssistantMessage('Done.', pendingCard)
+          }
+        }
         useChatStore.getState().finishStreaming()
         return
       } else if (event === 'error') {
