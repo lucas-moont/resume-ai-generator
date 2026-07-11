@@ -170,8 +170,37 @@ def delete_app_setting(key: str) -> None:
     invalidate_runtime_config_cache()
 
 
+# v3 ticket 11 fix round: hoisted above the resolvers (previously declared below them with the
+# names re-typed inline in each resolver) so "which env var backs which preference" has exactly
+# one source of truth -- the resolvers below and settings_service's lock indicator both read
+# through these instead of a resolver's own literal drifting from is_env_locked's.
+AI_PROVIDER_ENV_VAR = "AI_PROVIDER"
+_DEFAULT_MODEL_ENV_VARS: dict[str, str] = {
+    "claude": "CLAUDE_MODEL",
+    "gemini": "GEMINI_MODEL",
+    "ollama": "OLLAMA_MODEL",
+}
+
+
+def default_model_env_var(provider: str) -> str:
+    """The env var that pins `default_{provider}_model` (see resolve_default_*_model below)."""
+    try:
+        return _DEFAULT_MODEL_ENV_VARS[provider]
+    except KeyError:
+        valid = ", ".join(sorted(_DEFAULT_MODEL_ENV_VARS))
+        raise ValueError(f"Unknown provider {provider!r} -- expected one of: {valid}") from None
+
+
+def is_env_locked(var_name: str) -> bool:
+    """Cheap call-time check (module-qualified, same idiom as the resolve_* accessors below):
+    true when `var_name` is set (non-empty) in the environment, meaning the runtime-config
+    field it backs is pinned there -- a settings write to it has no visible effect until the
+    var is unset (the P2 QA gate bug ticket 11 surfaces in the UI instead of hiding)."""
+    return bool(os.getenv(var_name, "").strip())
+
+
 def resolve_ai_provider() -> str:
-    env_value = os.getenv("AI_PROVIDER", "").strip().lower()
+    env_value = os.getenv(AI_PROVIDER_ENV_VAR, "").strip().lower()
     if env_value:
         return env_value
     stored = _app_setting_str("ai_provider")
@@ -198,48 +227,24 @@ def resolve_github_token() -> str | None:
 
 
 def resolve_default_claude_model() -> str:
-    env_value = os.getenv("CLAUDE_MODEL", "").strip()
+    env_value = os.getenv(_DEFAULT_MODEL_ENV_VARS["claude"], "").strip()
     if env_value:
         return env_value
     return _app_setting_str("default_claude_model") or "claude-sonnet-5"
 
 
 def resolve_default_gemini_model() -> str:
-    env_value = os.getenv("GEMINI_MODEL", "").strip()
+    env_value = os.getenv(_DEFAULT_MODEL_ENV_VARS["gemini"], "").strip()
     if env_value:
         return env_value
     return _app_setting_str("default_gemini_model") or "gemini-2.5-flash"
 
 
 def resolve_default_ollama_model() -> str:
-    env_value = os.getenv("OLLAMA_MODEL", "").strip()
+    env_value = os.getenv(_DEFAULT_MODEL_ENV_VARS["ollama"], "").strip()
     if env_value:
         return env_value
     return _app_setting_str("default_ollama_model") or "llama3.2"
-
-
-# v3 ticket 11: which env var pins the active provider, and which one pins each concrete
-# provider's own default model -- single source of truth so settings_service can report a
-# per-preference "locked by env" indicator without hand-duplicating these names.
-AI_PROVIDER_ENV_VAR = "AI_PROVIDER"
-_DEFAULT_MODEL_ENV_VARS: dict[str, str] = {
-    "claude": "CLAUDE_MODEL",
-    "gemini": "GEMINI_MODEL",
-    "ollama": "OLLAMA_MODEL",
-}
-
-
-def is_env_locked(var_name: str) -> bool:
-    """Cheap call-time check (module-qualified, same idiom as the resolve_* accessors above):
-    true when `var_name` is set (non-empty) in the environment, meaning the runtime-config
-    field it backs is pinned there -- a settings write to it has no visible effect until the
-    var is unset (the P2 QA gate bug ticket 11 surfaces in the UI instead of hiding)."""
-    return bool(os.getenv(var_name, "").strip())
-
-
-def default_model_env_var(provider: str) -> str:
-    """The env var that pins `default_{provider}_model` (see resolve_default_*_model above)."""
-    return _DEFAULT_MODEL_ENV_VARS[provider]
 
 
 @dataclass(frozen=True)

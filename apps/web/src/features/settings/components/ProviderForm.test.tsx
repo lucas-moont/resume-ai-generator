@@ -106,6 +106,13 @@ describe('ProviderForm', () => {
       expect(screen.getByRole('radio', { name: /^Claude \(Anthropic\)/ })).toBeDisabled()
       expect(screen.getByText(/AI_PROVIDER/)).toBeInTheDocument()
       expect(screen.getByText(/pinned by/i)).toBeInTheDocument()
+
+      // a11y fix round: a disabled radio drops out of the tab order, so the lock explanation
+      // must reach assistive tech another way — the fieldset's accessible description, not just
+      // sighted text next to it.
+      expect(screen.getByRole('group', { name: /active provider/i })).toHaveAccessibleDescription(
+        /AI_PROVIDER/,
+      )
     })
 
     it('replaces the model picker with a read-only value when the active provider default is env-locked', async () => {

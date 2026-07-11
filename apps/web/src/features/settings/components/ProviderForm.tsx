@@ -51,16 +51,21 @@ function ProviderOption({
 }
 
 /** v3 ticket 11: the env-lock explanation shared by the active-provider fieldset and the
- * default-model row — same "badge/lock + which var" language in both places. */
-function EnvLockNote({ envVar }: { envVar: string }) {
+ * default-model row — same "badge/lock + which var" language in both places. Takes an `id` so
+ * the active-provider fieldset can wire `aria-describedby` to it (fix round, standards): a
+ * `disabled` radio drops out of the tab order entirely, so a sighted-only badge would never
+ * reach a keyboard/screen-reader user who tabs past the whole fieldset without pausing on it. */
+function EnvLockNote({ id, envVar }: { id?: string; envVar: string }) {
   return (
-    <p className="mb-2 flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-500">
+    <p id={id} className="mb-2 flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-500">
       <span aria-hidden="true">🔒</span>
       Pinned by the <code className="font-mono">{envVar}</code> environment variable — unset it
       to change this here.
     </p>
   )
 }
+
+const ACTIVE_PROVIDER_LOCK_NOTE_ID = 'settings-active-provider-lock-note'
 
 /**
  * Provider/model/key management (v3 ticket 06): active provider (auto or a
@@ -94,9 +99,9 @@ export function ProviderForm() {
 
   return (
     <div className="space-y-5">
-      <fieldset>
+      <fieldset aria-describedby={activeLockedByEnv ? ACTIVE_PROVIDER_LOCK_NOTE_ID : undefined}>
         <legend className={FIELDSET_LEGEND_CLASS}>Active provider</legend>
-        {activeLockedByEnv && <EnvLockNote envVar={activeEnvVar} />}
+        {activeLockedByEnv && <EnvLockNote id={ACTIVE_PROVIDER_LOCK_NOTE_ID} envVar={activeEnvVar} />}
         <div className="space-y-1.5">
           <ProviderOption
             label="Auto (best available)"

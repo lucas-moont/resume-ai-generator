@@ -209,3 +209,21 @@ class TestEnvLockIndicator:
         assert config.default_model_env_var("claude") == "CLAUDE_MODEL"
         assert config.default_model_env_var("gemini") == "GEMINI_MODEL"
         assert config.default_model_env_var("ollama") == "OLLAMA_MODEL"
+
+    def test_default_model_env_var_raises_a_clear_error_for_an_unknown_provider(self) -> None:
+        with pytest.raises(ValueError, match="bogus"):
+            config.default_model_env_var("bogus")
+
+    def test_resolvers_read_through_the_same_env_var_constants_as_is_env_locked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fix-round hardening: the resolvers used to re-type "AI_PROVIDER"/"CLAUDE_MODEL"/etc.
+        inline, independent of AI_PROVIDER_ENV_VAR/_DEFAULT_MODEL_ENV_VARS -- a rename of one
+        without the other would silently desync is_env_locked from the resolver it describes.
+        Proves they share one source: setting the var by its PUBLIC constant name changes the
+        PUBLIC resolver's result."""
+        monkeypatch.setenv(config.AI_PROVIDER_ENV_VAR, "gemini")
+        assert config.resolve_ai_provider() == "gemini"
+
+        monkeypatch.setenv(config.default_model_env_var("claude"), "claude-opus-4-8")
+        assert config.resolve_default_claude_model() == "claude-opus-4-8"
