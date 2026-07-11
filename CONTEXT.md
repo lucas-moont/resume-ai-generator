@@ -27,3 +27,9 @@ Canonical vocabulary for this project. Use these terms exactly — in code ident
 - **Intent** — the deterministic server-side classification of a chat message: `generate` (job description), `refine` (change the active Resume), `profile_update` (change the Living Profile), or a plain reply. No LLM call is spent deciding it.
 - **Chat SSE contract** — the event stream (`stage`, `resume`, `message`, `profile_update`, `done`, `error`) between backend and frontend. It is the seam between the two workstreams: changes require agreement on both sides.
 - **Inline Editing** _(edição inline)_ — direct manual edits on the A4 preview, committed on blur/Enter, undoable, synchronized with chat refinements.
+
+## Settings & runtime config
+
+- **Runtime Config** — the active AI provider, default model, and API keys as resolved by `get_runtime_config()` at CALL time (env var → App Settings/keychain → hardcoded default), never frozen at import; cache invalidável, invalidated on every settings write so a change takes effect on the next call, no process restart.
+- **App Settings** _(Configurações)_ — the `app_settings` SQLite table holding only non-sensitive runtime preferences (active provider, default model). Never a home for an API key.
+- **Key/secret rule** — an API key resolves env var → OS keychain and is written only through the keychain (`secret_store`); it never lands in App Settings/SQLite, a log, or an HTTP response (`secret_redaction`).
