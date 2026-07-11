@@ -21,6 +21,12 @@ guaranteed to be the SAME row ``resolved_profile.profile_version_id`` points at,
 each caller re-resolving (and each generate call reading disk directly, independent of
 whatever ``profile_versions`` row a caller separately looked up to stamp on the result).
 
+As of v4 ticket B5, ``agreed_improvements`` (default ``None``, additive) lets a caller --
+``chat_service._handle_approve_branch``, once a Pending Proposal's items are agreed to -- inject
+them into the generation prompt as an APPROVED IMPROVEMENT PLAN block
+(``build_generation_user_msg``, spec SS4.3). Omitted, the prompt is byte-identical to the
+pre-v4 output (``tests/unit/test_prompts_builder.py``'s characterization test).
+
 Design note on sharing the heartbeat-wrapped LLM calls with the sync endpoint: before B4, the
 sync /api/generate awaited chat_json() directly with no explicit timeout wrapper, relying on
 the underlying HTTP client's own timeout (LLM_TIMEOUT_SECONDS -- the SAME ceiling used by the
@@ -40,7 +46,7 @@ from app.domain.keywords import normalize_token
 from app.domain.locale import resolve_locale
 from app.domain.prompts_builder import build_generation_user_msg
 from app.domain.quality import quality_issues
-from app.domain.schemas import GitHubRepoInfo, ResumeDocument
+from app.domain.schemas import GitHubRepoInfo, ProposalItem, ResumeDocument
 from app.prompt_loader import load_generate_system_prompt, load_prompt
 from app.services import llm_client, streaming
 from app.services.extraction_service import extract_profile_from_text
@@ -173,6 +179,7 @@ async def generate_resume_events(
     model: str | None,
     locale: str | None,
     backend_label: str,
+    agreed_improvements: list[ProposalItem] | None = None,
 ) -> AsyncIterator[tuple[str, dict]]:
     yield "stage", {"step": "preparing_context", "progress": 10, "message": "Loading profile and PDF"}
 
@@ -238,6 +245,7 @@ async def generate_resume_events(
         pdf_block=pdf_block,
         project_notes=projects_unified if md_entries else "",
         locale=resolved_locale,
+        agreed_improvements=agreed_improvements,
     )
 
     yield "stage", {

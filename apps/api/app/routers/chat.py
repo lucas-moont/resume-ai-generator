@@ -192,6 +192,7 @@ async def post_chat_message_stream(
                 job_description=body.jobDescription,
                 backend_label=llm_backend_label(),
                 client_resume=body.resume,
+                proposal_action=body.proposalAction,
             ):
                 if event == "resume":
                     yield sse(
