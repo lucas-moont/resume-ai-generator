@@ -1,23 +1,11 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchModels } from '../../../lib/api/endpoints'
-import type { ModelSuggestion } from '../../../lib/api/dto'
 import { useChatStore } from '../store/chatStore'
 import type { UploadAttachment } from '../../upload/useFileUpload'
 import { AttachmentChip } from '../../upload/components/AttachmentChip'
+import { Combobox } from '../../../ui/Combobox'
 import { zIndex } from '../../../ui/zIndex'
-
-const FALLBACK_MODEL_SUGGESTIONS: ModelSuggestion[] = [
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
-  { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
-  { value: 'qwen3:8b', label: 'qwen3:8b (Ollama, local)' },
-  { value: 'phi4:latest', label: 'phi4:latest (Ollama, local)' },
-  { value: 'gemma4', label: 'gemma4 (Ollama, local)' },
-  { value: 'glm-5.2:cloud', label: 'glm-5.2:cloud (Ollama Cloud)' },
-  { value: 'llama3.1:8b', label: 'llama3.1:8b (Ollama, local)' },
-  { value: 'llama3.2', label: 'llama3.2 (Ollama, local)' },
-]
 
 const MAX_TEXTAREA_HEIGHT_PX = 220
 
@@ -46,17 +34,18 @@ export function Composer({
   onRetryAttachment: (id: string) => void
 }) {
   const [model, setModel] = useState('')
-  const [modelSuggestOpen, setModelSuggestOpen] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const streaming = useChatStore((s) => s.streaming)
 
   const modelsQuery = useQuery({ queryKey: ['models'], queryFn: fetchModels })
-  const modelSuggestions: ModelSuggestion[] =
-    modelsQuery.data?.models && modelsQuery.data.models.length > 0
-      ? modelsQuery.data.models
-      : FALLBACK_MODEL_SUGGESTIONS
+  const modelSuggestions = modelsQuery.data?.models ?? []
+  const modelEmptyState = modelsQuery.isLoading
+    ? 'Loading models…'
+    : modelsQuery.isError
+      ? "Couldn't load models."
+      : 'No models available.'
 
   useEffect(() => {
     const el = textareaRef.current
@@ -178,45 +167,24 @@ export function Composer({
           </svg>
         </button>
 
-        <div className="relative shrink-0">
-          <input
-            aria-label="AI model (optional)"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            onFocus={() => setModelSuggestOpen(true)}
-            onBlur={() => window.setTimeout(() => setModelSuggestOpen(false), 120)}
-            placeholder="Model"
-            autoComplete="off"
-            spellCheck={false}
-            role="combobox"
-            aria-expanded={modelSuggestOpen}
-            aria-controls="composer-model-suggestions"
-            className="w-24 rounded-xl border border-stone-200 bg-white px-2.5 py-2.5 text-xs text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus-visible:ring-zinc-500 sm:w-32"
-          />
-          {modelSuggestOpen && (
-            <ul
-              id="composer-model-suggestions"
-              className={`absolute bottom-full right-0 ${zIndex.dropdown} mb-1 max-h-60 w-56 overflow-auto rounded-xl border border-stone-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900`}
-            >
-              {modelSuggestions.map((opt) => (
-                <li key={opt.value}>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      setModel(opt.value)
-                      setModelSuggestOpen(false)
-                    }}
-                    className="flex w-full flex-col items-start px-3 py-2 text-left text-sm hover:bg-stone-100 dark:hover:bg-zinc-800"
-                  >
-                    <span className="font-medium text-stone-900 dark:text-zinc-100">{opt.value}</span>
-                    <span className="text-xs text-stone-500 dark:text-zinc-500">{opt.label}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+        <Combobox
+          id="composer-model"
+          aria-label="AI model (optional)"
+          value={model}
+          onChange={setModel}
+          options={modelSuggestions}
+          emptyState={modelEmptyState}
+          renderOption={(opt) => (
+            <>
+              <span className="font-medium text-stone-900 dark:text-zinc-100">{opt.value}</span>
+              <span className="text-xs text-stone-500 dark:text-zinc-500">{opt.label}</span>
+            </>
           )}
-        </div>
+          placeholder="Model"
+          wrapperClassName="shrink-0"
+          className="w-24 rounded-xl border border-stone-200 bg-white px-2.5 py-2.5 text-xs text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus-visible:ring-zinc-500 sm:w-32"
+          listClassName={`absolute bottom-full right-0 ${zIndex.dropdown} mb-1 max-h-60 w-56 overflow-auto rounded-xl border border-stone-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900`}
+        />
 
         {streaming ? (
           <button
