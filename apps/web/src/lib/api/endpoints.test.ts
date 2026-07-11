@@ -9,15 +9,20 @@ import {
   chatMessageStream,
   createChatSession,
   deleteChatSession,
+  deleteKeySetting,
   exportPdf,
   fetchGithubRepos,
+  fetchKeySettings,
   fetchModels,
+  fetchProviderSettings,
   generateStream,
   getChatSession,
   listChatSessions,
   refineStream,
   rejectSourceDocument,
+  updateProviderSettings,
   uploadSourceDocument,
+  upsertKeySetting,
 } from './endpoints'
 
 describe('fetchModels', () => {
@@ -337,5 +342,97 @@ describe('rejectSourceDocument', () => {
     server.use(http.post('/api/profile/documents/9/reject', () => new HttpResponse(null, { status: 204 })))
 
     await expect(rejectSourceDocument(9)).resolves.toBeUndefined()
+  })
+})
+
+// --- Settings (v3 ticket 06) ---
+
+describe('fetchProviderSettings', () => {
+  it('resolves the active provider and per-provider entries', async () => {
+    server.use(
+      http.get('/api/settings/providers', () =>
+        HttpResponse.json({
+          active: 'auto',
+          providers: [
+            { name: 'claude', available: false, auth: 'cli', defaultModel: 'claude-sonnet-5', models: [] },
+          ],
+        }),
+      ),
+    )
+
+    await expect(fetchProviderSettings()).resolves.toMatchObject({ active: 'auto' })
+  })
+})
+
+describe('updateProviderSettings', () => {
+  it('PUTs the chosen provider/model and resolves the refreshed providers response', async () => {
+    let capturedBody: unknown
+    server.use(
+      http.put('/api/settings/providers', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({ active: 'claude', providers: [] })
+      }),
+    )
+
+    const result = await updateProviderSettings({ provider: 'claude', defaultModel: 'claude-haiku-4-5' })
+
+    expect(capturedBody).toEqual({ provider: 'claude', defaultModel: 'claude-haiku-4-5' })
+    expect(result).toEqual({ active: 'claude', providers: [] })
+  })
+})
+
+describe('fetchKeySettings', () => {
+  it('resolves the managed keys and their configured/source state', async () => {
+    server.use(
+      http.get('/api/settings/keys', () =>
+        HttpResponse.json({
+          keys: [{ name: 'ANTHROPIC_API_KEY', configured: false, source: null }],
+        }),
+      ),
+    )
+
+    await expect(fetchKeySettings()).resolves.toEqual({
+      keys: [{ name: 'ANTHROPIC_API_KEY', configured: false, source: null }],
+    })
+  })
+})
+
+describe('upsertKeySetting', () => {
+  it('PUTs the key name/value and resolves the entry the server reports back — never the value', async () => {
+    let capturedBody: unknown
+    server.use(
+      http.put('/api/settings/keys', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({ name: 'GEMINI_API_KEY', configured: true, source: 'keychain' })
+      }),
+    )
+
+    const result = await upsertKeySetting({ name: 'GEMINI_API_KEY', value: 'secret-value' })
+
+    expect(capturedBody).toEqual({ name: 'GEMINI_API_KEY', value: 'secret-value' })
+    expect(result).toEqual({ name: 'GEMINI_API_KEY', configured: true, source: 'keychain' })
+  })
+
+  it('rejects with an ApiError on an empty value (422)', async () => {
+    server.use(
+      http.put('/api/settings/keys', () => HttpResponse.json({ detail: 'value must not be empty' }, { status: 422 })),
+    )
+
+    let caught: unknown
+    try {
+      await upsertKeySetting({ name: 'GITHUB_TOKEN', value: '' })
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(422)
+  })
+})
+
+describe('deleteKeySetting', () => {
+  it('sends a DELETE to the name-scoped endpoint and resolves with no content', async () => {
+    server.use(http.delete('/api/settings/keys/ANTHROPIC_API_KEY', () => new HttpResponse(null, { status: 204 })))
+
+    await expect(deleteKeySetting('ANTHROPIC_API_KEY')).resolves.toBeUndefined()
   })
 })

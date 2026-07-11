@@ -19,7 +19,12 @@ function normalize(message: string): string {
 
 // English/Portuguese names recognized for each template id. Deliberately a
 // closed, enumerable list (not free-form NLP) so every phrase is testable.
-const TEMPLATE_ALIASES: Record<TemplateId, string[]> = {
+// Exported so commands.test.ts can assert every TEMPLATE_REGISTRY id has an
+// entry here — Record<TemplateId, string[]> already makes a missing id a
+// compile error, but that test turns it into a readable assertion failure
+// too, instead of only the "not iterable" crash the loop below throws at
+// import time if this ever falls out of sync.
+export const TEMPLATE_ALIASES: Record<TemplateId, string[]> = {
   modern: ['modern', 'moderno', 'moderna'],
   classic: ['classic', 'classico', 'classica'],
   minimal: ['minimal', 'minimalista'],
@@ -35,6 +40,8 @@ const TEMPLATE_ALIASES: Record<TemplateId, string[]> = {
     'ats duas colunas',
     '2 colunas ats',
   ],
+  executive: ['executive', 'executivo', 'executiva'],
+  tech: ['tech', 'tecnico', 'tecnologico'],
 }
 
 const EN_SWITCH_VERBS = ['use', 'switch to', 'change to']

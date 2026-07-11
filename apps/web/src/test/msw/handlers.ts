@@ -1,4 +1,5 @@
 import { http, HttpResponse } from 'msw'
+import type { KeysSettingsResponse, ProvidersSettingsResponse } from '../../lib/api/dto'
 
 export const DEFAULT_MODEL_SUGGESTIONS = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -8,6 +9,63 @@ export const DEFAULT_MODEL_SUGGESTIONS = [
 export const DEFAULT_GITHUB_REPOS = [
   { name: 'resume-agent', url: 'https://github.com/example/resume-agent' },
 ]
+
+// v3 ticket 06: mirrors the unconfigured/first-use-without-.env defaults GET
+// /api/settings/providers reports (app/services/settings_service.py) — active
+// 'auto', nothing available, static per-provider model suggestions.
+export const DEFAULT_PROVIDERS_SETTINGS: ProvidersSettingsResponse = {
+  active: 'auto',
+  // v3 ticket 11: baseline is "nothing pinned" — no AI_* env vars set, matching the backend's
+  // own unlocked default (tests/conftest.py's autouse _isolated_ai_settings_env).
+  activeLockedByEnv: false,
+  activeEnvVar: 'AI_PROVIDER',
+  providers: [
+    {
+      name: 'claude',
+      available: false,
+      auth: 'cli',
+      defaultModel: 'claude-sonnet-5',
+      defaultModelLockedByEnv: false,
+      defaultModelEnvVar: 'CLAUDE_MODEL',
+      models: [
+        { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+        { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+        { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+      ],
+    },
+    {
+      name: 'gemini',
+      available: false,
+      auth: 'none',
+      defaultModel: 'gemini-2.5-flash',
+      defaultModelLockedByEnv: false,
+      defaultModelEnvVar: 'GEMINI_MODEL',
+      models: [
+        { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+        { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
+      ],
+    },
+    {
+      name: 'ollama',
+      available: false,
+      auth: 'local',
+      defaultModel: 'llama3.2',
+      defaultModelLockedByEnv: false,
+      defaultModelEnvVar: 'OLLAMA_MODEL',
+      models: [],
+    },
+  ],
+}
+
+// v3 ticket 06: mirrors GET /api/settings/keys' unconfigured default — none of
+// the three managed keys set via env or keychain.
+export const DEFAULT_KEYS_SETTINGS: KeysSettingsResponse = {
+  keys: [
+    { name: 'ANTHROPIC_API_KEY', configured: false, source: null }, // pragma: allowlist secret
+    { name: 'GEMINI_API_KEY', configured: false, source: null }, // pragma: allowlist secret
+    { name: 'GITHUB_TOKEN', configured: false, source: null }, // pragma: allowlist secret
+  ],
+}
 
 /**
  * Baseline handlers registered for every test via src/test/setup.ts.
@@ -75,4 +133,10 @@ export const handlers = [
   ),
 
   http.post('/api/profile/documents/:id/reject', () => new HttpResponse(null, { status: 204 })),
+
+  // Settings (v3 ticket 06): unconfigured/first-use defaults. Tests override
+  // per scenario (a key configured, a different active provider, a PUT/DELETE
+  // capture) with server.use(...).
+  http.get('/api/settings/providers', () => HttpResponse.json(DEFAULT_PROVIDERS_SETTINGS)),
+  http.get('/api/settings/keys', () => HttpResponse.json(DEFAULT_KEYS_SETTINGS)),
 ]

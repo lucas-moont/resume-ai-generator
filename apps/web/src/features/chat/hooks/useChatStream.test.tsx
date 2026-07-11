@@ -153,6 +153,33 @@ describe('useChatStream — session + message routing', () => {
   })
 })
 
+describe('useChatStream — resume diff (ticket 09)', () => {
+  it('attaches a structured before/after diff to the resumeUpdated card when a prior resume existed', async () => {
+    mockSessionCreation()
+    const prev = makeResume({ fullName: 'Ada Lovelace', headline: 'Engineer' })
+    useResumeStore.getState().setResume(prev)
+    const next = { ...prev, headline: 'Senior Engineer' }
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'resume', data: { resume: next, resumeVersionId: 2 } },
+          { event: 'message', data: { content: 'Updated your resume.' } },
+          { event: 'done', data: { progress: 100, messageId: 1, resumeVersionId: 2 } },
+        ]),
+      ),
+    )
+
+    const { result } = renderChatStream()
+    await result.current.send('Make it senior')
+
+    const assistantMsg = useChatStore.getState().messages.find((m) => m.role === 'assistant')
+    expect(assistantMsg?.card).toMatchObject({
+      type: 'resumeUpdated',
+      diff: [{ key: 'headline', label: 'headline', before: 'Engineer', after: 'Senior Engineer' }],
+    })
+  })
+})
+
 describe('useChatStream — errors and retry', () => {
   it('appends an error card with a retry message when session creation fails (non-404)', async () => {
     server.use(

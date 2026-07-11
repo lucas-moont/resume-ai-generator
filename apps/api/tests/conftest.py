@@ -4,15 +4,18 @@ import json
 from pathlib import Path
 from typing import Callable
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlmodel import Session
 from sqlmodel.pool import StaticPool
 
+from app import config as config_module
 from app.db.engine import create_db_engine, init_db
 from app.main import create_app
 from app.routers import deps
 from app.services import llm_client as llm_client_module
+from app.services import model_catalog as model_catalog_module
 from app.services import streaming as streaming_module
 from app.services import generation_service as generation_service_module
 
@@ -82,6 +85,84 @@ def write_profile(isolated_data_env: Path) -> Callable[[dict], Path]:
         return path
 
     return _write
+
+
+@pytest.fixture(autouse=True)
+def _isolated_ai_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clears the AI provider/model/key env vars this repo's own root ``.env`` sets for real
+    use (see app/config.py's ``load_dotenv`` -- it ships a genuine ``GEMINI_API_KEY``) and
+    neutralizes the OS keychain, so every test starts from a deterministic "nothing
+    configured" baseline regardless of the developer machine's real ``.env``/keychain
+    contents. v3 ticket 03's settings endpoints report configured-key presence and read
+    provider/model app_settings, which would otherwise be environment-dependent (and flaky
+    across machines/CI) without this. Tests that need a specific value set it explicitly via
+    ``monkeypatch.setenv``/``patch("keyring...")`` within their own scope, layering on top of
+    this default.
+    """
+    for name in (
+        "AI_PROVIDER",
+        "AI_DEFAULT_MODEL",
+        "CLAUDE_MODEL",
+        "GEMINI_MODEL",
+        "OLLAMA_MODEL",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "GEMINI_API_KEY",
+        "GITHUB_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    try:
+        import keyring
+    except ModuleNotFoundError:
+        return
+    monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None, raising=False)
+
+
+def _blackhole_transport_handler(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError(
+        "network access is disabled in tests by default (see "
+        "_no_real_network_for_model_catalog in tests/conftest.py)",
+        request=request,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_network_for_model_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """v3 ticket 03: the dynamic model catalog makes a real HTTP call (Anthropic/Gemini/Ollama
+    listing) whenever a usable key/server is configured -- and this repo's own root ``.env``
+    ships a real ``GEMINI_API_KEY`` (loaded into the process env by ``app.config`` at import
+    time), so simply not mocking anything would let a test make a genuine call to Google's API
+    with that real key. This autouse fixture forces every test onto a transport that always
+    fails closed (the catalog degrades to its static fallback / reports Ollama unreachable),
+    regardless of what secrets happen to be configured (env OR OS keychain) on the machine
+    running the suite. Tests exercising the real success/failure parsing paths (see
+    tests/unit/test_model_catalog.py) explicitly monkeypatch ``model_catalog._transport`` to
+    their own ``httpx.MockTransport``, which simply overrides this default for their scope.
+    """
+    monkeypatch.setattr(
+        model_catalog_module, "_transport", httpx.MockTransport(_blackhole_transport_handler)
+    )
+    model_catalog_module.invalidate_catalog_cache()
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_settings_engine():
+    """Point config.py's app_settings resolution (get_runtime_config, set/delete_app_setting)
+    at a throwaway in-memory DB for every test (v3 ticket 01).
+
+    Without this, any test that transitively calls get_runtime_config() -- e.g. GET /api/models
+    -> model_catalog.default_model_for_active_backend() -> resolve_active_provider() -- falls
+    through to config._get_settings_engine()'s lazy default, which opens a real engine on
+    config.DATABASE_URL: the actual on-disk data/app.db this repo ships with. That bit a real
+    test run while building this fixture (empty app_settings table created on disk, no rows --
+    see tests/unit/test_runtime_config_isolation.py for the regression test). set_settings_engine
+    is the test seam, module-qualified like resolve_uploads_dir/test_db_engine above.
+    """
+    engine = create_db_engine("sqlite://", poolclass=StaticPool)
+    init_db(engine)
+    config_module.set_settings_engine(engine)
+    yield engine
+    config_module.set_settings_engine(None)
 
 
 @pytest.fixture

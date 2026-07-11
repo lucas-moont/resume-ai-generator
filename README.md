@@ -4,13 +4,13 @@
 
 Your professional data is a **Living Profile**: drop a `.json`, `.md` or `.pdf` into the chat and an incremental merge pipeline (deterministic diff → LLM adjudicates only what's new or divergent → deterministic validator) proposes a reviewable patch — approve or reject it from the conversation. Every change is versioned with provenance (which upload or chat message caused it), history is append-only, and any version can be reverted. Quick fact changes work straight from chat: "I changed my phone number to X".
 
-Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Haiku, authenticated by the Claude login already on your machine or an API key), **Ollama** (local HTTP API) and/or **Google Gemini**, selected via `.env` (`AI_PROVIDER` and related keys). Stack: **React + Vite** frontend (Zustand + TanStack Query), **FastAPI** backend (layered: `domain/` → `services/` → `routers/`), SQLite persistence, project sources as Markdown files under `data/projects/`.
+Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Haiku, authenticated by the Claude login already on your machine or an API key), **Ollama** (local HTTP API) and/or **Google Gemini** — all configurable **from the UI at runtime** (v3): a Settings dialog switches the active provider and default model with immediate effect (no restart), stores API keys in the **OS keychain** (never in SQLite, never echoed back), and lists each provider's models from a live catalog. `.env` still works and, when set, takes precedence — the UI shows a lock indicator naming the variable instead of silently losing your change. Stack: **React + Vite** frontend (Zustand + TanStack Query), **FastAPI** backend (layered: `domain/` → `services/` → `routers/`), SQLite persistence, project sources as Markdown files under `data/projects/`.
 
 ## Features
 
 - **Chat UI** (left) + always-visible **live A4 preview** (right): message bubbles, step-by-step progress card while the model runs, retry on errors, Stop button, mobile tabs.
 - **Persisted chat sessions** (SQLite in `data/app.db`, created automatically): session sidebar to resume/delete conversations; the active session, resume, template and theme all survive a page reload.
-- **Template picker** — **6 ATS-friendly designs** applied to both the live preview and the exported PDF: **Modern** (indigo sidebar), **Classic** (serif, single column), **Minimal** (airy, monochrome), **Compact** (dense), **ATS Plain** (single column, system fonts — maximum parser compatibility) and **Two-Column ATS** (visual grid, linear DOM order preserved). One semantic structure; switching is instant CSS — never a regeneration. The CSS is a **single shared source** (`packages/resume-templates/resume.css`) consumed by both the web preview and the PDF renderer.
+- **Template picker** — **8 ATS-friendly designs** with visual thumbnails, applied to both the live preview and the exported PDF: **Modern** (indigo sidebar), **Classic** (serif, single column), **Minimal** (airy, monochrome), **Compact** (dense), **ATS Plain** (single column, system fonts — maximum parser compatibility), **Two-Column ATS** (visual grid, linear DOM order preserved), **Executive** (spacious serif, centered header) and **Tech** (monospace accents, skills first). One semantic structure; switching is instant CSS — never a regeneration. Template identity + CSS live in a **single shared package** (`packages/resume-templates`: `templates.json` manifest + `resume.css`) consumed by both the web preview and the PDF renderer, with a guard test binding the two sides.
 - **Instant chat commands**: "switch to the classic layout" / "troca pro layout classic" and "export the pdf" are resolved locally — zero LLM/network round-trip.
 - **Deterministic intent routing** in the chat backend: a job-description-looking message generates; a follow-up on an active resume refines (with recent conversation as context); small talk gets a canned localized reply without spending an LLM call.
 - **Streaming** everywhere (SSE with heartbeat): generation and refinement show live progress.
@@ -19,8 +19,12 @@ Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Ha
 - Generation system prompt includes a **tailored-resume** skill block (job analysis, honest keyword mapping, ATS-oriented structure) composed with `generate.md` — see `apps/api/prompts/skills/tailored-resume-generator.md`.
 - **Living Profile (v2)**: upload `.json`/`.md`/`.pdf` via drag & drop in the composer (progress, sha256 dedup, actionable errors for scanned PDFs); **incremental merge** that never rewrites what didn't change and never lets an upload delete data ("upload never removes"); approve/reject cards that survive page reloads; profile version history + revert (`GET /api/profile/versions`, `POST /api/profile/revert`); chat intent `profile_update` ("mudei meu telefone…") applies validated patches with provenance and offers — never forces — a resume regeneration.
 - **Inline editing (v2)**: pencil toggle on the preview toolbar; edit any field via contenteditable (commit on blur/Enter, no caret jumps, same sanitization allowlist as rendering), add/remove list items, undo/redo via buttons or Ctrl-Z/Ctrl-Shift-Z (including undoing a bad refine that arrived over SSE); chat refines start from **exactly what you see**, edits included; non-blocking zod validation.
+- **Settings UI (v3)**: gear icon in the header → runtime provider/model/key management. Availability + auth-mode badge per provider (`api_key` / `cli` / `local`), write-only key inputs showing only the configured state (`env` / `keychain`), dynamic per-provider model picker, env-lock indicators when a `.env` variable pins a setting. Everything takes effect on the next LLM call — no restart, no `.env` edits.
+- **Visual resume diff (v3)**: after a refine, the chat card shows what actually changed — before → after per section, with honest fallbacks when only deeper details changed.
+- **Accessible primitives (v3)**: a single Dialog (focus trap, Escape, focus return) and an ARIA-complete Combobox power the settings, confirmations and model pickers; mobile tab state lives in the URL (`?tab=`), so reload and deep links work.
 - **Light / dark theme** (persisted in `localStorage`).
-- **Test suite + CI**: 359 pytest (unit + integration, LLM always faked; 3 e2e render a real PDF) · 375 Vitest/Testing-Library/MSW · 17 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api.
+- **Keyboard shortcuts**: `Enter` sends a chat message (`Shift+Enter` for a newline), `Esc` closes any open dialog, `Ctrl`/`Cmd`-`Z` and `Ctrl`/`Cmd`-`Shift`-`Z` undo/redo resume edits — all left alone while typing in a text field or contenteditable region, so they never fight native per-field editing.
+- **Test suite + CI**: 496 pytest (unit + integration, LLM always faked and network-isolated; 5 e2e render a real PDF) · 485 Vitest/Testing-Library/MSW · 20 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api (PDF e2e as a separate opt-in job).
 
 ## Prerequisites
 
@@ -42,7 +46,7 @@ These files are **gitignored** and must be created on each machine:
 | `data/projects/*.md` | One Markdown file per project (YAML frontmatter + narrative body). Copy samples from `data/examples/projects/` if helpful. |
 | `data/app.db` (auto-created) | **Local SQLite database** for chat sessions, messages, resume versions, profile versions, source documents and the seeded profile. Created on first API boot (WAL mode); gitignored. Override the location/URL with `DATABASE_URL`. Delete it to start fresh — the profile re-seeds from `data/profile/` on next boot. |
 | `data/uploads/` (auto-created) | **Uploaded source documents** (v2 Living Profile), stored as `<sha256>.<ext>`; gitignored — personal data never leaves your machine. |
-| `.env` | Optional `GITHUB_TOKEN`; **`AI_PROVIDER`** (`auto` \| `claude` \| `gemini` \| `ollama`); **`AI_DEFAULT_MODEL`** (optional global model override for the active provider); `ANTHROPIC_API_KEY` / `CLAUDE_MODEL`; `OLLAMA_BASE_URL` / `OLLAMA_MODEL`; `GEMINI_API_KEY` / `GEMINI_MODEL`; `PROFILE_JSON_PATH`; `DATABASE_URL`, etc. Copy from `.env.example`. |
+| `.env` | **Optional since v3** — provider, default model and API keys are all manageable from the Settings UI (persisted in `app_settings`/OS keychain). When a variable IS set here it wins over the UI and the Settings dialog shows a lock naming it. Variables: `GITHUB_TOKEN`; **`AI_PROVIDER`** (`auto` \| `claude` \| `gemini` \| `ollama`); **`AI_DEFAULT_MODEL`**; `ANTHROPIC_API_KEY` / `CLAUDE_MODEL`; `OLLAMA_BASE_URL` / `OLLAMA_MODEL`; `GEMINI_API_KEY` / `GEMINI_MODEL`; `PROFILE_JSON_PATH`; `DATABASE_URL`, etc. Copy from `.env.example`. |
 
 **LLM routing (summary):**
 
@@ -162,14 +166,22 @@ Free-form markdown: problem, your role, stack, outcomes.
 **Legacy/direct endpoints (still supported — the UI falls back to them if the chat API is absent):**
 
 - `GET /api/health` — health check
-- `GET /api/models` — model suggestions for the UI picker (`{ default, models: [{value,label}] }`)
+- `GET /api/models` — model suggestions for the UI picker (`{ default, models: [{value,label,provider}] }`) — since v3, a live per-provider catalog (Anthropic `/v1/models`, Gemini `models.list`, Ollama `/api/tags`, ~5 min cache) with static fallback when offline/keyless
 - `GET /api/profile` — loads the resolved profile JSON (same resolution order as [Personal data](#personal-data-not-in-this-repository); validates schema)
 - `GET /api/github/repos` — lists repos for `githubUsername` in profile
 - `POST /api/generate` — body: `{ "job_description", "model?", "locale?" }` → tailored `ResumeDocument`. `locale` accepts `"auto"` (default: detects the job description's language, pt-BR vs en), or `"pt-BR"`/`"en"` to force the output language.
 - `POST /api/generate/stream` — same body as generate; **SSE** stream with `stage` events (progress, message) and a final `done` event with the resume JSON
 - `POST /api/refine` — body: `{ "resume", "message", "model?" }`
 - `POST /api/refine/stream` — same as refine over **SSE**
-- `POST /api/export/pdf` — body: `{ "resume": { ... }, "template?": "modern" | "classic" | "minimal" | "compact" | "ats-plain" | "two-column-ats" }` → PDF download (defaults to `modern`)
+- `POST /api/export/pdf` — body: `{ "resume": { ... }, "template?": "modern" | "classic" | "minimal" | "compact" | "ats-plain" | "two-column-ats" | "executive" | "tech" }` → PDF download (defaults to `modern`)
+
+**Settings (v3 — runtime provider/model/key management):**
+
+- `GET /api/settings/providers` — `{ active, activeLockedByEnv, activeEnvVar, providers: [{ name, available, auth, defaultModel, defaultModelLockedByEnv, defaultModelEnvVar, models }] }`
+- `PUT /api/settings/providers` — body `{ provider: "auto" | "claude" | "gemini" | "ollama", defaultModel? }` — immediate effect (no restart), persisted in `app_settings`; env-pinned settings are reported as locked instead of silently ignored
+- `GET /api/settings/keys` — `{ keys: [{ name, configured, source: "env" | "keychain" | null }] }` — values are never returned
+- `PUT /api/settings/keys` — body `{ name: "ANTHROPIC_API_KEY" | "GEMINI_API_KEY" | "GITHUB_TOKEN", value }` — writes to the OS keychain only (never SQLite, never logged/echoed)
+- `DELETE /api/settings/keys/{name}` — removes the keychain entry
 
 ## Prompts
 
@@ -178,11 +190,11 @@ Free-form markdown: problem, your role, stack, outcomes.
 
 ## Tests
 
-**Backend** (from `apps/api`, venv active): `python -m pytest` — 359 tests. Fast unit + integration suites use a fake LLM and an in-memory SQLite (never a real network call); the 3 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
+**Backend** (from `apps/api`, venv active): `python -m pytest` — 496 tests. Fast unit + integration suites use a fake LLM, an in-memory SQLite and a black-holed HTTP transport (never a real network call, even if real keys exist on the machine); the 5 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
 
-**Web** (from `apps/web`): `npm run test:run` (375 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (17 Playwright tests against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`).
+**Web** (from `apps/web`): `npm run test:run` (485 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (20 Playwright tests against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`).
 
-**CI:** `.github/workflows/web.yml` and `api.yml` run lint/build/tests on every push touching each app.
+**CI:** `.github/workflows/web.yml` (npm ci → lint → tsc → vitest coverage → mocked Playwright) and `api.yml` (pytest, plus a separate opt-in `workflow_dispatch` job for the PDF e2e) run on every push touching each app.
 
 ## Security
 
@@ -197,7 +209,7 @@ Built to run **locally**, keeping credentials out of the repo and off disk in th
 
 ### Store a key in the OS keychain (optional)
 
-`keyring` is already in `requirements.txt`. Store secrets under the service name `resume-agent`, keyed by the env var name, then leave that variable **unset** in `.env` (an env var, if set, always wins):
+Since v3 the easiest way is the **Settings UI** (gear icon → API keys): it writes to the keychain under the hood, shows only the configured state, and removal is one click. The CLI route still works too — `keyring` is already in `requirements.txt`. Store secrets under the service name `resume-agent`, keyed by the env var name, then leave that variable **unset** in `.env` (an env var, if set, always wins and shows as locked in the UI):
 
 ```bash
 keyring set resume-agent ANTHROPIC_API_KEY   # prompts for the value (hidden input)

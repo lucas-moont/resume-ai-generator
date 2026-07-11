@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { SourceDocumentStatus } from '../../../lib/api/dto'
+import type { ResumeFieldChange } from '../../resume/resumeDiff'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -12,6 +13,12 @@ export const ACTIVE_SESSION_STORAGE_KEY = 'resume-agent:active-session'
 export interface ResumeUpdatedCard {
   type: 'resumeUpdated'
   changedSections: string[]
+  /** Structured before/after per changed section (ticket 09) — omitted when
+   * there's no "before" to diff against (history reload from GET
+   * /api/chat/sessions/{id}, which only carries `resumeVersionId`, not the
+   * two full documents): the card then degrades honestly to the
+   * label-only rendering instead of fabricating a diff. */
+  diff?: ResumeFieldChange[]
 }
 
 export interface ErrorCard {
@@ -34,11 +41,15 @@ export interface ProfileUpdatedCard {
 /** Confirmation card for the `profile_update` chat intent (v2, ticket 05/09)
  * — distinct from ProfileUpdatedCard (upload-driven, proposed/needs approval):
  * a chat-driven profile update is already applied by the time the SSE event
- * lands, so there's no approve/reject step here, just profileVersion + summary. */
+ * lands, so there's no approve/reject step here, just profileVersion + summary.
+ * Both fields are optional (v3 ticket 12): a history reload only carries the
+ * message's `intent`, not the profileVersion/summary the live SSE event had —
+ * the card then degrades honestly to a label-only rendering, same idea as
+ * ResumeUpdatedCard's optional `diff` above. */
 export interface ProfileUpdateAppliedCard {
   type: 'profileUpdateApplied'
-  profileVersion: number
-  summary: string
+  profileVersion?: number
+  summary?: string
 }
 
 export type ChatCard = ResumeUpdatedCard | ErrorCard | ProfileUpdatedCard | ProfileUpdateAppliedCard

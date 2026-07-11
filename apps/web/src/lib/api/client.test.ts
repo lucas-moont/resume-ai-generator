@@ -4,6 +4,7 @@ import { server } from '../../test/setup'
 import {
   ApiError,
   postInit,
+  putInit,
   requestBlob,
   requestJson,
   requestMultipart,
@@ -20,6 +21,16 @@ describe('postInit', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hello: 'world' }),
       signal: controller.signal,
+    })
+  })
+})
+
+describe('putInit', () => {
+  it('builds a JSON PUT RequestInit carrying the body — same shape as postInit but PUT (v3 ticket 06: settings writes)', () => {
+    expect(putInit({ provider: 'claude' })).toEqual({
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'claude' }),
     })
   })
 })

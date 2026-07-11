@@ -1,56 +1,42 @@
+import manifest from '@resume-templates/templates.json'
+
+/**
+ * TypeScript-only literal union (no separate runtime value): JSON module
+ * imports widen string literals to `string`, so there's no way to recover a
+ * literal-typed union straight from the manifest below. This exists so call
+ * sites like `Record<TemplateId, ...>` (e.g. features/chat/commands.ts's
+ * TEMPLATE_ALIASES) get compile-time exhaustiveness — a missing template
+ * case is a type error, not a silent gap. It cannot silently drift from the
+ * manifest: registry.test.ts asserts the two contain exactly the same ids.
+ */
+export type TemplateId =
+  | 'modern'
+  | 'classic'
+  | 'minimal'
+  | 'compact'
+  | 'ats-plain'
+  | 'two-column-ats'
+  | 'executive'
+  | 'tech'
+
 export interface TemplateDefinition {
-  id: string
+  id: TemplateId
   label: string
   description: string
   tags: readonly string[]
 }
 
 /**
- * Single source of truth for which resume templates exist on the web side.
- * `TemplateId` is derived from this list (not hand-written), and
- * `apps/api/app/services/pdf_export.py`'s `_ALLOWED_TEMPLATES` must contain
- * the same ids — enforced by a contract test.
+ * packages/resume-templates/templates.json is the single source of truth for
+ * template identity (ids + metadata) — this array is a direct projection of
+ * it, not hand-written (the `as` cast only re-attaches the literal `TemplateId`
+ * type that JSON imports otherwise widen to `string`; the actual values come
+ * straight from the manifest). apps/api/app/services/pdf_export.py reads the
+ * same file; apps/api/tests/unit/test_pdf_export_templates.py and
+ * test_shared_template_source_guard.py assert both sides load the identical
+ * set of ids.
  */
-export const TEMPLATE_REGISTRY = [
-  {
-    id: 'modern',
-    label: 'Modern',
-    description: 'Sidebar · indigo accent',
-    tags: ['colorful', 'two-column'],
-  },
-  {
-    id: 'classic',
-    label: 'Classic',
-    description: 'Serif · single column',
-    tags: ['single-column', 'serif', 'conservative'],
-  },
-  {
-    id: 'minimal',
-    label: 'Minimal',
-    description: 'Airy · monochrome',
-    tags: ['single-column', 'monochrome', 'airy'],
-  },
-  {
-    id: 'compact',
-    label: 'Compact',
-    description: 'Dense · content-rich',
-    tags: ['two-column', 'dense'],
-  },
-  {
-    id: 'ats-plain',
-    label: 'ATS Plain',
-    description: 'Single column · no color · max ATS compatibility',
-    tags: ['ats-friendly', 'single-column', 'monochrome'],
-  },
-  {
-    id: 'two-column-ats',
-    label: 'Two-Column ATS',
-    description: '2 columns · linear DOM order · ATS-safe',
-    tags: ['ats-friendly', 'two-column', 'monochrome'],
-  },
-] as const satisfies readonly TemplateDefinition[]
-
-export type TemplateId = (typeof TEMPLATE_REGISTRY)[number]['id']
+export const TEMPLATE_REGISTRY = manifest.templates as readonly TemplateDefinition[]
 
 export const TEMPLATE_IDS: readonly TemplateId[] = TEMPLATE_REGISTRY.map((t) => t.id)
 

@@ -14,6 +14,18 @@
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "react-jsx",
+    "resolveJsonModule": true,
+
+    /* packages/resume-templates lives at the monorepo root, a sibling of
+       apps/ — mirrors the alias in vite.config.ts (kept in sync there, both
+       resolve to the same directory: guarded by
+       apps/api/tests/unit/test_shared_template_source_guard.py). Lets
+       registry.ts import templates.json with real types instead of `any`.
+       No `baseUrl` needed (TS 5+ resolves `paths` relative to this file
+       when baseUrl is absent; setting it is deprecated as of TS 5.9+). */
+    "paths": {
+      "@resume-templates/*": ["../../packages/resume-templates/*"]
+    },
 
     /* Linting */
     "noUnusedLocals": true,

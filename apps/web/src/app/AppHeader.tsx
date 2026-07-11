@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ApiError, fetchGithubRepos } from '../lib/api/endpoints'
+import { SettingsDialog } from '../features/settings/components/SettingsDialog'
 import { ThemeToggle } from './theme/ThemeToggle'
 
 export function AppHeader() {
@@ -29,9 +30,18 @@ export function AppHeader() {
     <header className="no-print border-b border-stone-200/80 bg-white/80 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80">
       <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
         <div className="min-w-0">
-          <h1 className="font-display text-pretty text-2xl font-semibold tracking-tight text-stone-900 sm:text-3xl dark:text-zinc-50">
+          {/* v3 debt b: demoted from h1 -- the resume's own name (ResumePreview's
+              EditableText as="h1") is the page's main-content heading; this is
+              app chrome, same as a product's logo/wordmark. Not tag-qualified in
+              packages/resume-templates/resume.css (always `.name`/`.page .name`),
+              so this doesn't touch that shared, out-of-radius stylesheet. Before
+              any resume exists (PreviewPanel's empty state), the page has ZERO
+              h1 elements -- deliberate, not a gap to fill: the bug being fixed
+              was *multiple* h1s, not the absence of one, and adding a redundant
+              h1 back here for that interim state would reintroduce it. */}
+          <h2 className="font-display text-pretty text-2xl font-semibold tracking-tight text-stone-900 sm:text-3xl dark:text-zinc-50">
             Resume agent
-          </h1>
+          </h2>
           <p className="mt-1 max-w-xl text-sm leading-relaxed text-stone-600 dark:text-zinc-400">
             Local AI API · FastAPI · ATS-friendly layout
           </p>
@@ -54,6 +64,7 @@ export function AppHeader() {
               <path d="M12 2C6.477 2 2 6.484 2 12.021c0 4.428 2.865 8.184 6.839 9.504.5.092.682-.217.682-.483 0-.237-.009-.868-.014-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.071 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.833.091-.647.35-1.088.636-1.339-2.221-.253-4.556-1.113-4.556-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.269 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.295 2.748-1.026 2.748-1.026.546 1.378.202 2.397.1 2.65.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.021C22 6.484 17.522 2 12 2Z" />
             </svg>
           </button>
+          <SettingsDialog />
           <ThemeToggle />
         </div>
       </div>

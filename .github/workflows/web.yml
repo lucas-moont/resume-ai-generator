@@ -30,8 +30,14 @@ jobs:
 
       - run: npm ci
       - run: npm run lint
-      - run: npm run build
-      - run: npm run test:run
+      - run: npx tsc -b
+      - run: npm run test:coverage
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/web/package-lock.json') }}
 
       - run: npx playwright install chromium --with-deps
       # Mocked flows only (see e2e/README.md) -- no backend needs to be running.

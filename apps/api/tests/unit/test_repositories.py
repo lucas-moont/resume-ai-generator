@@ -14,8 +14,9 @@ from sqlmodel import Session, text
 from sqlmodel.pool import StaticPool
 
 from app.db.engine import create_db_engine, init_db
+from app.db.tables import AppSettings
 from app.domain.schemas import ProfileMaster, ResumeDocument
-from app.repositories import chat_repo, profile_repo, resume_repo
+from app.repositories import app_settings_repo, chat_repo, profile_repo, resume_repo
 
 
 @pytest.fixture
@@ -169,6 +170,59 @@ class TestResumeRepo:
         )
 
         assert resume.profile_version_id == profile_version.id
+
+
+class TestAppSettingsRepo:
+    """v3 ticket 01: non-sensitive runtime preferences (provider/model choice) -- API keys
+    NEVER land here, only in the OS keychain (see app/services/secret_store.py)."""
+
+    def test_get_returns_none_when_key_is_missing(self, session):
+        assert app_settings_repo.get(session, "ai_provider") is None
+
+    def test_set_then_get_roundtrips_the_value(self, session):
+        app_settings_repo.set(session, "ai_provider", "claude")
+        session.commit()
+
+        assert app_settings_repo.get(session, "ai_provider") == "claude"
+
+    def test_set_overwrites_an_existing_key(self, session):
+        app_settings_repo.set(session, "ai_provider", "claude")
+        app_settings_repo.set(session, "ai_provider", "gemini")
+        session.commit()
+
+        assert app_settings_repo.get(session, "ai_provider") == "gemini"
+
+    def test_delete_removes_the_key(self, session):
+        app_settings_repo.set(session, "ai_provider", "claude")
+        session.commit()
+
+        app_settings_repo.delete(session, "ai_provider")
+        session.commit()
+
+        assert app_settings_repo.get(session, "ai_provider") is None
+
+    def test_delete_missing_key_is_not_an_error(self, session):
+        app_settings_repo.delete(session, "does-not-exist")  # no raise
+
+    def test_get_all_returns_every_stored_key(self, session):
+        app_settings_repo.set(session, "ai_provider", "claude")
+        app_settings_repo.set(session, "ai_default_model", "claude-sonnet-5")
+        session.commit()
+
+        assert app_settings_repo.get_all(session) == {
+            "ai_provider": "claude",
+            "ai_default_model": "claude-sonnet-5",
+        }
+
+    def test_value_is_json_encoded_on_disk(self, session):
+        """Guards against accidentally storing a bare Python repr instead of JSON -- the acceptance
+        criterion is ``app_settings(key PK, value JSON, updated_at)``."""
+        app_settings_repo.set(session, "ai_provider", "claude")
+        session.commit()
+
+        row = session.get(AppSettings, "ai_provider")
+        assert row is not None
+        assert json.loads(row.value) == "claude"
 
 
 def test_foreign_keys_pragma_is_enforced(engine):

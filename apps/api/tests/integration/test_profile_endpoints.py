@@ -135,10 +135,11 @@ class TestRevertProfile:
 
 class TestGithubReposProfileErrors:
     """Herdado da revisao do ticket 01 (ticket 04): GET /api/github/repos now goes through the
-    same ``_resolve_active_profile_or_error`` helper as GET /api/profile (both routes share the
-    extracted try/except -- see routers/profile.py). The v1-era migration (ticket 01) already
-    changed an invalid on-disk profile from an unhandled 500 to a handled 400 here, but no test
-    pinned it until now."""
+    same ``resolve_active_profile_or_error`` helper as GET /api/profile (both routes share the
+    extracted try/except -- see routers/deps.py, moved there in ticket 04's router split since
+    it is now shared across routers/profile.py and routers/github.py). The v1-era migration
+    (ticket 01) already changed an invalid on-disk profile from an unhandled 500 to a handled
+    400 here, but no test pinned it until now."""
 
     async def test_invalid_disk_profile_and_empty_db_is_400(self, client, isolated_data_env):
         (isolated_data_env / "resume.json").write_text("not valid json", encoding="utf-8")

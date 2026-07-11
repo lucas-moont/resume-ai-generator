@@ -16,6 +16,7 @@ import type {
   StreamStagePayload,
 } from '../../../lib/api/dto'
 import { diffResumeSections } from '../../resume/diffResumeSections'
+import { diffResume } from '../../resume/resumeDiff'
 import { downloadResumePdf } from '../../resume/downloadResumePdf'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { TEMPLATE_REGISTRY } from '../../resume/templates/registry'
@@ -200,6 +201,10 @@ async function runTurn(
 
     let resumeEvent: ChatResumeEventPayload | null = null
     let changedSections: string[] = []
+    // undefined (not []) when there's no prior resume to diff against (first
+    // generate) — same "nothing honest to show" case as a history reload, so
+    // the card falls back to the same label-only rendering for both.
+    let resumeDiff: ReturnType<typeof diffResume> | undefined
     let profileUpdateEvent: ChatProfileUpdateEventPayload | null = null
     let assistantText = ''
 
@@ -218,6 +223,7 @@ async function runTurn(
         const prevResume = useResumeStore.getState().resume
         useResumeStore.getState().setResume(resumeEvent.resume)
         changedSections = diffResumeSections(prevResume, resumeEvent.resume)
+        resumeDiff = prevResume ? diffResume(prevResume, resumeEvent.resume) : undefined
       } else if (event === 'message') {
         assistantText = (data as ChatMessageEventPayload).content
       } else if (event === 'profile_update') {
@@ -231,7 +237,7 @@ async function runTurn(
       } else if (event === 'done') {
         void (data as ChatDoneEventPayload)
         const card = resumeEvent
-          ? { type: 'resumeUpdated' as const, changedSections }
+          ? { type: 'resumeUpdated' as const, changedSections, diff: resumeDiff }
           : profileUpdateEvent
             ? {
                 type: 'profileUpdateApplied' as const,
@@ -297,8 +303,9 @@ async function runLegacyTurn(
         const prevResume = useResumeStore.getState().resume
         useResumeStore.getState().setResume(d.resume)
         const changedSections = diffResumeSections(prevResume, d.resume)
+        const diff = prevResume ? diffResume(prevResume, d.resume) : undefined
         const text = prevResume ? "I've updated your resume." : "I've generated your resume."
-        useChatStore.getState().appendAssistantMessage(text, { type: 'resumeUpdated', changedSections })
+        useChatStore.getState().appendAssistantMessage(text, { type: 'resumeUpdated', changedSections, diff })
         useChatStore.getState().finishStreaming()
         return
       } else if (event === 'error') {

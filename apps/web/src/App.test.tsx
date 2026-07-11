@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import App from './App'
 import { server } from './test/setup'
 import { renderApp } from './test/render'
@@ -19,6 +19,10 @@ beforeEach(() => {
   __resetChatBackendAvailability()
 })
 
+afterEach(() => {
+  window.history.pushState(null, '', '/')
+})
+
 describe('App', () => {
   it('renders the main heading and the core chat controls', () => {
     renderApp(<App />)
@@ -29,6 +33,26 @@ describe('App', () => {
     expect(screen.getByRole('combobox', { name: /template/i })).toBeInTheDocument()
     // Empty state before anything is generated.
     expect(screen.getByText(/let's build your resume/i)).toBeInTheDocument()
+  })
+
+  it('renders at most one h1 per page, before and after a resume exists (v3 debt b)', async () => {
+    renderApp(<App />)
+    expect(document.querySelectorAll('h1')).toHaveLength(0) // empty state: no resume yet, no h1 anywhere
+
+    const resume = makeResume({ fullName: 'Ada Lovelace' })
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () => sseResponse(makeChatTurnEvents(resume))),
+    )
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText(/^message$/i), 'Senior engineer role')
+    await user.click(screen.getByRole('button', { name: /^send$/i }))
+
+    await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeInTheDocument())
+    // Once a resume renders, its name is the page's ONE h1 — the app chrome
+    // header ("Resume agent") is not a second one.
+    const h1s = document.querySelectorAll('h1')
+    expect(h1s).toHaveLength(1)
+    expect(h1s[0]).toHaveTextContent('Ada Lovelace')
   })
 
   it('generates a resume via the composer and renders it in the preview', async () => {
@@ -70,7 +94,7 @@ describe('App', () => {
     expect(screen.getByRole('combobox', { name: /template/i })).toHaveValue('classic')
   })
 
-  it('offers all 6 templates and switches instantly, with no network request', async () => {
+  it('offers all 8 templates and switches instantly, with no network request', async () => {
     const resume = makeResume({ fullName: 'Ada Lovelace' })
     localStorage.setItem(
       STORAGE_KEY,
@@ -83,7 +107,7 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeInTheDocument())
 
     const picker = screen.getByRole('combobox', { name: /template/i })
-    expect(within(picker).getAllByRole('option')).toHaveLength(6)
+    expect(within(picker).getAllByRole('option')).toHaveLength(8)
 
     // onUnhandledRequest: 'error' (src/test/setup.ts) means this would throw
     // if switching templates ever triggered a request.
@@ -178,6 +202,34 @@ describe('App', () => {
 
     const raw = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)
     expect(JSON.parse(raw as string).state).toEqual({ sessionId: null })
+  })
+
+  it('reflects the active mobile tab in the URL, honors a direct link, and supports back navigation (v3 debt d)', async () => {
+    const user = userEvent.setup()
+    renderApp(<App />)
+
+    expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true')
+    expect(new URLSearchParams(window.location.search).get('tab')).toBeNull()
+
+    await user.click(screen.getByRole('tab', { name: 'Preview' }))
+    expect(screen.getByRole('tab', { name: 'Preview' })).toHaveAttribute('aria-selected', 'true')
+    expect(new URLSearchParams(window.location.search).get('tab')).toBe('preview')
+
+    await user.click(screen.getByRole('tab', { name: 'Sessions' }))
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true')
+
+    window.history.back()
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'Preview' })).toHaveAttribute('aria-selected', 'true')
+    })
+  })
+
+  it('opens directly to the tab named in the URL (direct link / reload)', () => {
+    window.history.pushState(null, '', '/?tab=preview')
+    renderApp(<App />)
+
+    expect(screen.getByRole('tab', { name: 'Preview' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'false')
   })
 
   it('a plain conversational message with no JD/resume gets a reply without touching the preview (question intent)', async () => {

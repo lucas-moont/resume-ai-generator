@@ -90,12 +90,18 @@ function toChatMessage(dto: ChatMessageDto): ChatMessage {
     createdAt: new Date(dto.createdAt).getTime(),
     ...(dto.role === 'assistant' && dto.sourceDocument != null
       ? { card: toProfileUpdatedCard(dto.sourceDocument) }
-      : // We don't have the "before" resume to diff against when loading history, so this just
-        // marks that the turn changed the resume at the time (ResumeUpdatedCard renders it with
-        // no section list — see the F5 spec: "ganha ResumeUpdatedCard sem diff").
-        dto.role === 'assistant' && dto.resumeVersionId !== null
-        ? { card: { type: 'resumeUpdated' as const, changedSections: [] } }
-        : {}),
+      : // A chat-only `profile_update` turn (no upload behind it) never carries a
+        // sourceDocument -- ChatMessageDto only has `intent` for it, not the profileVersion/
+        // summary the live SSE event had, so the card degrades honestly to a label-only
+        // rendering (v3 ticket 12; see ProfileUpdateAppliedCard's own fallback).
+        dto.role === 'assistant' && dto.intent === 'profile_update'
+        ? { card: { type: 'profileUpdateApplied' as const } }
+        : // We don't have the "before" resume to diff against when loading history, so this just
+          // marks that the turn changed the resume at the time (ResumeUpdatedCard renders it with
+          // no section list — see the F5 spec: "ganha ResumeUpdatedCard sem diff").
+          dto.role === 'assistant' && dto.resumeVersionId !== null
+          ? { card: { type: 'resumeUpdated' as const, changedSections: [] } }
+          : {}),
   }
 }
 

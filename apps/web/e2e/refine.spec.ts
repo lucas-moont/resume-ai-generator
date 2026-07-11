@@ -37,7 +37,10 @@ test.describe('Refine an active resume via chat', () => {
     await page.getByLabel('Message', { exact: true }).fill('Update my title to Staff Engineer')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
 
-    await expect(page.getByText('Staff Engineer', { exact: true })).toBeVisible()
+    // Scoped to the preview, not just any "Staff Engineer" on the page — v3
+    // ticket 09's ResumeUpdatedCard now also renders the field's real
+    // before/after text, which legitimately repeats the new value.
+    await expect(page.getByLabel('Preview', { exact: true }).getByText('Staff Engineer', { exact: true })).toBeVisible()
     await expect(page.getByText(/resume updated/i)).toBeVisible()
   })
 })

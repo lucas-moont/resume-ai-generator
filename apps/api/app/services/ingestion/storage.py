@@ -3,7 +3,8 @@
 Files land at ``<uploads_dir>/<sha256>.<ext>`` -- the sha256 IS the dedup key (see
 app/repositories/source_document_repo.py::get_by_sha256), so the same bytes uploaded twice
 always resolve to the same path. Callers dedup at the DB layer (check
-``get_by_sha256`` first) before ever calling ``store_upload`` -- see routers/profile.py.
+``get_by_sha256`` first) before ever calling ``store_upload`` -- see
+app/services/ingestion/pipeline.py.
 """
 
 from __future__ import annotations

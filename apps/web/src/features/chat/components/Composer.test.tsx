@@ -1,8 +1,11 @@
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { Composer } from './Composer'
 import { renderApp } from '../../../test/render'
+import { server } from '../../../test/setup'
+import { DEFAULT_MODEL_SUGGESTIONS } from '../../../test/msw/handlers'
 import type { UploadAttachment } from '../../upload/useFileUpload'
 
 function makeAttachment(overrides: Partial<UploadAttachment> = {}): UploadAttachment {
@@ -105,5 +108,55 @@ describe('Composer — attachments and validation', () => {
   it('shows a validation error message when present', () => {
     renderComposer({ validationError: '"resume.docx" isn\'t a supported file type.' })
     expect(screen.getByText(/resume\.docx/)).toBeInTheDocument()
+  })
+})
+
+describe('Composer — model picker', () => {
+  it('lists the server catalog as listbox options and sends the picked model', async () => {
+    const onSend = vi.fn()
+    const user = userEvent.setup()
+    renderComposer({ draft: 'tailor this resume', onSend })
+
+    await user.click(screen.getByRole('combobox', { name: /ai model/i }))
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: new RegExp(DEFAULT_MODEL_SUGGESTIONS[1].value) })).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole('option', { name: new RegExp(DEFAULT_MODEL_SUGGESTIONS[1].value) }))
+    await user.click(screen.getByRole('button', { name: /send/i }))
+
+    expect(onSend).toHaveBeenCalledWith('tailor this resume', { model: DEFAULT_MODEL_SUGGESTIONS[1].value })
+  })
+
+  it('still lets the model field be typed freely, without forcing a catalog match', async () => {
+    const onSend = vi.fn()
+    const user = userEvent.setup()
+    renderComposer({ draft: 'tailor this resume', onSend })
+
+    await user.type(screen.getByRole('combobox', { name: /ai model/i }), 'my-custom-model')
+    await user.click(screen.getByRole('button', { name: /send/i }))
+
+    expect(onSend).toHaveBeenCalledWith('tailor this resume', { model: 'my-custom-model' })
+  })
+
+  it('shows an empty-state message instead of a phantom option list when the catalog has no models', async () => {
+    server.use(http.get('/api/models', () => HttpResponse.json({ models: [] })))
+    const user = userEvent.setup()
+    renderComposer()
+
+    await user.click(screen.getByRole('combobox', { name: /ai model/i }))
+
+    await waitFor(() => expect(screen.getByText(/no models available/i)).toBeInTheDocument())
+    expect(screen.queryByRole('option')).not.toBeInTheDocument()
+  })
+
+  it('shows an error message instead of a phantom option list when the catalog request fails', async () => {
+    server.use(http.get('/api/models', () => new HttpResponse(null, { status: 500 })))
+    const user = userEvent.setup()
+    renderComposer()
+
+    await user.click(screen.getByRole('combobox', { name: /ai model/i }))
+
+    await waitFor(() => expect(screen.getByText(/couldn't load models/i)).toBeInTheDocument())
+    expect(screen.queryByRole('option')).not.toBeInTheDocument()
   })
 })

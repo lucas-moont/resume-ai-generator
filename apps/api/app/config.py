@@ -1,4 +1,7 @@
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
+from typing import Any
 import os
 
 from dotenv import load_dotenv
@@ -15,8 +18,6 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
-DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
-GITHUB_TOKEN = resolve_secret("GITHUB_TOKEN")
 
 # SQLite persistence (B5). ``.as_posix()`` keeps the URL forward-slashed even on Windows,
 # where DATA_DIR resolves to e.g. C:\Users\...\data -- SQLAlchemy's sqlite dialect wants
@@ -55,22 +56,225 @@ GEMINI_MAX_OUTPUT_TOKENS = _env_int("GEMINI_MAX_OUTPUT_TOKENS", 8192, minimum=10
 # Per LLM call: stream heartbeat timeout and HTTP client timeout (local models can be slow).
 LLM_TIMEOUT_SECONDS = _env_int("LLM_TIMEOUT_SECONDS", 900, minimum=60, maximum=3600)
 
-AI_PROVIDER = os.getenv("AI_PROVIDER", "auto").strip().lower() or "auto"
-AI_DEFAULT_MODEL = os.getenv("AI_DEFAULT_MODEL", "").strip() or None
-
-GEMINI_API_KEY = resolve_secret("GEMINI_API_KEY")
-DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
-
-# Anthropic / Claude. Resolved from env var, then the OS keychain. When present it both lets
-# AI_PROVIDER=auto pick Claude and is passed explicitly to the SDK. When absent, the client is
-# built bare so the SDK uses a local `ant auth login` OAuth session — no variable needed here.
-ANTHROPIC_API_KEY = resolve_secret("ANTHROPIC_API_KEY")
-DEFAULT_CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5").strip() or "claude-sonnet-5"
 # Claude output budget for the resume JSON (kept non-streaming; a full resume fits well under this).
 CLAUDE_MAX_OUTPUT_TOKENS = _env_int("CLAUDE_MAX_OUTPUT_TOKENS", 8192, minimum=1024, maximum=32768)
 # Extended thinking for Claude: "off" (default) keeps the whole token budget for the JSON and is
 # fastest/cheapest; "adaptive" lets Claude reason first (raise CLAUDE_MAX_OUTPUT_TOKENS if you do).
 CLAUDE_THINKING = os.getenv("CLAUDE_THINKING", "off").strip().lower() or "off"
+
+
+# --- Runtime AI settings (v3 ticket 01) ------------------------------------------------------
+#
+# AI_PROVIDER, AI_DEFAULT_MODEL, the provider API keys, and DEFAULT_{CLAUDE,GEMINI,OLLAMA}_MODEL
+# used to be frozen at import time above -- a settings write at runtime (future
+# PUT /api/settings/providers|keys, v3 ticket 03) would silently have no effect without a
+# process restart. Below, each is a call-time accessor instead, and get_runtime_config()
+# bundles them for the LLM modules (resolver, clients, model catalog) to read module-qualified
+# (``config_module.get_runtime_config()``), matching the pattern resolve_uploads_dir already
+# uses for DATA_UPLOADS_DIR.
+#
+# Precedence, matching docs/v3-agnostic-settings.md Backend-1/2:
+#   - provider/model preferences: env var -> app_settings row -> hardcoded default.
+#   - API keys: env var -> OS keychain (resolve_secret) -- NEVER app_settings/SQLite.
+#
+# app_settings reads/writes go through main.py's lifespan-owned engine (app.state.db_engine),
+# wired in via set_settings_engine -- a second Engine object on the same on-disk SQLite file
+# would otherwise get built the first time a setting is resolved. The lazy path in
+# _get_settings_engine below is only a fallback for callers outside the FastAPI app (a
+# standalone script, or a test that doesn't go through tests/conftest.py's
+# isolated_runtime_settings_engine fixture); tests inject an isolated in-memory engine via
+# set_settings_engine so no test ever touches the real data/app.db.
+
+_settings_engine: Any = None
+_settings_engine_lock = Lock()
+_app_settings_cache: dict[str, Any] | None = None
+_app_settings_cache_lock = Lock()
+
+
+def set_settings_engine(engine: Any) -> None:
+    """Test seam (module-qualified, like resolve_uploads_dir) -- also called by main.py's
+    lifespan with its own app.state.db_engine, so production never falls through to the lazy
+    fallback below. Pass ``None`` to reset to that lazy on-demand default."""
+    global _settings_engine
+    with _settings_engine_lock:
+        _settings_engine = engine
+    invalidate_runtime_config_cache()
+
+
+def _get_settings_engine() -> Any:
+    global _settings_engine
+    if _settings_engine is None:
+        # Double-checked locking: two concurrent first callers (fallback path only -- see the
+        # comment above) must not each build their own Engine+pool on the same file.
+        with _settings_engine_lock:
+            if _settings_engine is None:
+                # Local import: app.db.engine imports this module at top level, so importing
+                # it back here at module scope would be a circular import. Deferred to call
+                # time, it resolves fine because both modules are already fully loaded by then.
+                from app.db.engine import create_db_engine, init_db
+
+                engine = create_db_engine()
+                init_db(engine)
+                _settings_engine = engine
+    return _settings_engine
+
+
+def invalidate_runtime_config_cache() -> None:
+    """Called after every app_settings write (set_app_setting/delete_app_setting) so the very
+    next get_runtime_config() call re-reads the table instead of serving a stale value."""
+    global _app_settings_cache
+    with _app_settings_cache_lock:
+        _app_settings_cache = None
+
+
+def _app_settings() -> dict[str, Any]:
+    global _app_settings_cache
+    with _app_settings_cache_lock:
+        if _app_settings_cache is None:
+            from sqlmodel import Session
+
+            from app.repositories import app_settings_repo
+
+            with Session(_get_settings_engine()) as session:
+                _app_settings_cache = app_settings_repo.get_all(session)
+        return _app_settings_cache
+
+
+def _app_setting_str(key: str) -> str | None:
+    value = _app_settings().get(key)
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def set_app_setting(key: str, value: Any) -> None:
+    """Write a non-sensitive runtime preference (e.g. ``ai_provider``) and invalidate the
+    cache so it takes effect on the very next get_runtime_config() call -- no restart, no
+    module reload. API keys never go through this path; see secret_store.store_secret."""
+    from sqlmodel import Session
+
+    from app.repositories import app_settings_repo
+
+    with Session(_get_settings_engine()) as session:
+        app_settings_repo.set(session, key, value)
+        session.commit()
+    invalidate_runtime_config_cache()
+
+
+def delete_app_setting(key: str) -> None:
+    from sqlmodel import Session
+
+    from app.repositories import app_settings_repo
+
+    with Session(_get_settings_engine()) as session:
+        app_settings_repo.delete(session, key)
+        session.commit()
+    invalidate_runtime_config_cache()
+
+
+# v3 ticket 11 fix round: hoisted above the resolvers (previously declared below them with the
+# names re-typed inline in each resolver) so "which env var backs which preference" has exactly
+# one source of truth -- the resolvers below and settings_service's lock indicator both read
+# through these instead of a resolver's own literal drifting from is_env_locked's.
+AI_PROVIDER_ENV_VAR = "AI_PROVIDER"
+_DEFAULT_MODEL_ENV_VARS: dict[str, str] = {
+    "claude": "CLAUDE_MODEL",
+    "gemini": "GEMINI_MODEL",
+    "ollama": "OLLAMA_MODEL",
+}
+
+
+def default_model_env_var(provider: str) -> str:
+    """The env var that pins `default_{provider}_model` (see resolve_default_*_model below)."""
+    try:
+        return _DEFAULT_MODEL_ENV_VARS[provider]
+    except KeyError:
+        valid = ", ".join(sorted(_DEFAULT_MODEL_ENV_VARS))
+        raise ValueError(f"Unknown provider {provider!r} -- expected one of: {valid}") from None
+
+
+def is_env_locked(var_name: str) -> bool:
+    """Cheap call-time check (module-qualified, same idiom as the resolve_* accessors below):
+    true when `var_name` is set (non-empty) in the environment, meaning the runtime-config
+    field it backs is pinned there -- a settings write to it has no visible effect until the
+    var is unset (the P2 QA gate bug ticket 11 surfaces in the UI instead of hiding)."""
+    return bool(os.getenv(var_name, "").strip())
+
+
+def resolve_ai_provider() -> str:
+    env_value = os.getenv(AI_PROVIDER_ENV_VAR, "").strip().lower()
+    if env_value:
+        return env_value
+    stored = _app_setting_str("ai_provider")
+    return stored.lower() if stored else "auto"
+
+
+def resolve_ai_default_model() -> str | None:
+    env_value = os.getenv("AI_DEFAULT_MODEL", "").strip()
+    if env_value:
+        return env_value
+    return _app_setting_str("ai_default_model")
+
+
+def resolve_anthropic_api_key() -> str | None:
+    return resolve_secret("ANTHROPIC_API_KEY")
+
+
+def resolve_gemini_api_key() -> str | None:
+    return resolve_secret("GEMINI_API_KEY")
+
+
+def resolve_github_token() -> str | None:
+    return resolve_secret("GITHUB_TOKEN")
+
+
+def resolve_default_claude_model() -> str:
+    env_value = os.getenv(_DEFAULT_MODEL_ENV_VARS["claude"], "").strip()
+    if env_value:
+        return env_value
+    return _app_setting_str("default_claude_model") or "claude-sonnet-5"
+
+
+def resolve_default_gemini_model() -> str:
+    env_value = os.getenv(_DEFAULT_MODEL_ENV_VARS["gemini"], "").strip()
+    if env_value:
+        return env_value
+    return _app_setting_str("default_gemini_model") or "gemini-2.5-flash"
+
+
+def resolve_default_ollama_model() -> str:
+    env_value = os.getenv(_DEFAULT_MODEL_ENV_VARS["ollama"], "").strip()
+    if env_value:
+        return env_value
+    return _app_setting_str("default_ollama_model") or "llama3.2"
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    ai_provider: str
+    ai_default_model: str | None
+    # repr=False: a stray `logger.info(f"{runtime}")`/log line must not leak either key.
+    anthropic_api_key: str | None = field(repr=False)
+    default_claude_model: str
+    gemini_api_key: str | None = field(repr=False)
+    default_gemini_model: str
+    default_ollama_model: str
+
+
+def get_runtime_config() -> RuntimeConfig:
+    """The call-time replacement for the AI constants that used to be frozen at import time.
+    Cheap to call repeatedly: the app_settings-backed fields come from the cache above (one DB
+    read until the next write); API keys are resolved fresh every call (resolve_secret is just
+    an env/keyring lookup, no DB) so a key added via the keychain mid-process is picked up
+    immediately without needing its own cache-invalidation wiring.
+    """
+    return RuntimeConfig(
+        ai_provider=resolve_ai_provider(),
+        ai_default_model=resolve_ai_default_model(),
+        anthropic_api_key=resolve_anthropic_api_key(),
+        default_claude_model=resolve_default_claude_model(),
+        gemini_api_key=resolve_gemini_api_key(),
+        default_gemini_model=resolve_default_gemini_model(),
+        default_ollama_model=resolve_default_ollama_model(),
+    )
 
 
 def resolve_profile_json_path() -> Path:

@@ -81,8 +81,11 @@ class TestHealthAndModels:
         assert isinstance(body["default"], str) and body["default"]
         assert isinstance(body["models"], list) and body["models"]
         for m in body["models"]:
-            assert set(m.keys()) == {"value", "label"}
+            # v3 ticket 03: `provider` is an ADDITIVE field -- value/label are the frozen
+            # compat shape, provider is new.
+            assert set(m.keys()) == {"value", "label", "provider"}
             assert isinstance(m["value"], str) and isinstance(m["label"], str)
+            assert m["provider"] in ("claude", "gemini", "ollama")
         values = [m["value"] for m in body["models"]]
         assert values.count("claude-sonnet-5") == 1
         assert "llama3.2:latest" in values

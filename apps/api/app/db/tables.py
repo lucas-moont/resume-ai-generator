@@ -32,7 +32,8 @@ ForeignKey constraint:
     column) -- when an upload names the chat session it came from, a durable assistant
     ChatMessage is persisted with `meta: {"sourceDocumentId": <SourceDocument.id>}`, so its
     ProfileUpdatedCard survives a session reload instead of reverting to plain text (see
-    routers/profile.py's `_link_upload_to_session`). Deliberately the SAME soft-ref treatment
+    app/services/chat_service.py's `link_upload_to_session`, moved there in ticket 04's router
+    split since it is chat-domain logic). Deliberately the SAME soft-ref treatment
     as the three above, for the same reason as `source_document_id`: the Source Document may
     be deleted independently of the chat history that references it. This key alone is
     persisted -- NEVER a copy of `status` -- so there is only one source of truth: GET
@@ -129,6 +130,23 @@ class ResumeVersion(SQLModel, table=True):
     model_used: str | None = None
     provider_used: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class AppSettings(SQLModel, table=True):
+    """Non-sensitive runtime preferences (v3 ticket 01: config lazy prefactor) -- provider
+    choice, default model, and any future UI-configurable preference. Read/written via
+    app/repositories/app_settings_repo.py and resolved call-time (env -> app_settings ->
+    hardcoded default) by app/config.py's ``get_runtime_config()``.
+
+    API keys NEVER land here -- only in the OS keychain (app/services/secret_store.py). See
+    CONTEXT.md / docs/v3-agnostic-settings.md Backend-1/Backend-2 for the precedence rule.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: str = Field(primary_key=True)
+    value: str  # JSON-encoded
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class ChatMessage(SQLModel, table=True):
