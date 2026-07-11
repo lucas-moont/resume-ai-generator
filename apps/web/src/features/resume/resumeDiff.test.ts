@@ -40,6 +40,26 @@ describe('diffResume', () => {
     ])
   })
 
+  it('still reports a change nested below the section-level summary (e.g. a highlights-only edit), even though before/after text come out identical', () => {
+    // formatSectionValue's "title @ company" slice for experience doesn't
+    // look at highlights — deliberately (no item-level diffing, per the
+    // ticket's scope). The row surfaces with before === after; the card
+    // component is responsible for not rendering that as a false no-op.
+    const before = makeResume({
+      experience: [
+        { company: 'A', title: 'Engineer', start: '2020', highlights: ['old bullet'] },
+      ],
+    })
+    const after = {
+      ...before,
+      experience: [{ company: 'A', title: 'Engineer', start: '2020', highlights: ['new bullet'] }],
+    }
+
+    expect(diffResume(before, after)).toEqual([
+      { key: 'experience', label: 'experience', before: 'Engineer @ A', after: 'Engineer @ A' },
+    ])
+  })
+
   it('treats every non-empty section as newly added (before: null) when there is no previous resume', () => {
     const resume = makeResume({ projects: [] })
 

@@ -33,7 +33,11 @@ export function AppHeader() {
               EditableText as="h1") is the page's main-content heading; this is
               app chrome, same as a product's logo/wordmark. Not tag-qualified in
               packages/resume-templates/resume.css (always `.name`/`.page .name`),
-              so this doesn't touch that shared, out-of-radius stylesheet. */}
+              so this doesn't touch that shared, out-of-radius stylesheet. Before
+              any resume exists (PreviewPanel's empty state), the page has ZERO
+              h1 elements -- deliberate, not a gap to fill: the bug being fixed
+              was *multiple* h1s, not the absence of one, and adding a redundant
+              h1 back here for that interim state would reintroduce it. */}
           <h2 className="font-display text-pretty text-2xl font-semibold tracking-tight text-stone-900 sm:text-3xl dark:text-zinc-50">
             Resume agent
           </h2>
