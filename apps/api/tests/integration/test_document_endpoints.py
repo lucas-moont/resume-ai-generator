@@ -86,7 +86,8 @@ class TestUploadJsonDocument:
     async def test_invalid_json_upload_is_not_persisted(self, client, isolated_data_env):
         """Mirrors TestUploadSizeAndDedup::test_oversize_upload_is_not_persisted: a malformed
         .json is a request error, same treatment as oversize -- no source_documents row and
-        no file written under data/uploads/ (see routers/profile.py's docstring)."""
+        no file written under data/uploads/ (see services/ingestion/pipeline.py's and
+        routers/documents.py's docstrings)."""
         resp = await client.post(
             "/api/profile/documents",
             files={"file": ("broken.json", b"{}", "application/json")},

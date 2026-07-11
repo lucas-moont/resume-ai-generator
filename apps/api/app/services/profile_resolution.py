@@ -5,8 +5,9 @@ DB-backed Living Profile) with a single seam every reader of "the active profile
 through: ``resolve_active_profile(session)``. Three callers converge on it, each dropping
 their own bespoke version of this policy:
 
-- ``app/routers/profile.py`` (``GET /api/profile``, ``GET /api/github/repos``) used to read
-  disk directly with no notion of profile history.
+- ``GET /api/profile`` and ``GET /api/github/repos`` (both lived in ``app/routers/profile.py``
+  at the time; ticket 04 later split ``GET /api/github/repos`` out into ``app/routers/
+  github.py``) used to read disk directly with no notion of profile history.
 - ``app/services/generation_service.py`` used to call the old disk-only
   ``load_active_profile_or_placeholder_pdf`` internally; it now receives an already-resolved
   ``ResolvedProfile`` from its caller (see that module).
