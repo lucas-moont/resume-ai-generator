@@ -6,7 +6,9 @@ import { ChatPanel } from './ChatPanel'
 import { server } from '../../../test/setup'
 import { renderApp } from '../../../test/render'
 import { sseResponse } from '../../../test/msw/sse'
-import { makeChatTurnEvents, makeResume } from '../../../test/factories'
+import { makeApproveChainEvents, makeChatTurnEvents, makeProposal, makeResume } from '../../../test/factories'
+import { mockAnalysisTurn } from '../../../test/msw/proposalScenarios'
+import { __resetChatBackendAvailability } from '../hooks/useChatStream'
 import { useChatStore } from '../store/chatStore'
 import { useResumeStore } from '../../resume/store/resumeStore'
 
@@ -15,6 +17,7 @@ beforeEach(() => {
   useResumeStore.setState({ resume: null, template: 'modern', locale: 'auto' })
   useResumeStore.temporal.getState().clear()
   useChatStore.getState().reset()
+  __resetChatBackendAvailability()
 })
 
 describe('ChatPanel — retry', () => {
@@ -66,5 +69,34 @@ describe('ChatPanel — stop', () => {
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument()
+  })
+})
+
+describe('ChatPanel — Improvement Proposal approve button (v4, F4)', () => {
+  it('clicking "Aprovar e gerar" on the proposal card sends proposalAction: approve in the request body', async () => {
+    const proposal = makeProposal({ proposalId: 11, revision: 1 })
+    server.use(mockAnalysisTurn(1, proposal, { content: 'Here are my suggestions for this job.' }))
+
+    const user = userEvent.setup()
+    renderApp(<ChatPanel />)
+
+    await user.type(screen.getByLabelText(/^message$/i), 'Senior backend engineer JD text')
+    await user.click(screen.getByRole('button', { name: /^send$/i }))
+
+    const approveButton = await screen.findByRole('button', { name: /aprovar e gerar/i })
+
+    let capturedBody: Record<string, unknown> | undefined
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', async ({ request }) => {
+        capturedBody = (await request.json()) as Record<string, unknown>
+        return sseResponse(makeApproveChainEvents(11))
+      }),
+    )
+
+    await user.click(approveButton)
+
+    await waitFor(() => {
+      expect(capturedBody?.proposalAction).toBe('approve')
+    })
   })
 })

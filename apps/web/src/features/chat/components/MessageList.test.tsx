@@ -10,6 +10,7 @@ function renderMessageList(overrides: Partial<Parameters<typeof MessageList>[0]>
       onSuggestion={vi.fn()}
       onApproveDocument={vi.fn()}
       onRejectDocument={vi.fn()}
+      onApproveProposal={vi.fn()}
       {...overrides}
     />,
   )
@@ -93,7 +94,15 @@ describe('MessageList', () => {
     act(() => {
       useChatStore.getState().appendAssistantMessage('second')
     })
-    rerender(<MessageList onRetry={vi.fn()} onSuggestion={vi.fn()} onApproveDocument={vi.fn()} onRejectDocument={vi.fn()} />)
+    rerender(
+      <MessageList
+        onRetry={vi.fn()}
+        onSuggestion={vi.fn()}
+        onApproveDocument={vi.fn()}
+        onRejectDocument={vi.fn()}
+        onApproveProposal={vi.fn()}
+      />,
+    )
 
     expect(scrollEl.scrollTop).toBe(1000) // scrolled to scrollHeight
   })
@@ -110,8 +119,94 @@ describe('MessageList', () => {
     act(() => {
       useChatStore.getState().appendAssistantMessage('second')
     })
-    rerender(<MessageList onRetry={vi.fn()} onSuggestion={vi.fn()} onApproveDocument={vi.fn()} onRejectDocument={vi.fn()} />)
+    rerender(
+      <MessageList
+        onRetry={vi.fn()}
+        onSuggestion={vi.fn()}
+        onApproveDocument={vi.fn()}
+        onRejectDocument={vi.fn()}
+        onApproveProposal={vi.fn()}
+      />,
+    )
 
     expect(scrollEl.scrollTop).toBe(0) // untouched — no forced scroll
+  })
+})
+
+describe('MessageList — Improvement Proposal card + button rule (v4, F4)', () => {
+  it('shows the approve button only on the latest message whose card matches the pending proposal', () => {
+    useChatStore.getState().appendAssistantMessage('Here are my suggestions.', {
+      type: 'proposal',
+      proposalId: 11,
+      status: 'proposed',
+      revision: 1,
+      itemsCount: 3,
+    })
+    useChatStore.getState().appendAssistantMessage('Ajustei a proposta.', {
+      type: 'proposal',
+      proposalId: 11,
+      status: 'proposed',
+      revision: 2,
+      itemsCount: 3,
+    })
+    useChatStore.getState().setPendingProposalId(11)
+
+    renderMessageList()
+
+    expect(screen.getAllByRole('button', { name: /aprovar e gerar/i })).toHaveLength(1)
+    expect(screen.getByText(/revisão 2/i)).toBeInTheDocument()
+  })
+
+  it('renders no approve button once the pending proposal has been approved', () => {
+    useChatStore.getState().appendAssistantMessage('Here are my suggestions.', {
+      type: 'proposal',
+      proposalId: 11,
+      status: 'approved',
+      revision: 1,
+      itemsCount: 3,
+    })
+    useChatStore.getState().setPendingProposalId(null)
+
+    renderMessageList()
+
+    expect(screen.queryByRole('button', { name: /aprovar e gerar/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/aplicada — currículo gerado/i)).toBeInTheDocument()
+  })
+
+  it('clicking the approve button invokes onApproveProposal', () => {
+    useChatStore.getState().appendAssistantMessage('Here are my suggestions.', {
+      type: 'proposal',
+      proposalId: 11,
+      status: 'proposed',
+      revision: 1,
+      itemsCount: 3,
+    })
+    useChatStore.getState().setPendingProposalId(11)
+    const onApproveProposal = vi.fn()
+
+    renderMessageList({ onApproveProposal })
+    screen.getByRole('button', { name: /aprovar e gerar/i }).click()
+
+    expect(onApproveProposal).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('MessageList — analyzing_job typing indicator (v4, F4)', () => {
+  it('shows a typing indicator instead of ProgressCard while streaming.step is analyzing_job', () => {
+    useChatStore.getState().updateStreaming({ step: 'analyzing_job', progress: 20, message: '' })
+
+    renderMessageList()
+
+    expect(screen.getByRole('status', { name: /digitando/i })).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+
+  it('keeps ProgressCard (with its progressbar) for generation steps', () => {
+    useChatStore.getState().updateStreaming({ step: 'calling_ai', progress: 40, message: '' })
+
+    renderMessageList()
+
+    expect(screen.getByRole('progressbar')).toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: /digitando/i })).not.toBeInTheDocument()
   })
 })

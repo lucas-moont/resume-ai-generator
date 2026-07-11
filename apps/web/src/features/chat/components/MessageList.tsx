@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useChatStore } from '../store/chatStore'
+import { useChatStore, type ChatMessage } from '../store/chatStore'
 import { UserMessage } from './UserMessage'
 import { AssistantMessage } from './AssistantMessage'
 import { ProgressCard } from './cards/ProgressCard'
@@ -7,19 +7,69 @@ import { ChatEmptyState } from './ChatEmptyState'
 
 const BOTTOM_THRESHOLD_PX = 80
 
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/** v4, F4, spec §3.5: the assistant "thinking" indicator during the `analyzing_job` heartbeat
+ * (Analysis / Proposal Turn classification) — swapped in for ProgressCard, since there's no
+ * multi-step checklist to show for a single LLM call. `prefers-reduced-motion` freezes the
+ * dots (still communicates "busy") instead of removing them. */
+function TypingIndicator() {
+  const [reducedMotion] = useState(prefersReducedMotion)
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label="Assistente está digitando"
+      className="inline-flex items-center gap-1.5 rounded-2xl rounded-tl-sm border border-stone-200 bg-white px-4 py-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className={`h-1.5 w-1.5 rounded-full bg-stone-400 dark:bg-zinc-500 ${reducedMotion ? '' : 'animate-bounce'}`}
+          style={reducedMotion ? undefined : { animationDelay: `${i * 120}ms` }}
+        />
+      ))}
+    </div>
+  )
+}
+
+/** v4, F4, spec §5 button rule: "Aprovar e gerar" only appears on the LATEST message whose
+ * card is a still-`proposed` proposal matching the session's Pending Proposal id — after an
+ * adjust two bubbles share that id (F3 deliberately leaves the older one's status alone), and
+ * only the newer bubble should offer the shortcut. */
+function findLatestPendingProposalMessageId(
+  messages: ChatMessage[],
+  pendingProposalId: number | null,
+): string | null {
+  if (pendingProposalId === null) return null
+  let latest: string | null = null
+  for (const m of messages) {
+    if (m.card?.type === 'proposal' && m.card.proposalId === pendingProposalId && m.card.status === 'proposed') {
+      latest = m.id
+    }
+  }
+  return latest
+}
+
 export function MessageList({
   onRetry,
   onSuggestion,
   onApproveDocument,
   onRejectDocument,
+  onApproveProposal,
 }: {
   onRetry: (message: string) => void
   onSuggestion: (message: string) => void
   onApproveDocument: (documentId: number, messageId: string) => Promise<void>
   onRejectDocument: (documentId: number, messageId: string) => Promise<void>
+  onApproveProposal: () => void
 }) {
   const messages = useChatStore((s) => s.messages)
   const streaming = useChatStore((s) => s.streaming)
+  const pendingProposalId = useChatStore((s) => s.pendingProposalId)
   const containerRef = useRef<HTMLDivElement>(null)
   const [pinnedToBottom, setPinnedToBottom] = useState(true)
 
@@ -44,6 +94,8 @@ export function MessageList({
     return <ChatEmptyState onSuggestion={onSuggestion} />
   }
 
+  const latestPendingProposalMessageId = findLatestPendingProposalMessageId(messages, pendingProposalId)
+
   return (
     <div
       ref={containerRef}
@@ -63,13 +115,15 @@ export function MessageList({
             onRetry={onRetry}
             onApproveDocument={onApproveDocument}
             onRejectDocument={onRejectDocument}
+            onApproveProposal={onApproveProposal}
+            isLatestPendingProposal={message.id === latestPendingProposalMessageId}
           />
         ),
       )}
       {streaming && (
         <div className="flex justify-start">
           <div className="w-full max-w-[85%]">
-            <ProgressCard streaming={streaming} />
+            {streaming.step === 'analyzing_job' ? <TypingIndicator /> : <ProgressCard streaming={streaming} />}
           </div>
         </div>
       )}

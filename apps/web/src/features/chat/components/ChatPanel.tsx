@@ -103,6 +103,12 @@ export function ChatPanel() {
     [],
   )
 
+  // v4, F4: the "Aprovar e gerar" button shortcut (spec §5) — same turn as free-text approval,
+  // just with the deterministic `proposalAction` flag so the backend skips LLM classification.
+  const handleApproveProposal = useCallback(() => {
+    void send('Aprovar e gerar', { proposalAction: 'approve' })
+  }, [send])
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <MessageList
@@ -110,6 +116,7 @@ export function ChatPanel() {
         onSuggestion={handleSuggestion}
         onApproveDocument={handleApproveDocument}
         onRejectDocument={handleRejectDocument}
+        onApproveProposal={handleApproveProposal}
       />
       <Composer
         draft={draft}

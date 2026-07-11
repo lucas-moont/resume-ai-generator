@@ -1,10 +1,19 @@
 import { WORK_STEPS } from '../../workSteps'
 import type { StreamingState } from '../../store/chatStore'
 
+// v4, F4: `analyzing_job` (WORK_STEPS[0], added by F3 per spec §3.5) is the Analysis/Proposal
+// Turn heartbeat — MessageList swaps in a typing indicator for that step instead of mounting
+// this card at all, so `streaming.step` is never `analyzing_job` while ProgressCard is on
+// screen. Keeping it in the checklist below would render "Analyzing job description" as
+// already-completed on every ordinary generation turn (approve-chain, refine, ...), which
+// never went through that step in the first place — excluded from the rendered list here,
+// not from WORK_STEPS itself (other consumers still need that entry for its label).
+const CHECKLIST_STEPS = WORK_STEPS.filter((step) => step.id !== 'analyzing_job')
+
 export function ProgressCard({ streaming }: { streaming: StreamingState }) {
   const stepIndex = Math.max(
     0,
-    WORK_STEPS.findIndex((s) => s.id === streaming.step),
+    CHECKLIST_STEPS.findIndex((s) => s.id === streaming.step),
   )
   const progress = Math.max(0, Math.min(100, Math.round(streaming.progress)))
 
@@ -33,7 +42,7 @@ export function ProgressCard({ streaming }: { streaming: StreamingState }) {
         />
       </div>
       <ol className="grid gap-1.5 text-xs text-stone-500 dark:text-zinc-500">
-        {WORK_STEPS.map((step, idx) => (
+        {CHECKLIST_STEPS.map((step, idx) => (
           <li
             key={step.id}
             className={
