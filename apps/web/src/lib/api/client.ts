@@ -56,3 +56,63 @@ export async function requestVoid(path: string, init?: RequestInit): Promise<voi
   const response = await fetch(path, init)
   if (!response.ok) throw new ApiError(await readErrorDetail(response), response.status)
 }
+
+export interface MultipartOptions {
+  onProgress?: (percent: number) => void
+  signal?: AbortSignal
+}
+
+/**
+ * POSTs FormData via XMLHttpRequest rather than fetch: fetch has no
+ * cross-browser upload-progress event, and the upload feature's progress
+ * bar needs one. Mirrors requestJson's ApiError contract (throws with the
+ * parsed `detail` field on a non-2xx response).
+ */
+export function requestMultipart<T>(
+  path: string,
+  formData: FormData,
+  { onProgress, signal }: MultipartOptions = {},
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress(Math.round((event.loaded / event.total) * 100))
+      }
+    }
+
+    xhr.onload = () => {
+      // Some XHR mocks (incl. @mswjs/interceptors, used in this repo's tests)
+      // don't reliably suppress "load" after xhr.abort() the way a real
+      // browser does — guard explicitly rather than relying on that.
+      if (signal?.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'))
+        return
+      }
+      let body: unknown = {}
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : {}
+      } catch {
+        // Non-JSON body (e.g. an unhandled server error page) — treated as empty.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body as T)
+      } else {
+        reject(new ApiError((body as { detail?: unknown }).detail, xhr.status))
+      }
+    }
+
+    xhr.onerror = () => reject(new ApiError('Network error', 0))
+    xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'))
+    signal?.addEventListener('abort', () => xhr.abort())
+
+    xhr.send(formData)
+  })
+}

@@ -16,10 +16,9 @@ def resolve_requested_model(model: str | None) -> str | None:
 
 
 def get_session(request: Request) -> Iterator[Session]:
-    """Real DB session dependency (B5). Not yet used by any route -- the legacy generate/
-    refine/profile endpoints keep reading from disk (see app/services/profile_service.py);
-    B6's chat routes are the first consumers. Yields a session from the factory bound to the
-    engine main.py's lifespan stores on ``app.state.db_engine``. Tests override this via
+    """Real DB session dependency (B5), used by every profile/generate/refine/chat route as of
+    v2 ticket 01. Yields a session from the factory bound to the engine main.py's lifespan
+    stores on ``app.state.db_engine``. Tests override this via
     ``app.dependency_overrides[get_session]`` (see tests/conftest.py).
     """
     with new_session(request.app.state.db_engine) as session:

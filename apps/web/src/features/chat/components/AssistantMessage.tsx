@@ -1,13 +1,19 @@
 import type { ChatMessage } from '../store/chatStore'
 import { ResumeUpdatedCard } from './cards/ResumeUpdatedCard'
 import { ErrorCard } from './cards/ErrorCard'
+import { ProfileUpdatedCard } from './cards/ProfileUpdatedCard'
+import { ProfileUpdateAppliedCard } from './cards/ProfileUpdateAppliedCard'
 
 export function AssistantMessage({
   message,
   onRetry,
+  onApproveDocument,
+  onRejectDocument,
 }: {
   message: ChatMessage
   onRetry: (retryMessage: string) => void
+  onApproveDocument: (documentId: number, messageId: string) => Promise<void>
+  onRejectDocument: (documentId: number, messageId: string) => Promise<void>
 }) {
   return (
     <div className="flex justify-start">
@@ -17,6 +23,14 @@ export function AssistantMessage({
         </div>
         {message.card?.type === 'resumeUpdated' && <ResumeUpdatedCard card={message.card} />}
         {message.card?.type === 'error' && <ErrorCard card={message.card} onRetry={onRetry} />}
+        {message.card?.type === 'profileUpdated' && (
+          <ProfileUpdatedCard
+            card={message.card}
+            onApprove={(documentId) => onApproveDocument(documentId, message.id)}
+            onReject={(documentId) => onRejectDocument(documentId, message.id)}
+          />
+        )}
+        {message.card?.type === 'profileUpdateApplied' && <ProfileUpdateAppliedCard card={message.card} />}
       </div>
     </div>
   )

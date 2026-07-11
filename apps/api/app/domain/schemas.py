@@ -91,3 +91,13 @@ class ChatMessageRequest(BaseModel):
     model: str | None = None
     locale: str | None = None
     jobDescription: str | None = None
+    # v2 ticket 11: the client's own in-memory resume (post inline-edit), sent whenever it has
+    # an active resume -- lets a chat `refine` turn start from what the user is actually looking
+    # at instead of the last version the server persisted. Validated by pydantic like any other
+    # field (an invalid shape here is a normal 422, before the stream ever starts). Ignored by
+    # every intent except `refine` -- see chat_service.handle_chat_turn.
+    resume: ResumeDocument | None = None
+
+
+class RevertProfileRequest(BaseModel):
+    toVersion: int

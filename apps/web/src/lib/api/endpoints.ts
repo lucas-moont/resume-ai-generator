@@ -1,4 +1,5 @@
 import type {
+  ApplySourceDocumentResponse,
   ChatMessageStreamRequest,
   ChatSessionDetailResponse,
   ChatSessionListResponse,
@@ -9,8 +10,17 @@ import type {
   GithubReposResponse,
   ModelsResponse,
   RefineRequest,
+  UploadSourceDocumentResponse,
 } from './dto'
-import { postInit, requestBlob, requestJson, requestStream, requestVoid } from './client'
+import {
+  postInit,
+  requestBlob,
+  requestJson,
+  requestMultipart,
+  requestStream,
+  requestVoid,
+  type MultipartOptions,
+} from './client'
 import { parseSseStream, type SseEvent } from './sse'
 
 export { ApiError } from './client'
@@ -73,4 +83,38 @@ export async function chatMessageStream(
     postInit(payload, signal),
   )
   return parseSseStream(response)
+}
+
+// --- Living Profile: Source Documents (v2, F7) ---
+
+export interface UploadSourceDocumentOptions extends MultipartOptions {
+  /** v2 ticket 10: the active chat session this upload came from, if any -- lets the backend
+   * persist a durable link (chat_messages.meta) so the ProfileUpdatedCard survives a session
+   * reload. Omitted (not sent as a field at all) when there is no active session. */
+  sessionId?: number
+}
+
+export function uploadSourceDocument(
+  file: File,
+  options: UploadSourceDocumentOptions = {},
+): Promise<UploadSourceDocumentResponse> {
+  const { sessionId, ...multipartOptions } = options
+  const formData = new FormData()
+  formData.append('file', file)
+  if (sessionId !== undefined) formData.append('sessionId', String(sessionId))
+  return requestMultipart<UploadSourceDocumentResponse>('/api/profile/documents', formData, multipartOptions)
+}
+
+export function applySourceDocument(
+  documentId: number,
+  ops?: number[],
+): Promise<ApplySourceDocumentResponse> {
+  return requestJson<ApplySourceDocumentResponse>(
+    `/api/profile/documents/${documentId}/apply`,
+    postInit({ ops }),
+  )
+}
+
+export function rejectSourceDocument(documentId: number): Promise<void> {
+  return requestVoid(`/api/profile/documents/${documentId}/reject`, { method: 'POST' })
 }

@@ -140,12 +140,12 @@ class TestChatRepo:
 
 class TestResumeRepo:
     def test_insert_and_get(self, session):
-        row = resume_repo.insert_version(session, data="{}", template_id="classic")
+        row = resume_repo.insert_version(session, data="{}")
 
         found = resume_repo.get(session, row.id)
 
         assert found is not None
-        assert found.template_id == "classic"
+        assert found.data == "{}"
 
     def test_parent_version_chaining(self, session):
         parent = resume_repo.insert_version(session, data='{"v": 1}')

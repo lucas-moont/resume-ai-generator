@@ -1,7 +1,15 @@
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup'
-import { ApiError, postInit, requestBlob, requestJson, requestStream, requestVoid } from './client'
+import {
+  ApiError,
+  postInit,
+  requestBlob,
+  requestJson,
+  requestMultipart,
+  requestStream,
+  requestVoid,
+} from './client'
 
 describe('postInit', () => {
   it('builds a JSON POST RequestInit carrying the body and an optional abort signal', () => {
@@ -116,6 +124,102 @@ describe('requestStream', () => {
     await expect(requestStream('/api/test-stream-error', postInit({}))).rejects.toThrow(
       'Model not found',
     )
+  })
+})
+
+describe('requestMultipart', () => {
+  it('uploads FormData and resolves the parsed JSON body on success', async () => {
+    // Body-content fidelity (filename/bytes) isn't asserted here: jsdom's
+    // File doesn't round-trip through @mswjs/interceptors' Node-side
+    // multipart re-serialization in this test environment (a known
+    // jsdom/undici interop gap, not something this client controls) — a
+    // real browser XHR send doesn't go through that layer. What's under
+    // test is requestMultipart's own contract: POST + parse the JSON body.
+    server.use(
+      http.post('/api/test-multipart-ok', () =>
+        HttpResponse.json({ documentId: 1, status: 'proposed' }, { status: 202 }),
+      ),
+    )
+
+    const formData = new FormData()
+    formData.append('file', new File(['{"fullName":"Ada"}'], 'profile.json', { type: 'application/json' }))
+
+    const result = await requestMultipart('/api/test-multipart-ok', formData)
+
+    expect(result).toEqual({ documentId: 1, status: 'proposed' })
+  })
+
+  it('reports upload progress via onProgress, ending at 100', async () => {
+    server.use(http.post('/api/test-multipart-progress', () => HttpResponse.json({ ok: true })))
+    const progressUpdates: number[] = []
+    const formData = new FormData()
+    formData.append('file', new File(['hello world'], 'notes.md'))
+
+    await requestMultipart('/api/test-multipart-progress', formData, {
+      onProgress: (pct) => progressUpdates.push(pct),
+    })
+
+    expect(progressUpdates.length).toBeGreaterThan(0)
+    expect(progressUpdates.at(-1)).toBe(100)
+  })
+
+  it('throws an ApiError carrying the detail on a non-2xx response', async () => {
+    server.use(
+      http.post('/api/test-multipart-error', () =>
+        HttpResponse.json({ detail: 'file too large' }, { status: 413 }),
+      ),
+    )
+    const formData = new FormData()
+    formData.append('file', new File(['x'], 'a.pdf'))
+
+    let caught: unknown
+    try {
+      await requestMultipart('/api/test-multipart-error', formData)
+    } catch (e) {
+      caught = e
+    }
+
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).detail).toBe('file too large')
+    expect((caught as ApiError).status).toBe(413)
+  })
+
+  it('rejects with an AbortError if the signal was aborted mid-flight, even if the mock still delivers a response', async () => {
+    // @mswjs/interceptors' XHR mock doesn't reliably suppress "load" after
+    // xhr.abort() the way a real browser does — this proves requestMultipart
+    // guards against that itself rather than trusting the mock's abort semantics.
+    server.use(
+      http.post('/api/test-multipart-late-abort', async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        return HttpResponse.json({ documentId: 1, status: 'proposed' })
+      }),
+    )
+    const controller = new AbortController()
+    const formData = new FormData()
+    formData.append('file', new File(['x'], 'a.json'))
+
+    const pending = requestMultipart('/api/test-multipart-late-abort', formData, {
+      signal: controller.signal,
+    })
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('rejects with an AbortError when the signal is already aborted, without sending a request', async () => {
+    server.use(
+      http.post('/api/test-multipart-abort', () => {
+        throw new Error('should never be called — signal was already aborted')
+      }),
+    )
+    const controller = new AbortController()
+    controller.abort()
+    const formData = new FormData()
+    formData.append('file', new File(['x'], 'a.json'))
+
+    await expect(
+      requestMultipart('/api/test-multipart-abort', formData, { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
   })
 })
 

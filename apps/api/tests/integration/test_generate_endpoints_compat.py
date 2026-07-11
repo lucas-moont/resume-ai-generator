@@ -227,13 +227,14 @@ class TestGenerateStreamEndpoint:
 
 class TestGeneratePlaceholderExtraction:
     """The B4 refactor split /api/generate's "profile looks like the placeholder -> extract
-    from Profile.pdf" branch across profile_service.py and generation_service.py. These tests
-    exercise that branch specifically: an earlier version of the B4 refactor pre-formatted the
-    extraction-error message inside generation_service.py AND let the router's generic
-    except-Exception wrap it a second time, producing a doubled "LLM error (...): LLM error
-    (...) extracting Profile.pdf: ..." message -- a real bug the B1-era tests (which only ever
-    use a populated, non-placeholder profile) could not have caught. These tests would fail
-    against that regression.
+    from Profile.pdf" branch across profile_service.py and generation_service.py (as of v2
+    ticket 01, the placeholder/PDF resolution piece lives in profile_resolution.py instead --
+    see that module's docstring). These tests exercise that branch specifically: an earlier
+    version of the B4 refactor pre-formatted the extraction-error message inside
+    generation_service.py AND let the router's generic except-Exception wrap it a second time,
+    producing a doubled "LLM error (...): LLM error (...) extracting Profile.pdf: ..." message
+    -- a real bug the B1-era tests (which only ever use a populated, non-placeholder profile)
+    could not have caught. These tests would fail against that regression.
 
     Also covers the team-lead-authorized B4 fix: /api/generate/stream's extraction-error path
     used to be the one error path in the whole app that skipped redact_secrets (found in B3's
@@ -246,10 +247,10 @@ class TestGeneratePlaceholderExtraction:
         )
 
     def _mock_pdf_excerpt(self, monkeypatch, text: str = "Real PDF text about the candidate.") -> None:
-        from app.services import profile_service as profile_service_module
+        from app.services import profile_resolution as profile_resolution_module
 
         monkeypatch.setattr(
-            profile_service_module,
+            profile_resolution_module,
             "load_profile_pdf_excerpt",
             lambda: (text, Path("/fake/Profile.pdf"), None),
         )

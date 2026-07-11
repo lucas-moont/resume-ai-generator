@@ -2,9 +2,10 @@ import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { server } from '../../test/setup'
 import { sseResponse } from '../../test/msw/sse'
-import { makeResume, makeStageEvents } from '../../test/factories'
+import { makeResume, makeStageEvents, makeUploadResponse } from '../../test/factories'
 import {
   ApiError,
+  applySourceDocument,
   chatMessageStream,
   createChatSession,
   deleteChatSession,
@@ -15,6 +16,8 @@ import {
   getChatSession,
   listChatSessions,
   refineStream,
+  rejectSourceDocument,
+  uploadSourceDocument,
 } from './endpoints'
 
 describe('fetchModels', () => {
@@ -252,5 +255,87 @@ describe('chatMessageStream', () => {
       caught = e
     }
     expect(caught).toBeInstanceOf(ApiError)
+  })
+})
+
+describe('uploadSourceDocument', () => {
+  it('posts multipart to /api/profile/documents and resolves the parsed contract', async () => {
+    server.use(
+      http.post('/api/profile/documents', () =>
+        HttpResponse.json(makeUploadResponse({ documentId: 9 }), { status: 202 }),
+      ),
+    )
+
+    const file = new File(['{"fullName":"Ada"}'], 'profile.json', { type: 'application/json' })
+    const result = await uploadSourceDocument(file)
+
+    expect(result).toMatchObject({ documentId: 9, status: 'proposed' })
+    expect(result.diffSummary).toEqual(['1 new skill: Rust'])
+  })
+
+  it('forwards onProgress and the abort signal through to the client', async () => {
+    server.use(http.post('/api/profile/documents', () => HttpResponse.json(makeUploadResponse())))
+
+    const progress: number[] = []
+    const file = new File(['# notes'], 'notes.md')
+    await uploadSourceDocument(file, { onProgress: (pct) => progress.push(pct) })
+
+    expect(progress.at(-1)).toBe(100)
+  })
+
+  it('rejects with an ApiError carrying the detail when extraction fails outright (e.g. oversize on the server)', async () => {
+    server.use(
+      http.post('/api/profile/documents', () =>
+        HttpResponse.json({ detail: 'File exceeds the 10MB limit' }, { status: 413 }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await uploadSourceDocument(new File(['x'], 'huge.pdf'))
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).detail).toBe('File exceeds the 10MB limit')
+  })
+})
+
+describe('applySourceDocument', () => {
+  it('posts to the apply endpoint with no ops (apply-all) and resolves the new version', async () => {
+    let capturedBody: unknown
+    server.use(
+      http.post('/api/profile/documents/9/apply', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({ profileVersion: 4, applied: 2, skipped: 0 })
+      }),
+    )
+
+    const result = await applySourceDocument(9)
+
+    expect(result).toEqual({ profileVersion: 4, applied: 2, skipped: 0 })
+    expect(capturedBody).toEqual({})
+  })
+
+  it('posts a subset of ops when provided', async () => {
+    let capturedBody: unknown
+    server.use(
+      http.post('/api/profile/documents/9/apply', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({ profileVersion: 5, applied: 1, skipped: 1 })
+      }),
+    )
+
+    await applySourceDocument(9, [0])
+
+    expect(capturedBody).toEqual({ ops: [0] })
+  })
+})
+
+describe('rejectSourceDocument', () => {
+  it('posts to the reject endpoint and resolves with no content', async () => {
+    server.use(http.post('/api/profile/documents/9/reject', () => new HttpResponse(null, { status: 204 })))
+
+    await expect(rejectSourceDocument(9)).resolves.toBeUndefined()
   })
 })

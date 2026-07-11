@@ -3,6 +3,14 @@ from __future__ import annotations
 import json
 import re
 
+from app.domain.entity_identity import (
+    build_skill_lookup,
+    entity_key,
+    match_education_entries,
+    match_experience_entries,
+    match_projects_by_name,
+    skill_token,
+)
 from app.models import ResumeDocument
 from app.services.html_sanitize import sanitize_resume_for_display
 
@@ -267,10 +275,6 @@ def _fill_missing_scalars_from_fallback(
             merged[key] = b if isinstance(b, str) else ("" if b is None else str(b))
 
 
-def _norm_key(value: object) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
-
-
 def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
     """Build a tailored resume that cannot fabricate facts.
 
@@ -341,41 +345,10 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
     patch_exp = patch.get("experience") if isinstance(patch.get("experience"), list) else []
     matched_any = False
     if base_exp:
-        valid_patch_exp = [e for e in patch_exp if isinstance(e, dict)]
-        used_exp = [False] * len(valid_patch_exp)
-        by_company_start: dict[str, list[int]] = {}
-        by_company: dict[str, list[int]] = {}
-        for idx, e in enumerate(valid_patch_exp):
-            ck = _norm_key(e.get("company"))
-            if not ck:
-                continue
-            by_company.setdefault(ck, []).append(idx)
-            sk = _norm_key(e.get("start"))
-            if sk:
-                by_company_start.setdefault(f"{ck}|{sk}", []).append(idx)
-
-        def _claim_exp(indices: list[int]) -> dict | None:
-            for idx in indices:
-                if not used_exp[idx]:
-                    used_exp[idx] = True
-                    return valid_patch_exp[idx]
-            return None
-
-        matched_for: list[dict | None] = [None] * len(base_exp)
-        # Pass 1: company + start date -- the primary, unique, language-independent match.
-        for i, base in enumerate(base_exp):
-            ck, sk = _norm_key(base.get("company")), _norm_key(base.get("start"))
-            if ck and sk:
-                matched_for[i] = _claim_exp(by_company_start.get(f"{ck}|{sk}", []))
-        # Pass 2: company-only fallback for any role the date pass missed (e.g. the LLM
-        # slightly reformatted the date). Still consumes at most one unused patch entry per
-        # base role, so a second same-company role can never re-grab an entry already claimed.
-        for i, base in enumerate(base_exp):
-            if matched_for[i] is not None:
-                continue
-            ck = _norm_key(base.get("company"))
-            if ck:
-                matched_for[i] = _claim_exp(by_company.get(ck, []))
+        # Identity match is now app.domain.entity_identity.match_experience_entries: (company,
+        # start) primary key, company-only fallback, each candidate claimed at most once. See
+        # that module for the full rationale (same two-pass algorithm, extracted verbatim).
+        matched_for = match_experience_entries(base_exp, patch_exp)
 
         anchored_exp = []
         for i, base in enumerate(base_exp):
@@ -410,13 +383,10 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
     base_proj = out.get("projects") or []
     patch_proj = patch.get("projects") if isinstance(patch.get("projects"), list) else []
     if base_proj:
-        by_name = {}
-        for p in patch_proj:
-            if isinstance(p, dict) and _norm_key(p.get("name")):
-                by_name.setdefault(_norm_key(p.get("name")), p)
+        by_name = match_projects_by_name(patch_proj)
         anchored_proj = []
         for base in base_proj:
-            match = by_name.get(_norm_key(base.get("name")))
+            match = by_name.get(entity_key(base.get("name")))
             if match and isinstance(match.get("description"), str) and match["description"].strip():
                 base = {**base, "description": match["description"].strip()}
             anchored_proj.append(base)
@@ -432,25 +402,10 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
     base_edu = out.get("education") or []
     if base_edu:
         patch_edu = patch.get("education") if isinstance(patch.get("education"), list) else []
-        valid_patch_edu = [e for e in patch_edu if isinstance(e, dict)]
-        used_edu = [False] * len(valid_patch_edu)
-        by_institution: dict[str, list[int]] = {}
-        for idx, e in enumerate(valid_patch_edu):
-            ik = _norm_key(e.get("institution"))
-            if ik:
-                by_institution.setdefault(ik, []).append(idx)
-
-        def _claim_edu(indices: list[int]) -> dict | None:
-            for idx in indices:
-                if not used_edu[idx]:
-                    used_edu[idx] = True
-                    return valid_patch_edu[idx]
-            return None
-
+        matched_edu = match_education_entries(base_edu, patch_edu)
         anchored_edu = []
-        for base in base_edu:
-            ik = _norm_key(base.get("institution"))
-            match = _claim_edu(by_institution.get(ik, [])) if ik else None
+        for i, base in enumerate(base_edu):
+            match = matched_edu[i]
             if match is not None:
                 new_edu = dict(base)
                 llm_degree = match.get("degree")
@@ -471,10 +426,13 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
     base_skills = [s for s in (out.get("skills") or []) if isinstance(s, str) and s.strip()]
     patch_skills = [s for s in (patch.get("skills") or []) if isinstance(s, str) and s.strip()]
     if base_skills:
-        lookup = {_norm_key(s): s for s in base_skills}
+        # Skills are matched by app.domain.entity_identity.skill_token, NOT entity_key --
+        # skill_token preserves ".+#-" (e.g. "C++" != "C"), a deliberate distinction from the
+        # entity-name matching above (see that module's docstring).
+        lookup = build_skill_lookup(base_skills)
         ordered: list[str] = []
         for s in patch_skills:
-            canon = lookup.get(_norm_key(s))
+            canon = lookup.get(skill_token(s))
             if canon and canon not in ordered:
                 ordered.append(canon)
         for s in base_skills:

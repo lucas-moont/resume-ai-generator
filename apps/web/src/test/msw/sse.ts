@@ -5,7 +5,7 @@ import { HttpResponse } from 'msw'
  * `event: <event>\ndata: <json>\n\n`.
  */
 export interface MockSseEvent {
-  event: 'stage' | 'resume' | 'message' | 'done' | 'error' | (string & {})
+  event: 'stage' | 'resume' | 'message' | 'profile_update' | 'done' | 'error' | (string & {})
   data: unknown
   /** Wait before emitting this frame, to simulate real streaming pacing. */
   delayMs?: number

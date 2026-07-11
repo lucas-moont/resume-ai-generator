@@ -1,10 +1,10 @@
 """Repository for profile_versions (B5).
 
-Disk stays the source of truth for the legacy /api/generate, /api/refine, /api/profile
-endpoints in v1 (see app/services/profile_service.py, untouched by B5) -- this repository
-exists so the lifespan seed step and, starting in v2, the chat pipeline have a place to
-read/write profile history. Callers own the transaction (commit/rollback); functions here
-only add/flush so multiple calls on the same Session compose into one transaction.
+As of v2 ticket 01, the DB's active version (highest ``version`` row here) is the primary
+source every reader goes through -- see app/services/profile_resolution.py, which falls back
+to disk only when this table is empty. Callers own the transaction (commit/rollback);
+functions here only add/flush so multiple calls on the same Session compose into one
+transaction.
 """
 
 from __future__ import annotations
@@ -23,6 +23,12 @@ def get_active(session: Session) -> ProfileVersion | None:
 
 def get_by_version(session: Session, version: int) -> ProfileVersion | None:
     return session.exec(select(ProfileVersion).where(ProfileVersion.version == version)).first()
+
+
+def list_versions(session: Session) -> list[ProfileVersion]:
+    """Full version history, newest first (history is append-only -- see CONTEXT.md's
+    "Profile Version" -- so this ordering doubles as reverse-chronological)."""
+    return list(session.exec(select(ProfileVersion).order_by(ProfileVersion.version.desc())).all())
 
 
 def insert_version(

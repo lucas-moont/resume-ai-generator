@@ -74,6 +74,22 @@ export interface ChatMessageDto {
   intent: string | null
   resumeVersionId: number | null
   createdAt: string
+  /** v2 ticket 10: present (non-null) when this message is linked to a Source Document
+   * upload. GET /api/chat/sessions/{id} joins source_documents LIVE, at read time, for its
+   * CURRENT status/diffSummary/opsCount — never a stale copy (see ChatMessageSourceDocumentDto). */
+  sourceDocument: ChatMessageSourceDocumentDto | null
+}
+
+/** v2 ticket 10: shape of ChatMessageDto's `sourceDocument` field — mirrors the fields
+ * ProfileUpdatedCard (chatStore.ts) needs, minus `type` (the card variant is decided by the
+ * caller reconstructing it, not carried on the wire). */
+export interface ChatMessageSourceDocumentDto {
+  documentId: number
+  filename: string
+  status: SourceDocumentStatus
+  diffSummary: string[]
+  opsCount: number
+  error: string | null
 }
 
 export interface ChatSessionDetailResponse {
@@ -97,6 +113,11 @@ export interface ChatMessageStreamRequest {
   model?: string
   locale?: string
   jobDescription?: string
+  /** v2 ticket 11: the client's own in-memory resume (post inline-edit, never persisted),
+   * sent whenever `resumeStore` has an active resume — lets a chat `refine` turn start from
+   * what the user is actually looking at instead of the last version the server persisted.
+   * Ignored server-side by every intent except `refine`. */
+  resume?: ResumeDocument
 }
 
 // Chat-stream-only SSE payloads (stage/error are shared with StreamStagePayload/StreamErrorPayload above).
@@ -113,4 +134,55 @@ export interface ChatDoneEventPayload {
   progress?: number
   messageId: number
   resumeVersionId: number | null
+}
+
+/** Chat-stream-only: emitted for the `profile_update` intent (v2, ticket 05/09)
+ * — the Living Profile changed via chat, source_kind='chat'. Never carried by
+ * the legacy generate/refine streams (that intent is chat-only). */
+export interface ChatProfileUpdateEventPayload {
+  profileVersion: number
+  summary: string
+}
+
+// --- Living Profile: Source Documents (v2, F7 — ticket 07) ---
+// Contract per docs/v2-living-profile.md item 3 + ticket 04's addendum
+// (proposedPatch/diffSummary land in the same 202 response once the merge
+// step exists server-side — no polling).
+
+export type SourceDocumentMediaType = 'json' | 'md' | 'pdf'
+
+export type SourceDocumentStatus =
+  | 'stored'
+  | 'extracted'
+  | 'proposed'
+  | 'applied'
+  | 'rejected'
+  | 'failed'
+
+export interface PatchOp {
+  op: 'add' | 'replace' | 'remove'
+  path: string
+  value?: unknown
+  reason: string
+  confidence: number
+  sourceExcerpt: string
+}
+
+export interface UploadSourceDocumentResponse {
+  documentId: number
+  status: SourceDocumentStatus
+  proposedPatch?: PatchOp[]
+  diffSummary?: string[]
+  /** Part of the wire contract (spec item 3) and expected from the backend,
+   * but no frontend consumer surfaces it yet — ProfileUpdatedCard only
+   * renders diffSummary/opsCount today. Deliberately deferred (ticket 07);
+   * see useFileUpload's mapping to SettledUpload, which drops this field. */
+  extractedPreview?: unknown
+  error?: string
+}
+
+export interface ApplySourceDocumentResponse {
+  profileVersion: number
+  applied: number
+  skipped: number
 }

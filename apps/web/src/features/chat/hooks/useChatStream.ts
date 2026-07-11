@@ -8,6 +8,7 @@ import {
 import type {
   ChatDoneEventPayload,
   ChatMessageEventPayload,
+  ChatProfileUpdateEventPayload,
   ChatResumeEventPayload,
   CreateChatSessionResponse,
   StreamDonePayload,
@@ -185,15 +186,21 @@ async function runTurn(
   }
 
   try {
-    const { locale } = useResumeStore.getState()
+    const { locale, resume } = useResumeStore.getState()
     const events = await chatMessageStream(
       sessionId,
-      { message, model: options.model || undefined, locale: locale || undefined },
+      // v2 ticket 11: carries the client's own in-memory resume (post inline-edit, never
+      // persisted) so a chat `refine` turn starts from what the user is actually looking at
+      // instead of the last version the server persisted. `resume` is `null` until one is
+      // ever generated -- `|| undefined` keeps that out of the JSON body entirely rather than
+      // serializing a `"resume": null` the backend would just treat as "no override" anyway.
+      { message, model: options.model || undefined, locale: locale || undefined, resume: resume || undefined },
       controller.signal,
     )
 
     let resumeEvent: ChatResumeEventPayload | null = null
     let changedSections: string[] = []
+    let profileUpdateEvent: ChatProfileUpdateEventPayload | null = null
     let assistantText = ''
 
     for await (const { event, data } of events) {
@@ -213,14 +220,26 @@ async function runTurn(
         changedSections = diffResumeSections(prevResume, resumeEvent.resume)
       } else if (event === 'message') {
         assistantText = (data as ChatMessageEventPayload).content
+      } else if (event === 'profile_update') {
+        // The `profile_update` intent (v2, ticket 05) never regenerates the
+        // active resume — the Patch Validator applies straight to the Living
+        // Profile server-side. No `resume` event fires in the same turn, so
+        // this and resumeEvent are mutually exclusive in practice; resumeEvent
+        // still wins below if both were ever present, since only one intent
+        // fires per turn.
+        profileUpdateEvent = data as ChatProfileUpdateEventPayload
       } else if (event === 'done') {
         void (data as ChatDoneEventPayload)
-        useChatStore
-          .getState()
-          .appendAssistantMessage(
-            assistantText || 'Done.',
-            resumeEvent ? { type: 'resumeUpdated', changedSections } : undefined,
-          )
+        const card = resumeEvent
+          ? { type: 'resumeUpdated' as const, changedSections }
+          : profileUpdateEvent
+            ? {
+                type: 'profileUpdateApplied' as const,
+                profileVersion: profileUpdateEvent.profileVersion,
+                summary: profileUpdateEvent.summary,
+              }
+            : undefined
+        useChatStore.getState().appendAssistantMessage(assistantText || 'Done.', card)
         useChatStore.getState().finishStreaming()
         return
       } else if (event === 'error') {
@@ -243,7 +262,12 @@ async function runTurn(
 
 /** Fallback path (F4-era behavior) when the chat backend isn't available: no-resume
  * -> generate/stream, active resume -> refine/stream, with a client-invented
- * assistant reply (these endpoints don't have a "message" event). */
+ * assistant reply (these endpoints don't have a "message" event).
+ *
+ * No `profile_update` handling here, deliberately: that intent (v2, ticket 05)
+ * is classified server-side by the chat service alone — /api/generate/stream
+ * and /api/refine/stream never emit it, so there's nothing to dispatch on in
+ * this fallback path. */
 async function runLegacyTurn(
   message: string,
   options: SendOptions,

@@ -1,11 +1,17 @@
 import { useState } from 'react'
 import { ApiError } from '../../../lib/api/endpoints'
 import { downloadResumePdf } from '../downloadResumePdf'
-import { useLocale, useResume, useResumeStore, useTemplate } from '../store/resumeStore'
+import { useLocale, useResume, useResumeStore, useResumeTemporal, useTemplate, useValidationIssues } from '../store/resumeStore'
+import { useEditModeStore, useIsEditing } from '../store/editModeStore'
+import { useUndoRedoShortcuts } from '../editing/undoRedoKeyboard'
+import { useChatStore } from '../../chat/store/chatStore'
 import { TemplatePicker } from './TemplatePicker'
 
 const btnBase =
   'inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3.5 text-sm font-medium transition-[color,background-color,border-color,box-shadow,opacity] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-45'
+
+const iconBtnBase =
+  'inline-flex h-9 w-9 items-center justify-center rounded-lg border border-stone-200 bg-white text-stone-800 text-base transition-[color,background-color,border-color,box-shadow,opacity] hover:border-stone-300 hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50 disabled:pointer-events-none disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:focus-visible:ring-zinc-500 dark:focus-visible:ring-offset-zinc-950'
 
 export function PreviewToolbar() {
   const resume = useResume()
@@ -13,8 +19,16 @@ export function PreviewToolbar() {
   const locale = useLocale()
   const setTemplate = useResumeStore((s) => s.setTemplate)
   const setLocale = useResumeStore((s) => s.setLocale)
+  const validationIssues = useValidationIssues()
   const [pdfLoading, setPdfLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const isEditing = useIsEditing()
+  const toggleEditing = useEditModeStore((s) => s.toggle)
+  const isStreaming = useChatStore((s) => s.streaming !== null)
+  const { pastStates, futureStates, undo, redo } = useResumeTemporal()
+
+  useUndoRedoShortcuts()
 
   const handleDownload = async () => {
     if (!resume || pdfLoading) return
@@ -52,7 +66,53 @@ export function PreviewToolbar() {
           </select>
         </div>
       </div>
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          // NOT onClick={undo}: zundo's undo(steps = 1) takes a step count, and
+          // React invokes onClick handlers with the SyntheticEvent as the first
+          // argument — passed straight through as `steps`, that event object
+          // coerces to NaN/0 in splice()'s arithmetic, undo's `.shift()` comes
+          // back `undefined`, and `userSet(undefined)` nulls out the ENTIRE
+          // resumeStore (confirmed against zustand's vanilla setState: a
+          // non-object partial with no explicit `replace` REPLACES state
+          // wholesale instead of merging). Wrapping in a no-arg arrow avoids
+          // ever leaking the event into zundo.
+          onClick={() => undo()}
+          disabled={pastStates.length === 0}
+          aria-label="Undo"
+          title="Undo (Ctrl+Z)"
+          className={iconBtnBase}
+        >
+          ↶
+        </button>
+        <button
+          type="button"
+          onClick={() => redo()}
+          disabled={futureStates.length === 0}
+          aria-label="Redo"
+          title="Redo (Ctrl+Shift+Z)"
+          className={iconBtnBase}
+        >
+          ↷
+        </button>
+        <button
+          type="button"
+          onClick={toggleEditing}
+          disabled={isStreaming}
+          aria-pressed={isEditing}
+          aria-label={isEditing ? 'Stop editing' : 'Edit inline'}
+          title={
+            isStreaming
+              ? 'Editing is disabled while a response is streaming'
+              : isEditing
+                ? 'Stop editing'
+                : 'Edit inline'
+          }
+          className={`${iconBtnBase} ${isEditing ? 'border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-500 dark:bg-indigo-950 dark:text-indigo-300' : ''}`}
+        >
+          ✎
+        </button>
         <button
           type="button"
           onClick={() => window.print()}
@@ -73,6 +133,17 @@ export function PreviewToolbar() {
       {error && (
         <p role="alert" className="w-full text-sm font-medium text-red-700 dark:text-red-400">
           {error}
+        </p>
+      )}
+      {validationIssues.length > 0 && (
+        <p
+          role="status"
+          title={validationIssues.join('\n')}
+          className="w-full text-xs font-medium text-amber-700 dark:text-amber-400"
+        >
+          {validationIssues.length === 1
+            ? '1 field needs a closer look — nothing was lost.'
+            : `${validationIssues.length} fields need a closer look — nothing was lost.`}
         </p>
       )}
     </div>

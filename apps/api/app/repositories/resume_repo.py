@@ -14,7 +14,6 @@ def insert_version(
     session_id: int | None = None,
     parent_version_id: int | None = None,
     profile_version_id: int | None = None,
-    template_id: str = "modern",
     model_used: str | None = None,
     provider_used: str | None = None,
 ) -> ResumeVersion:
@@ -23,7 +22,6 @@ def insert_version(
         session_id=session_id,
         parent_version_id=parent_version_id,
         profile_version_id=profile_version_id,
-        template_id=template_id,
         model_used=model_used,
         provider_used=provider_used,
     )

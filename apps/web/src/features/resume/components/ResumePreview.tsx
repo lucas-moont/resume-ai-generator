@@ -1,13 +1,32 @@
 import type { ResumeDocument, TemplateId } from '../../../types/resume'
 import '@resume-templates/resume.css'
-import { SafeRichHtml } from './SafeRichHtml'
+import { EditableText } from '../editing/EditableText'
+import { ListAddButton, ListRemoveButton } from '../editing/EditableList'
 
+// Ticket 08: every field below is a candidate for inline editing, but the
+// component keeps rendering the SAME conditionals/`.map()`s regardless of
+// `editable` (per the ticket 06 spike's decision: the toggle swaps which
+// LEAF component renders a field, never which tree gets mounted). Only the
+// three lists with +/- buttons (skills, per-experience highlights,
+// education) restructure their list item slightly (a wrapping element for
+// the remove button) — harmless in read mode, where the button renders
+// null anyway.
+//
+// Scope limits (ticket 08, documented rather than silently improvised):
+// inline editing can change or remove content that's ALREADY rendered; it
+// cannot originate a value for a currently-empty optional field (location/
+// email/phone/job.location/education.details/...) or bootstrap a first item
+// into an empty skills/education/highlights list — those sections stay
+// hidden until they have at least one item via chat/upload, exactly as
+// before. Links (label/url) are read-only in v2 — not in the ticket's list.
 export function ResumePreview({
   resume,
   template = 'modern',
+  editable = false,
 }: {
   resume: ResumeDocument
   template?: TemplateId
+  editable?: boolean
 }) {
   const isPt = (resume.locale || '').toLowerCase().startsWith('pt')
   const labels = isPt
@@ -23,6 +42,12 @@ export function ResumePreview({
         links: 'Links',
         contact: 'Contato',
         present: 'Atual',
+        addHighlight: 'Adicionar destaque',
+        removeHighlight: 'Remover destaque',
+        addSkill: 'Adicionar habilidade',
+        removeSkill: 'Remover habilidade',
+        addEducation: 'Adicionar formação',
+        removeEducation: 'Remover formação',
       }
     : {
         summary: 'Summary',
@@ -36,19 +61,37 @@ export function ResumePreview({
         links: 'Links',
         contact: 'Contact',
         present: 'Present',
+        addHighlight: 'Add highlight',
+        removeHighlight: 'Remove highlight',
+        addSkill: 'Add skill',
+        removeSkill: 'Remove skill',
+        addEducation: 'Add education entry',
+        removeEducation: 'Remove education entry',
       }
   return (
     <div className="resume-doc">
       <div className={`page tpl-${template}`}>
         <header className="doc-header">
           <div className="doc-header-main">
-            <h1 className="name">{resume.fullName}</h1>
-            <SafeRichHtml as="p" className="headline" html={resume.headline} />
+            <EditableText as="h1" className="name" mode="plain" path="fullName" value={resume.fullName} editable={editable} />
+            <EditableText as="p" className="headline" mode="rich" path="headline" value={resume.headline} editable={editable} />
           </div>
           <ul className="contact-bar">
-            {resume.location && <li className="contact-item">{resume.location}</li>}
-            {resume.email && <li className="contact-item">{resume.email}</li>}
-            {resume.phone && <li className="contact-item tabular">{resume.phone}</li>}
+            {resume.location && (
+              <li className="contact-item">
+                <EditableText as="span" mode="plain" path="location" value={resume.location} editable={editable} />
+              </li>
+            )}
+            {resume.email && (
+              <li className="contact-item">
+                <EditableText as="span" mode="plain" path="email" value={resume.email} editable={editable} />
+              </li>
+            )}
+            {resume.phone && (
+              <li className="contact-item tabular">
+                <EditableText as="span" mode="plain" path="phone" value={resume.phone} editable={editable} />
+              </li>
+            )}
             {resume.links?.map((link, i) => (
               <li className="contact-item" key={i}>
                 <a href={link.url} target="_blank" rel="noreferrer">
@@ -66,7 +109,7 @@ export function ResumePreview({
                   <span className="section-accent" />
                   {labels.summary}
                 </h2>
-                <SafeRichHtml as="p" className="summary" html={resume.summary} />
+                <EditableText as="p" className="summary" mode="rich" path="summary" value={resume.summary} editable={editable} />
               </section>
             )}
             {resume.experience?.length > 0 && (
@@ -78,19 +121,83 @@ export function ResumePreview({
                 {resume.experience.map((job, i) => (
                   <article className="exp" key={i}>
                     <div className="exp-head">
-                      <span className="exp-title">{job.title}</span>
-                      <span className="exp-company">{job.company}</span>
+                      <EditableText
+                        as="span"
+                        className="exp-title"
+                        mode="plain"
+                        path={`experience.${i}.title`}
+                        value={job.title}
+                        editable={editable}
+                      />
+                      <EditableText
+                        as="span"
+                        className="exp-company"
+                        mode="plain"
+                        path={`experience.${i}.company`}
+                        value={job.company}
+                        editable={editable}
+                      />
                       <span className="exp-dates tabular">
-                        {job.start} — {job.end ?? labels.present}
+                        <EditableText
+                          as="span"
+                          mode="plain"
+                          path={`experience.${i}.start`}
+                          value={job.start}
+                          editable={editable}
+                        />{' '}
+                        —{' '}
+                        {job.end ? (
+                          <EditableText
+                            as="span"
+                            mode="plain"
+                            path={`experience.${i}.end`}
+                            value={job.end}
+                            editable={editable}
+                          />
+                        ) : (
+                          labels.present
+                        )}
                       </span>
                     </div>
-                    {job.location && <p className="exp-loc">{job.location}</p>}
+                    {job.location && (
+                      <EditableText
+                        as="p"
+                        className="exp-loc"
+                        mode="plain"
+                        path={`experience.${i}.location`}
+                        value={job.location}
+                        editable={editable}
+                      />
+                    )}
                     {job.highlights?.length > 0 && (
-                      <ul className="exp-list">
-                        {job.highlights.map((h, j) => (
-                          <SafeRichHtml as="li" key={j} html={h} />
-                        ))}
-                      </ul>
+                      <>
+                        <ul className="exp-list">
+                          {job.highlights.map((h, j) => (
+                            <li key={j}>
+                              <EditableText
+                                as="span"
+                                mode="rich"
+                                path={`experience.${i}.highlights.${j}`}
+                                value={h}
+                                editable={editable}
+                              />
+                              <ListRemoveButton
+                                path={`experience.${i}.highlights`}
+                                index={j}
+                                label={labels.removeHighlight}
+                                editable={editable}
+                                className="ml-1 align-middle"
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                        <ListAddButton
+                          path={`experience.${i}.highlights`}
+                          label={labels.addHighlight}
+                          editable={editable}
+                          className="mt-1"
+                        />
+                      </>
                     )}
                   </article>
                 ))}
@@ -104,8 +211,22 @@ export function ResumePreview({
                 </h2>
                 {resume.projects.map((proj, i) => (
                   <article className="proj" key={i}>
-                    <SafeRichHtml as="h3" className="proj-name" html={proj.name} />
-                    <SafeRichHtml as="p" className="proj-desc" html={proj.description} />
+                    <EditableText
+                      as="h3"
+                      className="proj-name"
+                      mode="rich"
+                      path={`projects.${i}.name`}
+                      value={proj.name}
+                      editable={editable}
+                    />
+                    <EditableText
+                      as="p"
+                      className="proj-desc"
+                      mode="rich"
+                      path={`projects.${i}.description`}
+                      value={proj.description}
+                      editable={editable}
+                    />
                   </article>
                 ))}
               </section>
@@ -118,9 +239,19 @@ export function ResumePreview({
                 </h2>
                 <ul className="skill-chips main-skills">
                   {resume.skills.map((s, i) => (
-                    <li key={i}>{s}</li>
+                    <li key={i}>
+                      <EditableText as="span" mode="plain" path={`skills.${i}`} value={s} editable={editable} />
+                      <ListRemoveButton
+                        path="skills"
+                        index={i}
+                        label={labels.removeSkill}
+                        editable={editable}
+                        className="ml-1 align-middle"
+                      />
+                    </li>
                   ))}
                 </ul>
+                <ListAddButton path="skills" label={labels.addSkill} editable={editable} className="mt-1" />
               </section>
             )}
             {resume.education?.length > 0 && (
@@ -130,17 +261,55 @@ export function ResumePreview({
                   {labels.education}
                 </h2>
                 {resume.education.map((ed, i) => (
-                  <article className="edu" key={i}>
+                  <article className="edu relative" key={i}>
+                    <ListRemoveButton
+                      path="education"
+                      index={i}
+                      label={labels.removeEducation}
+                      editable={editable}
+                      className="absolute right-0 top-0"
+                    />
                     <div className="edu-head">
-                      <span className="edu-degree">{ed.degree}</span>
-                      <span className="edu-inst">{ed.institution}</span>
-                      {ed.end && <span className="edu-end tabular">{ed.end}</span>}
+                      <EditableText
+                        as="span"
+                        className="edu-degree"
+                        mode="plain"
+                        path={`education.${i}.degree`}
+                        value={ed.degree}
+                        editable={editable}
+                      />
+                      <EditableText
+                        as="span"
+                        className="edu-inst"
+                        mode="plain"
+                        path={`education.${i}.institution`}
+                        value={ed.institution}
+                        editable={editable}
+                      />
+                      {ed.end && (
+                        <EditableText
+                          as="span"
+                          className="edu-end tabular"
+                          mode="plain"
+                          path={`education.${i}.end`}
+                          value={ed.end}
+                          editable={editable}
+                        />
+                      )}
                     </div>
                     {ed.details && (
-                      <SafeRichHtml as="p" className="edu-details" html={ed.details} />
+                      <EditableText
+                        as="p"
+                        className="edu-details"
+                        mode="rich"
+                        path={`education.${i}.details`}
+                        value={ed.details}
+                        editable={editable}
+                      />
                     )}
                   </article>
                 ))}
+                <ListAddButton path="education" label={labels.addEducation} editable={editable} className="mt-1" />
               </section>
             )}
           </main>
@@ -148,7 +317,9 @@ export function ResumePreview({
             {resume.location && (
               <section className="side-block">
                 <h2 className="side-title">{labels.location}</h2>
-                <p className="side-text">{resume.location}</p>
+                <p className="side-text">
+                  <EditableText mode="plain" path="location" value={resume.location} editable={editable} />
+                </p>
               </section>
             )}
             {resume.email && (
@@ -162,7 +333,9 @@ export function ResumePreview({
             {resume.phone && (
               <section className="side-block">
                 <h2 className="side-title">{labels.phone}</h2>
-                <p className="side-text tabular">{resume.phone}</p>
+                <p className="side-text tabular">
+                  <EditableText mode="plain" path="phone" value={resume.phone} editable={editable} />
+                </p>
               </section>
             )}
             {resume.links?.length > 0 && (

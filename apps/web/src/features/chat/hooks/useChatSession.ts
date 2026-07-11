@@ -6,9 +6,13 @@ import {
   getChatSession,
   listChatSessions,
 } from '../../../lib/api/endpoints'
-import type { ChatMessageDto, CreateChatSessionResponse } from '../../../lib/api/dto'
+import type {
+  ChatMessageDto,
+  ChatMessageSourceDocumentDto,
+  CreateChatSessionResponse,
+} from '../../../lib/api/dto'
 import { useResumeStore } from '../../resume/store/resumeStore'
-import { useChatStore, type ChatMessage } from '../store/chatStore'
+import { useChatStore, type ChatMessage, type ProfileUpdatedCard } from '../store/chatStore'
 
 export const CHAT_SESSIONS_QUERY_KEY = ['chat-sessions'] as const
 export const chatSessionQueryKey = (sessionId: number) => ['chat-session', sessionId] as const
@@ -60,19 +64,38 @@ export function useDeleteSession() {
   })
 }
 
+/** v2 ticket 10: reconstructs the ProfileUpdatedCard a document-upload assistant message had
+ * live, from `dto.sourceDocument` (GET /api/chat/sessions/{id} joins source_documents live, at
+ * read time, for its CURRENT status/diffSummary/opsCount — never a stale copy). Takes the
+ * non-null shape directly -- the `!= null` guard lives at the call site (toChatMessage below),
+ * which also deliberately tolerates the field being absent entirely, not just explicit null,
+ * for resilience against any older/incomplete mock payload. */
+function toProfileUpdatedCard(sourceDocument: ChatMessageSourceDocumentDto): ProfileUpdatedCard {
+  return {
+    type: 'profileUpdated',
+    documentId: sourceDocument.documentId,
+    filename: sourceDocument.filename,
+    status: sourceDocument.status,
+    diffSummary: sourceDocument.diffSummary,
+    opsCount: sourceDocument.opsCount,
+    ...(sourceDocument.error !== null ? { error: sourceDocument.error } : {}),
+  }
+}
+
 function toChatMessage(dto: ChatMessageDto): ChatMessage {
   return {
     id: String(dto.id),
     role: dto.role,
     content: dto.content,
     createdAt: new Date(dto.createdAt).getTime(),
-    // We don't have the "before" resume to diff against when loading history,
-    // so this just marks that the turn changed the resume at the time
-    // (ResumeUpdatedCard renders it with no section list — see the F5 spec:
-    // "ganha ResumeUpdatedCard sem diff").
-    ...(dto.role === 'assistant' && dto.resumeVersionId !== null
-      ? { card: { type: 'resumeUpdated' as const, changedSections: [] } }
-      : {}),
+    ...(dto.role === 'assistant' && dto.sourceDocument != null
+      ? { card: toProfileUpdatedCard(dto.sourceDocument) }
+      : // We don't have the "before" resume to diff against when loading history, so this just
+        // marks that the turn changed the resume at the time (ResumeUpdatedCard renders it with
+        // no section list — see the F5 spec: "ganha ResumeUpdatedCard sem diff").
+        dto.role === 'assistant' && dto.resumeVersionId !== null
+        ? { card: { type: 'resumeUpdated' as const, changedSections: [] } }
+        : {}),
   }
 }
 

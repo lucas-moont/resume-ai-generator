@@ -7,7 +7,7 @@ from app.domain.schemas import RefineRequest, ResumeDocument
 from app.routers.deps import resolve_requested_model
 from app.services.errors import http_error
 from app.services.llm_client import llm_backend_label
-from app.services.profile_service import ProfileValidationError
+from app.services.profile_resolution import ProfileValidationError
 from app.services.refine_service import refine_resume_events
 from app.services.streaming import sse
 

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
+import type { SourceDocumentStatus } from '../../../lib/api/dto'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -20,7 +21,27 @@ export interface ErrorCard {
   retryMessage: string
 }
 
-export type ChatCard = ResumeUpdatedCard | ErrorCard
+export interface ProfileUpdatedCard {
+  type: 'profileUpdated'
+  documentId: number
+  filename: string
+  status: SourceDocumentStatus
+  diffSummary: string[]
+  opsCount: number
+  error?: string
+}
+
+/** Confirmation card for the `profile_update` chat intent (v2, ticket 05/09)
+ * — distinct from ProfileUpdatedCard (upload-driven, proposed/needs approval):
+ * a chat-driven profile update is already applied by the time the SSE event
+ * lands, so there's no approve/reject step here, just profileVersion + summary. */
+export interface ProfileUpdateAppliedCard {
+  type: 'profileUpdateApplied'
+  profileVersion: number
+  summary: string
+}
+
+export type ChatCard = ResumeUpdatedCard | ErrorCard | ProfileUpdatedCard | ProfileUpdateAppliedCard
 
 export interface ChatMessage {
   id: string
@@ -44,6 +65,10 @@ interface ChatState {
   streaming: StreamingState | null
   appendUserMessage: (content: string) => ChatMessage
   appendAssistantMessage: (content: string, card?: ChatCard) => ChatMessage
+  /** Replaces a message's card in place (e.g. a ProfileUpdatedCard moving
+   * proposed -> applied|rejected after the user acts on it). No-op if the
+   * message id isn't found. */
+  updateMessageCard: (messageId: string, updater: (card: ChatCard) => ChatCard) => void
   updateStreaming: (partial: Partial<StreamingState>) => void
   finishStreaming: () => void
   reset: () => void
@@ -93,6 +118,14 @@ export const useChatStore = create<ChatState>()(
         }
         set((state) => ({ messages: [...state.messages, message] }))
         return message
+      },
+
+      updateMessageCard: (messageId, updater) => {
+        set((state) => ({
+          messages: state.messages.map((m) =>
+            m.id === messageId && m.card ? { ...m, card: updater(m.card) } : m,
+          ),
+        }))
       },
 
       updateStreaming: (partial) => {

@@ -8,19 +8,40 @@ JSON columns are plain TEXT with (de)serialization done in the repository layer 
 SQLite's JSON1 extension) -- keeps the roundtrip explicit and testable against the actual
 pydantic models (ProfileMaster/ResumeDocument) rather than trusting a DB-side JSON type.
 
-Two FK-shaped columns are deliberately declared as plain nullable ints WITHOUT a real
-ForeignKey constraint, to avoid circular foreign-key dependencies that SQLite cannot resolve
-at CREATE TABLE time (SQLAlchemy's usual `use_alter=True` escape hatch for FK cycles relies on
-ALTER TABLE ADD CONSTRAINT, which SQLite's ALTER TABLE does not support):
+Four FK-shaped columns are deliberately declared as plain nullable ints WITHOUT a real
+ForeignKey constraint:
   - `ProfileVersion.chat_message_id` -- a real FK here would close the cycle
-    profile_versions -> chat_messages -> resume_versions -> profile_versions.
+    profile_versions -> chat_messages -> resume_versions -> profile_versions (SQLite cannot
+    resolve FK cycles at CREATE TABLE time; SQLAlchemy's usual `use_alter=True` escape hatch
+    relies on ALTER TABLE ADD CONSTRAINT, which SQLite's ALTER TABLE does not support).
   - `ChatSession.active_resume_version_id` -- a real FK here would close the classic
     "current pointer" mutual-reference cycle chat_sessions <-> resume_versions
     (chat_sessions.active_resume_version_id -> resume_versions.id and
     resume_versions.session_id -> chat_sessions.id).
-Referential integrity for these two is enforced by the repository layer, not the schema --
-the same treatment already agreed for `source_document_id` (a real FK deferred to v2, when
-the source_documents table exists).
+  - `ProfileVersion.source_document_id` (v2 ticket 03: the `source_documents` table below) --
+    no cycle here, but the same soft-ref treatment is deliberate anyway: a Profile Version is
+    permanent, append-only history (CONTEXT.md: Profile Version), while its originating
+    Source Document is disposable (a user may delete an upload for privacy, or a future
+    retention policy may prune old files). A real FK would either block that deletion or
+    (with ON DELETE SET NULL) erase the provenance link entirely; leaving it a soft ref lets
+    the Source Document go away while the Profile Version keeps the id as a historical
+    breadcrumb, dangling but harmless -- see
+    tests/unit/test_source_document_repo.py::TestSourceDocumentSoftRefOrphan for the
+    characterization test.
+  - `ChatMessage.meta`'s `sourceDocumentId` key (v2 ticket 10, JSON-encoded, not a real
+    column) -- when an upload names the chat session it came from, a durable assistant
+    ChatMessage is persisted with `meta: {"sourceDocumentId": <SourceDocument.id>}`, so its
+    ProfileUpdatedCard survives a session reload instead of reverting to plain text (see
+    routers/profile.py's `_link_upload_to_session`). Deliberately the SAME soft-ref treatment
+    as the three above, for the same reason as `source_document_id`: the Source Document may
+    be deleted independently of the chat history that references it. This key alone is
+    persisted -- NEVER a copy of `status` -- so there is only one source of truth: GET
+    /api/chat/sessions/{id} joins `source_documents` LIVE, at read time, for whatever the
+    CURRENT status/diffSummary/opsCount is (routers/chat.py's `_source_document_link_dict`);
+    apply/reject never need to touch this message. A dangling `sourceDocumentId` (the
+    document was deleted) simply resolves to no `sourceDocument` on that message, same as any
+    other message with no such reference.
+Referential integrity for all four is enforced by the repository layer, not the schema.
 """
 
 from __future__ import annotations
@@ -42,9 +63,37 @@ class ProfileVersion(SQLModel, table=True):
     data: str  # JSON-serialized ProfileMaster
     patch: str | None = None  # JSON-serialized patch, when source_kind implies one (e.g. chat)
     source_kind: str  # 'seed_disk' | 'upload' | 'chat' | 'manual' | 'revert'
-    source_document_id: int | None = None  # FK deferred to v2's source_documents table
+    source_document_id: int | None = None  # soft ref -- see module docstring
     chat_message_id: int | None = None  # soft ref -- see module docstring
     change_summary: str | None = None
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class SourceDocument(SQLModel, table=True):
+    """An uploaded `.json`/`.md`/`.pdf` file carrying professional information (CONTEXT.md:
+    Source Document). Lifecycle: stored -> extracted -> proposed -> applied | rejected |
+    failed. v2 ticket 03 produces rows up to `extracted` (with `extracted_json` as the
+    preview) or `failed` (with an actionable `error`). As of v2 ticket 04, every successful
+    extraction is immediately followed -- in the SAME request -- by the Incremental Merge
+    pipeline (`services/ingestion/merge_service.py`), so `extracted` is a transient in-request
+    state, never the terminal one returned to a caller: a document always settles at
+    `proposed` (possibly with an empty proposal), `applied`, `rejected`, or `failed`.
+    `proposed_patch`/`diff_summary` are populated together by `mark_proposed` (ticket 04).
+    """
+
+    __tablename__ = "source_documents"
+
+    id: int | None = Field(default=None, primary_key=True)
+    filename: str
+    media_type: str  # 'json' | 'md' | 'pdf'
+    sha256: str = Field(unique=True, index=True)  # dedup: re-uploading the same bytes is a no-op
+    size_bytes: int
+    stored_path: str  # data/uploads/<sha256>.<ext>
+    extracted_json: str | None = None  # JSON-serialized ResumeDocument preview
+    proposed_patch: str | None = None  # JSON-serialized list[PatchOp] -- ticket 04
+    diff_summary: str | None = None  # JSON-serialized list[str] -- ticket 04, alongside proposed_patch
+    status: str = "stored"  # 'stored' | 'extracted' | 'proposed' | 'applied' | 'rejected' | 'failed'
+    error: str | None = None  # actionable message when status == 'failed'
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -73,7 +122,10 @@ class ResumeVersion(SQLModel, table=True):
     parent_version_id: int | None = Field(default=None, foreign_key="resume_versions.id")
     profile_version_id: int | None = Field(default=None, foreign_key="profile_versions.id")
     data: str  # JSON-serialized ResumeDocument
-    template_id: str = Field(default="modern")
+    # No template_id here (v2 ticket 01 dropped it -- see docs/v2-living-profile.md's
+    # "Dívida herdada"): the frontend never sent a real per-version choice in v1, and product
+    # settled template as a global sticky user preference (like theme), not per-resume-version.
+    # app/db/engine.py's init_db() drops the column ad-hoc for any v1 DB that still has it.
     model_used: str | None = None
     provider_used: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
@@ -86,7 +138,7 @@ class ChatMessage(SQLModel, table=True):
     session_id: int = Field(foreign_key="chat_sessions.id", ondelete="CASCADE")
     role: str  # 'user' | 'assistant'
     content: str
-    intent: str | None = None  # 'generate' | 'refine' | 'question'
+    intent: str | None = None  # 'generate' | 'refine' | 'profile_update' | 'question'
     resume_version_id: int | None = Field(default=None, foreign_key="resume_versions.id")
-    meta: str | None = None  # JSON-serialized {model, provider, elapsed_ms, error?}
+    meta: str | None = None  # JSON-serialized {model, provider, elapsed_ms, error?, sourceDocumentId?}
     created_at: datetime = Field(default_factory=_utcnow)

@@ -38,3 +38,9 @@ skills-lock.json
 # Local planning docs / specs (v1/v2/v3, vision, linkedin brief)
 docs/
 .gstack/
+
+# Local issue tracker (matt pocock engineering skills)
+.scratch/
+
+# v2: uploaded source documents (personal data)
+data/uploads/

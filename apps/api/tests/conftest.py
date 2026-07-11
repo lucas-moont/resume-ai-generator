@@ -67,6 +67,10 @@ def isolated_data_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # PROJECTS_DIR is read (module-qualified, at call time) only inside generation_service.py
     # as of B4 -- main.py no longer touches project markdown files at all.
     monkeypatch.setattr(generation_service_module, "PROJECTS_DIR", tmp_path / "projects")
+    # v2 ticket 03: Source Document uploads land under DATA_UPLOADS_DIR (read at call time by
+    # app.services.ingestion.storage) -- sandboxed so upload tests never touch the real
+    # data/uploads/ directory.
+    monkeypatch.setenv("DATA_UPLOADS_DIR", str(tmp_path / "uploads"))
     return tmp_path
 
 

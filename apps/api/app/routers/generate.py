@@ -1,25 +1,28 @@
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from sqlmodel import Session
 
 from app.domain.schemas import GenerateRequest, ResumeDocument
-from app.routers.deps import resolve_requested_model
+from app.routers.deps import get_session, resolve_requested_model
 from app.services.errors import http_error
 from app.services.generation_service import ExtractionError, generate_resume_events
 from app.services.llm_client import llm_backend_label
-from app.services.profile_service import ProfileValidationError
+from app.services.profile_resolution import ProfileValidationError, resolve_active_profile
 from app.services.streaming import sse
 
 router = APIRouter()
 
 
 @router.post("/api/generate", response_model=ResumeDocument)
-async def generate(body: GenerateRequest):
+async def generate(body: GenerateRequest, session: Session = Depends(get_session)):
     model = resolve_requested_model(body.model)
     try:
+        resolved_profile = resolve_active_profile(session)
         resume: ResumeDocument | None = None
         async for event, data in generate_resume_events(
+            resolved_profile=resolved_profile,
             job_description=body.job_description,
             model=model,
             locale=body.locale,
@@ -43,12 +46,14 @@ async def generate(body: GenerateRequest):
 
 
 @router.post("/api/generate/stream")
-async def generate_stream(body: GenerateRequest):
+async def generate_stream(body: GenerateRequest, session: Session = Depends(get_session)):
     model = resolve_requested_model(body.model)
 
     async def event_stream():
         try:
+            resolved_profile = resolve_active_profile(session)
             async for event, data in generate_resume_events(
+                resolved_profile=resolved_profile,
                 job_description=body.job_description,
                 model=model,
                 locale=body.locale,

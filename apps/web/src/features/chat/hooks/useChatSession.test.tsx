@@ -151,6 +151,117 @@ describe('useResumeChatSession', () => {
     expect(assistantMsg.card).toEqual({ type: 'resumeUpdated', changedSections: [] })
   })
 
+  it('an assistant message with a sourceDocument gets a ProfileUpdatedCard reflecting its CURRENT status (v2 ticket 10)', async () => {
+    server.use(
+      http.get('/api/chat/sessions/12', () =>
+        HttpResponse.json({
+          session: { id: 12, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: "Reviewed profile.json — here's what I found.",
+              intent: 'profile_update',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: {
+                documentId: 5,
+                filename: 'profile.json',
+                status: 'applied',
+                diffSummary: ['1 new skill: Rust'],
+                opsCount: 1,
+                error: null,
+              },
+            },
+          ],
+          activeResume: null,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(12)
+
+    const assistantMsg = useChatStore.getState().messages[0]
+    expect(assistantMsg.card).toEqual({
+      type: 'profileUpdated',
+      documentId: 5,
+      filename: 'profile.json',
+      status: 'applied',
+      diffSummary: ['1 new skill: Rust'],
+      opsCount: 1,
+    })
+  })
+
+  it('a proposed ProfileUpdatedCard reconstructed on restore is still approvable', async () => {
+    server.use(
+      http.get('/api/chat/sessions/13', () =>
+        HttpResponse.json({
+          session: { id: 13, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 9,
+              role: 'assistant',
+              content: "Reviewed profile.json — here's what I found.",
+              intent: 'profile_update',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: {
+                documentId: 7,
+                filename: 'profile.json',
+                status: 'proposed',
+                diffSummary: ['1 new skill: Rust'],
+                opsCount: 1,
+                error: null,
+              },
+            },
+          ],
+          activeResume: null,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(13)
+
+    const assistantMsg = useChatStore.getState().messages[0]
+    expect(assistantMsg.id).toBe('9') // the REAL backend id, not a locally-generated one
+    expect(assistantMsg.card).toMatchObject({ type: 'profileUpdated', status: 'proposed', documentId: 7 })
+
+    // approve/reject wiring (ChatPanel.settleProfileDocument) matches on this exact message id.
+    useChatStore.getState().updateMessageCard('9', (card) =>
+      card.type === 'profileUpdated' ? { ...card, status: 'applied' } : card,
+    )
+    expect(useChatStore.getState().messages[0].card).toMatchObject({ status: 'applied' })
+  })
+
+  it('a message with no sourceDocument and no resumeVersionId gets no card', async () => {
+    server.use(
+      http.get('/api/chat/sessions/14', () =>
+        HttpResponse.json({
+          session: { id: 14, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: 'hi there',
+              intent: 'question',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: null,
+            },
+          ],
+          activeResume: null,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(14)
+
+    expect(useChatStore.getState().messages[0].card).toBeUndefined()
+  })
+
   it('resumeSession clears the resume when the session has none active', async () => {
     useResumeStore.getState().setResume(makeResume({ fullName: 'Stale Resume From Another Session' }))
     server.use(

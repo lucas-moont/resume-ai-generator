@@ -12,6 +12,15 @@ Profile.pdf extraction LLM call failed), ``TimeoutError`` (an LLM call exceeded 
 timeout), or the raw exception from a failed main-generation LLM/JSON-parse call -- each
 router translates these into its own transport (HTTPException vs SSE error frame).
 
+As of v2 ticket 01, this function no longer resolves the profile itself: it takes an
+already-resolved ``ResolvedProfile`` (see ``app.services.profile_resolution``) from its
+caller, which by now has a DB ``Session`` in scope (``routers/generate.py`` for the legacy
+sync/stream endpoints, ``chat_service.handle_chat_turn`` for the chat "generate" intent).
+This closes the v1 provenance drift: the profile actually used in the LLM prompt is now
+guaranteed to be the SAME row ``resolved_profile.profile_version_id`` points at, instead of
+each caller re-resolving (and each generate call reading disk directly, independent of
+whatever ``profile_versions`` row a caller separately looked up to stamp on the result).
+
 Design note on sharing the heartbeat-wrapped LLM calls with the sync endpoint: before B4, the
 sync /api/generate awaited chat_json() directly with no explicit timeout wrapper, relying on
 the underlying HTTP client's own timeout (LLM_TIMEOUT_SECONDS -- the SAME ceiling used by the
@@ -39,9 +48,10 @@ from app.services.github_client import fetch_user_repos
 from app.services.llm.resume_json_parser import parse_resume_json
 from app.services.merge_projects import merge_github_with_markdown
 from app.services.profile_pdf import format_profile_pdf_prompt_block
-from app.services.profile_service import (
+from app.services.profile_resolution import (
+    ProfileValidationError,
+    ResolvedProfile,
     finish_profile_from_extraction,
-    load_active_profile_or_placeholder_pdf,
 )
 from app.services.projects_loader import load_project_markdown_files
 from app.services.streaming import run_with_heartbeat
@@ -158,6 +168,7 @@ Revise the resume to address issues without inventing facts. Return full JSON on
 
 async def generate_resume_events(
     *,
+    resolved_profile: ResolvedProfile,
     job_description: str,
     model: str | None,
     locale: str | None,
@@ -165,9 +176,17 @@ async def generate_resume_events(
 ) -> AsyncIterator[tuple[str, dict]]:
     yield "stage", {"step": "preparing_context", "progress": 10, "message": "Loading profile and PDF"}
 
-    profile, pdf_text, pdf_path, needs_extraction = load_active_profile_or_placeholder_pdf()
+    profile = resolved_profile.profile
+    pdf_text = resolved_profile.pdf_text
+    pdf_path = resolved_profile.pdf_path
 
-    if needs_extraction:
+    if resolved_profile.needs_extraction and not (pdf_text and pdf_path is not None):
+        raise ProfileValidationError(
+            "Profile appears to be the example template. Add real data to "
+            "data/profile/resume.json or provide data/profile/Profile.pdf for extraction."
+        )
+
+    if resolved_profile.needs_extraction:
         yield "stage", {
             "step": "extracting_profile_pdf",
             "progress": 25,

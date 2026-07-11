@@ -18,7 +18,7 @@ from app.prompt_loader import load_prompt
 from app.services import llm_client, streaming
 from app.services.llm.resume_json_parser import parse_resume_json
 from app.services.profile_pdf import format_profile_pdf_prompt_block, load_profile_pdf_excerpt
-from app.services.profile_service import ProfileValidationError
+from app.services.profile_resolution import ProfileValidationError
 from app.services.streaming import run_with_heartbeat
 
 STREAM_LLM_TIMEOUT_SECONDS = LLM_TIMEOUT_SECONDS
