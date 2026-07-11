@@ -27,3 +27,11 @@ def load_merge_profile_system_prompt(prompts_dir: Path) -> str:
 
 def load_profile_update_system_prompt(prompts_dir: Path) -> str:
     return load_prompt("system/profile_update.md", prompts_dir)
+
+
+def load_propose_improvements_system_prompt(prompts_dir: Path) -> str:
+    return load_prompt("system/propose_improvements.md", prompts_dir)
+
+
+def load_proposal_turn_system_prompt(prompts_dir: Path) -> str:
+    return load_prompt("system/proposal_turn.md", prompts_dir)
