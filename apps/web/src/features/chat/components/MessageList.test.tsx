@@ -209,4 +209,16 @@ describe('MessageList — analyzing_job typing indicator (v4, F4)', () => {
     expect(screen.getByRole('progressbar')).toBeInTheDocument()
     expect(screen.queryByRole('status', { name: /digitando/i })).not.toBeInTheDocument()
   })
+
+  it('shows the typing indicator (not ProgressCard) during the pre-first-stage window, before any real step is known (design gate P3)', () => {
+    // Mirrors useChatStream's optimistic updateStreaming() call, which sets progress/message
+    // but leaves `step` unset — the real first step (analyzing_job vs. preparing_context)
+    // isn't known until the server's first `stage` event arrives.
+    useChatStore.getState().updateStreaming({ progress: 5, message: 'Starting…' })
+
+    renderMessageList()
+
+    expect(screen.getByRole('status', { name: /digitando/i })).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
 })

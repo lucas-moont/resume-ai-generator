@@ -123,7 +123,15 @@ export function MessageList({
       {streaming && (
         <div className="flex justify-start">
           <div className="w-full max-w-[85%]">
-            {streaming.step === 'analyzing_job' ? <TypingIndicator /> : <ProgressCard streaming={streaming} />}
+            {/* `''` is the pre-first-stage window (useChatStream's optimistic update, before
+                the server's real first `stage` event lands) — neither turn type has a
+                checklist item to show yet, so it gets the same dots as `analyzing_job`
+                rather than a ProgressCard asserting `preparing_context` is already underway. */}
+            {streaming.step === 'analyzing_job' || streaming.step === '' ? (
+              <TypingIndicator />
+            ) : (
+              <ProgressCard streaming={streaming} />
+            )}
           </div>
         </div>
       )}

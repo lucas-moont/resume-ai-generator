@@ -185,8 +185,15 @@ async function runTurn(
   createSession: CreateSessionFn,
 ): Promise<void> {
   const controller = new AbortController()
+  // No `step` yet (falls back to DEFAULT_STREAMING's `''`): this optimistic update fires
+  // before any server response, so the real first step — `analyzing_job` for a chat turn
+  // that turns out to be an Analysis/Proposal Turn, `preparing_context` otherwise — isn't
+  // known. Guessing `preparing_context` here used to make MessageList mount ProgressCard
+  // immediately, then swap to TypingIndicator a moment later once the true first `stage`
+  // event (`analyzing_job`) arrived — a visible flash. Leaving `step` unset lets
+  // MessageList render TypingIndicator for this brief pre-first-stage window regardless of
+  // which turn type it turns out to be (design gate P3).
   useChatStore.getState().updateStreaming({
-    step: 'preparing_context',
     progress: 5,
     message: 'Starting…',
     abortController: controller,

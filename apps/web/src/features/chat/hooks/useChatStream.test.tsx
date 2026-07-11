@@ -164,6 +164,27 @@ describe('useChatStream — session + message routing', () => {
     await sendPromise
     expect(useChatStore.getState().streaming).toBeNull()
   })
+
+  it('leaves `step` unset in the optimistic pre-flight streaming state, before the server’s real first step is known (design gate P3 — avoids a ProgressCard flash for turns that turn out to be analyzing_job)', async () => {
+    mockSessionCreation()
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'stage', data: { step: 'analyzing_job', progress: 20 } },
+          { event: 'message', data: { content: 'Here are some suggestions.' } },
+          { event: 'done', data: { progress: 100, messageId: 5, resumeVersionId: null } },
+        ]),
+      ),
+    )
+
+    const { result } = renderChatStream()
+    const sendPromise = result.current.send('Backend engineer job posting')
+
+    // Synchronous prefix of runTurn (before its first await) has already run by this point.
+    expect(useChatStore.getState().streaming).toMatchObject({ step: '', progress: 5, message: 'Starting…' })
+
+    await sendPromise
+  })
 })
 
 describe('useChatStream — resume diff (ticket 09)', () => {
