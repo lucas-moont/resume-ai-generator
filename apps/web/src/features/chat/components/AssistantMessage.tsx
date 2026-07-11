@@ -3,6 +3,7 @@ import { ResumeUpdatedCard } from './cards/ResumeUpdatedCard'
 import { ErrorCard } from './cards/ErrorCard'
 import { ProfileUpdatedCard } from './cards/ProfileUpdatedCard'
 import { ProfileUpdateAppliedCard } from './cards/ProfileUpdateAppliedCard'
+import { MarkdownContent } from './MarkdownContent'
 
 export function AssistantMessage({
   message,
@@ -18,8 +19,8 @@ export function AssistantMessage({
   return (
     <div className="flex justify-start">
       <div className="max-w-[85%]">
-        <div className="whitespace-pre-wrap rounded-2xl rounded-tl-sm border border-stone-200 bg-white px-4 py-2.5 text-sm text-stone-900 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100">
-          {message.content}
+        <div className="rounded-2xl rounded-tl-sm border border-stone-200 bg-white px-4 py-2.5 text-sm text-stone-900 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100">
+          <MarkdownContent content={message.content} />
         </div>
         {message.card?.type === 'resumeUpdated' && <ResumeUpdatedCard card={message.card} />}
         {message.card?.type === 'error' && <ErrorCard card={message.card} onRetry={onRetry} />}
