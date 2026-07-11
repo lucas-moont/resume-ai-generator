@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { SourceDocumentStatus } from '../../../lib/api/dto'
+import type { ResumeFieldChange } from '../../resume/resumeDiff'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -12,6 +13,12 @@ export const ACTIVE_SESSION_STORAGE_KEY = 'resume-agent:active-session'
 export interface ResumeUpdatedCard {
   type: 'resumeUpdated'
   changedSections: string[]
+  /** Structured before/after per changed section (ticket 09) — omitted when
+   * there's no "before" to diff against (history reload from GET
+   * /api/chat/sessions/{id}, which only carries `resumeVersionId`, not the
+   * two full documents): the card then degrades honestly to the
+   * label-only rendering instead of fabricating a diff. */
+  diff?: ResumeFieldChange[]
 }
 
 export interface ErrorCard {
