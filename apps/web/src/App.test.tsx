@@ -70,7 +70,7 @@ describe('App', () => {
     expect(screen.getByRole('combobox', { name: /template/i })).toHaveValue('classic')
   })
 
-  it('offers all 6 templates and switches instantly, with no network request', async () => {
+  it('offers all 8 templates and switches instantly, with no network request', async () => {
     const resume = makeResume({ fullName: 'Ada Lovelace' })
     localStorage.setItem(
       STORAGE_KEY,
@@ -83,7 +83,7 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeInTheDocument())
 
     const picker = screen.getByRole('combobox', { name: /template/i })
-    expect(within(picker).getAllByRole('option')).toHaveLength(6)
+    expect(within(picker).getAllByRole('option')).toHaveLength(8)
 
     // onUnhandledRequest: 'error' (src/test/setup.ts) means this would throw
     // if switching templates ever triggered a request.
