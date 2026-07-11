@@ -2,13 +2,7 @@ import json
 
 import httpx
 
-from app.config import (
-    DEFAULT_GEMINI_MODEL,
-    GEMINI_API_KEY,
-    GEMINI_MAX_OUTPUT_TOKENS,
-    LLM_TEMPERATURE,
-    LLM_TIMEOUT_SECONDS,
-)
+from app import config as config_module
 
 
 def _gemini_error_message(data: dict, status: int) -> str:
@@ -47,10 +41,11 @@ def _extract_text(data: dict) -> str:
 
 
 async def chat_json_gemini(system: str, user: str, model: str | None = None) -> str:
-    key = (GEMINI_API_KEY or "").strip()
+    runtime = config_module.get_runtime_config()
+    key = (runtime.gemini_api_key or "").strip()
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set.")
-    model_name = (model or DEFAULT_GEMINI_MODEL or "gemini-2.5-flash").strip()
+    model_name = (model or runtime.default_gemini_model or "gemini-2.5-flash").strip()
     # Send the key in a header, never in the URL query string: URLs leak into logs, proxies,
     # and httpx exception/traceback text; the header does not.
     url = (
@@ -63,12 +58,12 @@ async def chat_json_gemini(system: str, user: str, model: str | None = None) -> 
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "temperature": LLM_TEMPERATURE,
+            "temperature": config_module.LLM_TEMPERATURE,
             "topP": 0.95,
-            "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
+            "maxOutputTokens": config_module.GEMINI_MAX_OUTPUT_TOKENS,
         },
     }
-    async with httpx.AsyncClient(timeout=float(LLM_TIMEOUT_SECONDS)) as client:
+    async with httpx.AsyncClient(timeout=float(config_module.LLM_TIMEOUT_SECONDS)) as client:
         r = await client.post(url, json=payload, headers=headers)
         try:
             data = r.json()

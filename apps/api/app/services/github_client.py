@@ -1,6 +1,6 @@
 import httpx
 
-from app.config import GITHUB_TOKEN
+from app import config as config_module
 from app.models import GitHubRepoInfo
 
 
@@ -11,8 +11,9 @@ async def fetch_user_repos(username: str, limit: int = 50) -> tuple[list[GitHubR
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    github_token = config_module.resolve_github_token()
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
     url = f"https://api.github.com/users/{username}/repos"
     params = {"per_page": min(limit, 100), "sort": "updated", "type": "all"}
     warn: str | None = None

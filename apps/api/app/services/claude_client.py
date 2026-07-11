@@ -9,13 +9,7 @@ from pathlib import Path
 
 import anyio.to_thread
 
-from app.config import (
-    ANTHROPIC_API_KEY,
-    CLAUDE_MAX_OUTPUT_TOKENS,
-    CLAUDE_THINKING,
-    DEFAULT_CLAUDE_MODEL,
-    LLM_TIMEOUT_SECONDS,
-)
+from app import config as config_module
 
 # NOTE: temperature / top_p are intentionally NOT sent. Claude Sonnet 5, Opus 4.8 and 4.7 reject
 # sampling parameters (HTTP 400), so the shared LLM_TEMPERATURE does not apply to this provider.
@@ -32,7 +26,7 @@ from app.config import (
 def _thinking_config() -> dict:
     # "adaptive" lets Claude reason before answering; "off" (disabled) gives the full max_tokens
     # budget to the JSON output, which is what a resume-generation task wants by default.
-    if CLAUDE_THINKING == "adaptive":
+    if config_module.CLAUDE_THINKING == "adaptive":
         return {"type": "adaptive"}
     return {"type": "disabled"}
 
@@ -133,12 +127,12 @@ def _run_claude_cli_sync(system: str, user: str, model_name: str) -> str:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                timeout=float(LLM_TIMEOUT_SECONDS),
+                timeout=float(config_module.LLM_TIMEOUT_SECONDS),
                 cwd=neutral_dir,
             )
         except subprocess.TimeoutExpired as e:
             raise RuntimeError(
-                f"Claude CLI request timed out after {LLM_TIMEOUT_SECONDS}s. Raise "
+                f"Claude CLI request timed out after {config_module.LLM_TIMEOUT_SECONDS}s. Raise "
                 "LLM_TIMEOUT_SECONDS in .env if this task genuinely needs more time."
             ) from e
         except OSError as e:
@@ -190,12 +184,13 @@ async def _chat_json_claude_cli(system: str, user: str, model_name: str) -> str:
 
 
 async def chat_json_claude(system: str, user: str, model: str | None = None) -> str:
-    model_name = (model or DEFAULT_CLAUDE_MODEL or "claude-sonnet-5").strip()
+    runtime = config_module.get_runtime_config()
+    model_name = (model or runtime.default_claude_model or "claude-sonnet-5").strip()
 
     # No API key: route through the local `claude` CLI (headless -p mode) so a logged-in Claude
     # Code session is used directly, with no key stored anywhere in this project. See the module
     # docstring/comment at the top of this file for why the SDK itself can't do this.
-    if not ANTHROPIC_API_KEY:
+    if not runtime.anthropic_api_key:
         return await _chat_json_claude_cli(system, user, model_name)
 
     try:
@@ -208,11 +203,13 @@ async def chat_json_claude(system: str, user: str, model: str | None = None) -> 
 
     # ANTHROPIC_API_KEY is set (from env or the OS keychain, via config) — pass it explicitly so
     # a keychain-stored key works.
-    client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY, timeout=float(LLM_TIMEOUT_SECONDS))
+    client = AsyncAnthropic(
+        api_key=runtime.anthropic_api_key, timeout=float(config_module.LLM_TIMEOUT_SECONDS)
+    )
     try:
         message = await client.messages.create(
             model=model_name,
-            max_tokens=CLAUDE_MAX_OUTPUT_TOKENS,
+            max_tokens=config_module.CLAUDE_MAX_OUTPUT_TOKENS,
             system=system,
             thinking=_thinking_config(),
             messages=[{"role": "user", "content": user}],

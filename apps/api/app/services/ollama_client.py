@@ -2,22 +2,15 @@ import json
 
 import httpx
 
-from app.config import (
-    DEFAULT_OLLAMA_MODEL,
-    LLM_TEMPERATURE,
-    LLM_TIMEOUT_SECONDS,
-    OLLAMA_BASE_URL,
-    OLLAMA_NUM_CTX,
-    OLLAMA_NUM_PREDICT,
-)
+from app import config as config_module
 
 
 def _ollama_options() -> dict:
     return {
-        "temperature": LLM_TEMPERATURE,
+        "temperature": config_module.LLM_TEMPERATURE,
         "top_p": 0.9,
-        "num_ctx": OLLAMA_NUM_CTX,
-        "num_predict": OLLAMA_NUM_PREDICT,
+        "num_ctx": config_module.OLLAMA_NUM_CTX,
+        "num_predict": config_module.OLLAMA_NUM_PREDICT,
     }
 
 
@@ -78,7 +71,7 @@ def _extract_content(data: dict) -> str:
 
 
 async def list_installed_models() -> list[str]:
-    base = OLLAMA_BASE_URL.rstrip("/")
+    base = config_module.OLLAMA_BASE_URL.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(f"{base}/api/tags")
@@ -101,8 +94,8 @@ async def chat_json(
     user: str,
     model: str | None = None,
 ) -> str:
-    model = model or DEFAULT_OLLAMA_MODEL
-    base = OLLAMA_BASE_URL.rstrip("/")
+    model = model or config_module.get_runtime_config().default_ollama_model
+    base = config_module.OLLAMA_BASE_URL.rstrip("/")
     chat_url = f"{base}/api/chat"
     gen_url = f"{base}/api/generate"
 
@@ -126,7 +119,7 @@ async def chat_json(
             raise RuntimeError(_ollama_http_error_message(r, base, model)) from e
         return _extract_content(r.json())
 
-    async with httpx.AsyncClient(timeout=float(LLM_TIMEOUT_SECONDS)) as client:
+    async with httpx.AsyncClient(timeout=float(config_module.LLM_TIMEOUT_SECONDS)) as client:
         content = await _request_once(client)
         if not content:
             # Local models occasionally return an empty completion; a single retry usually

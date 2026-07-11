@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlmodel import Session
 from sqlmodel.pool import StaticPool
 
+from app import config as config_module
 from app.db.engine import create_db_engine, init_db
 from app.main import create_app
 from app.routers import deps
@@ -82,6 +83,26 @@ def write_profile(isolated_data_env: Path) -> Callable[[dict], Path]:
         return path
 
     return _write
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_settings_engine():
+    """Point config.py's app_settings resolution (get_runtime_config, set/delete_app_setting)
+    at a throwaway in-memory DB for every test (v3 ticket 01).
+
+    Without this, any test that transitively calls get_runtime_config() -- e.g. GET /api/models
+    -> model_catalog.default_model_for_active_backend() -> resolve_active_provider() -- falls
+    through to config._get_settings_engine()'s lazy default, which opens a real engine on
+    config.DATABASE_URL: the actual on-disk data/app.db this repo ships with. That bit a real
+    test run while building this fixture (empty app_settings table created on disk, no rows --
+    see tests/unit/test_runtime_config_isolation.py for the regression test). set_settings_engine
+    is the test seam, module-qualified like resolve_uploads_dir/test_db_engine above.
+    """
+    engine = create_db_engine("sqlite://", poolclass=StaticPool)
+    init_db(engine)
+    config_module.set_settings_engine(engine)
+    yield engine
+    config_module.set_settings_engine(None)
 
 
 @pytest.fixture

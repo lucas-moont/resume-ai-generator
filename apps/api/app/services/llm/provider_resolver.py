@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.config import AI_PROVIDER, ANTHROPIC_API_KEY, GEMINI_API_KEY
+from app import config as config_module
 from app.services.llm.provider_factory import build_provider
 from app.services.llm.providers.base import LlmProvider, ProviderMode, ProviderName
 
@@ -47,5 +47,8 @@ def resolve_provider_name_for_model(model: str | None) -> ProviderName | None:
 
 
 def resolve_active_provider() -> LlmProvider:
-    provider_name = resolve_provider_name(AI_PROVIDER, GEMINI_API_KEY, ANTHROPIC_API_KEY)
+    runtime = config_module.get_runtime_config()
+    provider_name = resolve_provider_name(
+        runtime.ai_provider, runtime.gemini_api_key, runtime.anthropic_api_key
+    )
     return build_provider(provider_name)

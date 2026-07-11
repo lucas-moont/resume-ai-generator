@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
+from app import config as config_module
 from app.services import claude_client
 
 
@@ -28,21 +29,25 @@ class TestExtractText(unittest.TestCase):
 
 
 class TestThinkingConfig(unittest.TestCase):
+    """_thinking_config reads config_module.CLAUDE_THINKING module-qualified (v3 ticket 01: no
+    bare-name import of config constants), so these patch the config module directly rather
+    than a claude_client-local re-export."""
+
     def test_off_maps_to_disabled(self) -> None:
-        original = claude_client.CLAUDE_THINKING
+        original = config_module.CLAUDE_THINKING
         try:
-            claude_client.CLAUDE_THINKING = "off"
+            config_module.CLAUDE_THINKING = "off"
             self.assertEqual(claude_client._thinking_config(), {"type": "disabled"})
         finally:
-            claude_client.CLAUDE_THINKING = original
+            config_module.CLAUDE_THINKING = original
 
     def test_adaptive_maps_to_adaptive(self) -> None:
-        original = claude_client.CLAUDE_THINKING
+        original = config_module.CLAUDE_THINKING
         try:
-            claude_client.CLAUDE_THINKING = "adaptive"
+            config_module.CLAUDE_THINKING = "adaptive"
             self.assertEqual(claude_client._thinking_config(), {"type": "adaptive"})
         finally:
-            claude_client.CLAUDE_THINKING = original
+            config_module.CLAUDE_THINKING = original
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Static Claude/Gemini suggestions plus whatever Ollama tags are installed locally
 per-provider catalogs are a v3 concern (see docs/v1-chat-experience.md).
 """
 
-from app.config import DEFAULT_CLAUDE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OLLAMA_MODEL
+from app import config as config_module
 from app.services.llm_client import llm_backend_label
 from app.services.ollama_client import list_installed_models
 
@@ -23,11 +23,12 @@ GEMINI_MODEL_SUGGESTIONS: list[dict[str, str]] = [
 
 def default_model_for_active_backend() -> str:
     backend = llm_backend_label()
+    runtime = config_module.get_runtime_config()
     if backend == "claude":
-        return DEFAULT_CLAUDE_MODEL
+        return runtime.default_claude_model
     if backend == "gemini":
-        return DEFAULT_GEMINI_MODEL
-    return DEFAULT_OLLAMA_MODEL or DEFAULT_CLAUDE_MODEL
+        return runtime.default_gemini_model
+    return runtime.default_ollama_model or runtime.default_claude_model
 
 
 def ollama_model_label(name: str) -> str:
