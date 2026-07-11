@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session
 
-from app.db.tables import ChatSession
+from app.db.tables import ChatSession, ImprovementProposal
 from app.domain.schemas import ChatMessageRequest, CreateChatSessionRequest
-from app.repositories import chat_repo, resume_repo, source_document_repo
+from app.repositories import chat_repo, proposal_repo, resume_repo, source_document_repo
 from app.routers.deps import get_session, resolve_requested_model
 from app.services.chat_service import handle_chat_turn
 from app.services.errors import http_error
@@ -90,6 +90,44 @@ def _source_document_link_dict(session: Session, meta_raw: str | None) -> dict |
     }
 
 
+def _proposal_dict(row: ImprovementProposal) -> dict:
+    """v4 ticket B6: the wire shape shared by ChatMessageDto.proposal and
+    ChatSessionDetailResponse.pendingProposal (dto.ts's ``ChatMessageProposalDto`` --
+    {proposalId, status, revision, items}), built from a live ``ImprovementProposal`` row.
+    Items go through `proposal_repo.get_items` (pydantic-validated) then `model_dump()`,
+    same treatment as PatchOp over SourceDocument.proposed_patch."""
+    return {
+        "proposalId": row.id,
+        "status": row.status,
+        "revision": row.revision,
+        "items": [item.model_dump() for item in proposal_repo.get_items(row)],
+    }
+
+
+def _proposal_link_dict(session: Session, meta_raw: str | None) -> dict | None:
+    """v4 ticket B6: when a chat_message's ``meta`` references an Improvement Proposal
+    (``{"proposalId": int}`` -- written by chat_service on the Analysis/adjust/new-JD
+    turns), joins improvement_proposals LIVE, at read time, for its CURRENT
+    status/revision/items -- never a stale copy (mirrors `_source_document_link_dict`
+    above). Uses `proposal_repo.get` (a plain SELECT), not `Session.get()`, because a
+    proposal can be cascade-deleted at the DB level (session delete) out from under an
+    already-identity-mapped instance -- see that function's docstring. Returns None for a
+    message with no such reference, or if the referenced proposal no longer exists."""
+    if not meta_raw:
+        return None
+    try:
+        meta = json.loads(meta_raw)
+    except json.JSONDecodeError:
+        return None
+    proposal_id = meta.get("proposalId")
+    if proposal_id is None:
+        return None
+    row = proposal_repo.get(session, proposal_id)
+    if row is None:
+        return None
+    return _proposal_dict(row)
+
+
 @router.get("/api/chat/sessions/{session_id}")
 async def get_chat_session(session_id: int, session: Session = Depends(get_session)):
     chat_session, messages = chat_repo.get_session_with_messages(session, session_id)
@@ -102,6 +140,8 @@ async def get_chat_session(session_id: int, session: Session = Depends(get_sessi
         if resume_row is not None:
             active_resume = json.loads(resume_row.data)
 
+    pending_proposal = proposal_repo.get_pending(session, session_id)
+
     return {
         "session": _session_detail_dict(chat_session),
         "messages": [
@@ -113,10 +153,12 @@ async def get_chat_session(session_id: int, session: Session = Depends(get_sessi
                 "resumeVersionId": m.resume_version_id,
                 "createdAt": m.created_at.isoformat(),
                 "sourceDocument": _source_document_link_dict(session, m.meta),
+                "proposal": _proposal_link_dict(session, m.meta),
             }
             for m in messages
         ],
         "activeResume": active_resume,
+        "pendingProposal": _proposal_dict(pending_proposal) if pending_proposal is not None else None,
     }
 
 
