@@ -87,6 +87,37 @@ def write_profile(isolated_data_env: Path) -> Callable[[dict], Path]:
     return _write
 
 
+@pytest.fixture(autouse=True)
+def _isolated_ai_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clears the AI provider/model/key env vars this repo's own root ``.env`` sets for real
+    use (see app/config.py's ``load_dotenv`` -- it ships a genuine ``GEMINI_API_KEY``) and
+    neutralizes the OS keychain, so every test starts from a deterministic "nothing
+    configured" baseline regardless of the developer machine's real ``.env``/keychain
+    contents. v3 ticket 03's settings endpoints report configured-key presence and read
+    provider/model app_settings, which would otherwise be environment-dependent (and flaky
+    across machines/CI) without this. Tests that need a specific value set it explicitly via
+    ``monkeypatch.setenv``/``patch("keyring...")`` within their own scope, layering on top of
+    this default.
+    """
+    for name in (
+        "AI_PROVIDER",
+        "AI_DEFAULT_MODEL",
+        "CLAUDE_MODEL",
+        "GEMINI_MODEL",
+        "OLLAMA_MODEL",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "GEMINI_API_KEY",
+        "GITHUB_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    try:
+        import keyring
+    except ModuleNotFoundError:
+        return
+    monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None, raising=False)
+
+
 def _blackhole_transport_handler(request: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError(
         "network access is disabled in tests by default (see "
