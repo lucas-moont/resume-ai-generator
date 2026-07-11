@@ -202,15 +202,59 @@ class TestProposalTurnRouting:
 
 
 class TestProfileUpdateVsProposalTurnBoundary:
-    """v4 ticket B4 (spec SS2): with a Pending Proposal, a message naming PROPOSAL scope
-    (``sugestao``/``proposta``/``melhoria``/``item``/their English counterparts) is exempted
-    from the profile_update check entirely, even when it would otherwise match (action verb +
-    profile-fact noun) -- it means "adjust the proposal", not "change my permanent profile"."""
+    """v4 ticket B4 originally exempted messages naming literal PROPOSAL-scope vocabulary
+    (``sugestao``/``proposta``/``melhoria``/``item``/their English counterparts) from
+    ``has_pending_proposal`` and routed them to ``profile_update`` instead. QA-03 (P1, QA live)
+    found the hole: a natural adjustment phrase that names no trigger word ("adiciona tambem
+    FastAPI nas skills ... e reordena os projetos ...") slipped past the guard and silently wrote
+    a real ProfileVersion to the permanent Living Profile mid-negotiation, with no user
+    confirmation. REVISED (spec SS2, QA-03): ``has_pending_proposal`` now wins unconditionally,
+    evaluated BEFORE the profile_update check, with no message-shape exception -- see
+    ``classify_intent``'s docstring for the full data-safety rationale (misroute to
+    proposal_turn is recoverable; the inverse misroute corrupts profile data)."""
+
+    def test_qa03_exact_repro_phrase_with_pending_proposal_is_proposal_turn(self) -> None:
+        # The exact QA-03 repro: no PROPOSAL-scope trigger word anywhere in the message, yet it
+        # reads exactly like a profile_update ("adiciona"/"remova" + "skills"/"projetos") --
+        # this is the phrase that leaked past the old guard and wrote v19 to the Living Profile.
+        assert (
+            classify_intent(
+                message=(
+                    "adiciona também FastAPI nas skills (não remova nenhuma skill existente) "
+                    "e reordena os projetos colocando Space Tourism Website em primeiro lugar, "
+                    "sem remover nenhum projeto da lista."
+                ),
+                has_active_resume=False,
+                has_pending_proposal=True,
+            )
+            == "proposal_turn"
+        )
+
+    def test_changed_phone_number_with_pending_proposal_is_now_proposal_turn(self) -> None:
+        # Trade-off accepted by the spec revision: a genuine profile-fact edit ("mudei meu
+        # telefone") that happens to arrive while a proposal is pending is NOT applied to the
+        # permanent profile anymore -- it routes conversationally instead, and the user can
+        # repeat the edit once the proposal is approved or discarded. This is the intentional
+        # cost of closing the QA-03 hole (see classify_intent's docstring: no deterministic
+        # heuristic can tell the two apart reliably, so routing must fail non-destructively).
+        assert (
+            classify_intent(
+                message="mudei meu telefone para 11 99999-0000",
+                has_active_resume=False,
+                has_pending_proposal=True,
+            )
+            == "proposal_turn"
+        )
+
+    def test_changed_phone_number_with_no_pending_proposal_is_still_profile_update(self) -> None:
+        # Without a pending proposal the v1/v2 routing is byte-identical to before this ticket --
+        # profile_update still wins.
+        assert (
+            classify_intent(message="mudei meu telefone para 11 99999-0000", has_active_resume=False)
+            == "profile_update"
+        )
 
     def test_removing_a_suggestion_about_skills_with_pending_proposal_is_proposal_turn(self) -> None:
-        # Would read as profile_update ("remove" + "skills") with no guard -- but "sugestao"
-        # names the proposal's own scope, so the guard exempts it and the pending-proposal
-        # routing below fires instead.
         assert (
             classify_intent(
                 message="remove a sugestão sobre skills",
@@ -220,50 +264,7 @@ class TestProfileUpdateVsProposalTurnBoundary:
             == "proposal_turn"
         )
 
-    def test_removing_a_suggestion_about_skills_en_with_pending_proposal_is_proposal_turn(self) -> None:
-        assert (
-            classify_intent(
-                message="remove the suggestion about skills",
-                has_active_resume=False,
-                has_pending_proposal=True,
-            )
-            == "proposal_turn"
-        )
-
-    def test_changed_phone_number_with_pending_proposal_still_wins_as_profile_update(self) -> None:
-        # No proposal-scope word here -- the guard never fires, so profile_update still wins
-        # over a pending proposal exactly as it would with no pending proposal at all.
-        assert (
-            classify_intent(
-                message="Mudei meu telefone para 11 91234-5678",
-                has_active_resume=False,
-                has_pending_proposal=True,
-            )
-            == "profile_update"
-        )
-
-    def test_changed_phone_number_with_pending_proposal_still_wins_as_profile_update_en(self) -> None:
-        assert (
-            classify_intent(
-                message="I changed my phone number to 11 99999-0000",
-                has_active_resume=False,
-                has_pending_proposal=True,
-            )
-            == "profile_update"
-        )
-
-    def test_the_same_message_with_no_pending_proposal_is_still_profile_update(self) -> None:
-        # The guard is a NO-OP without a pending proposal (there is no proposal to be talking
-        # about) -- proves the guard is additive, not a rewrite of the v2 boundary.
-        assert (
-            classify_intent(message="remove a sugestão sobre skills", has_active_resume=False)
-            == "profile_update"
-        )
-
     def test_adjust_the_proposal_item_2_with_pending_proposal_is_proposal_turn(self) -> None:
-        # "item" alone (no action-verb+noun match at all) is unambiguous proposal-turn material
-        # regardless of the guard -- pinned here as a plain has_pending_proposal case, same as
-        # TestProposalTurnRouting's own tests above.
         assert (
             classify_intent(
                 message="ajusta o item 2 da proposta",

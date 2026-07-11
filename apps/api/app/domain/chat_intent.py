@@ -117,51 +117,42 @@ def _looks_like_profile_update(message: str) -> bool:
     return _mentions_any(tokens, _ACTION_VERBS) and _mentions_any(tokens, _PROFILE_FACT_NOUNS)
 
 
-# --- proposal_turn vs. profile_update guard (v4 ticket B4, spec SS2) -----------------------
-#
-# A Pending Proposal introduces a second kind of "scope" a message can name (on top of the
-# resume-scope gate above): the proposal itself. "remove a sugestao sobre skills" reads exactly
-# like a profile_update ("remove" + "skills") to the pattern above, but with a proposal pending
-# it means "adjust the proposal", not "delete the skill from my permanent profile" -- the same
-# vocabulary the spec hands us verbatim.
-_PROPOSAL_SCOPE_WORDS = frozenset(
-    {
-        "sugestao", "sugestão", "proposta", "melhoria", "melhorias", "item",
-        "suggestion", "suggestions", "proposal", "improvement", "improvements",
-    }
-)
-
-
-def _mentions_proposal_scope(message: str) -> bool:
-    return _mentions_any(_tokenize(message), _PROPOSAL_SCOPE_WORDS)
-
-
 def classify_intent(
     *, message: str, has_active_resume: bool, has_pending_proposal: bool = False
 ) -> Intent:
     """The single seam ``chat_service.handle_chat_turn`` calls to route a turn. No LLM call is
-    spent deciding it (CONTEXT.md: Intent). ``profile_update`` is checked FIRST -- it wins even
-    over an active resume (a user mid-refine-session can still correct a profile fact without
-    it being swallowed into a refine turn); the rest is the untouched v1 3-way routing.
+    spent deciding it (CONTEXT.md: Intent). Without a pending proposal, ``profile_update`` is
+    checked FIRST -- it wins even over an active resume (a user mid-refine-session can still
+    correct a profile fact without it being swallowed into a refine turn); the rest is the
+    untouched v1 3-way routing.
 
-    ``has_pending_proposal`` (v4 ticket B3, docs/v4-improvement-proposal.md SS2): a session with
-    a Pending Proposal routes to ``proposal_turn`` next -- AFTER the profile_update check above,
-    BEFORE the v1 3-way routing below. Defaults to False so every pre-v4 call site (and every
-    pinning test that predates this kwarg) is byte-identical.
+    ``has_pending_proposal`` (v4 ticket B3, docs/v4-improvement-proposal.md SS2) is checked
+    BEFORE the profile_update check above and wins UNCONDITIONALLY -- no message shape exempts
+    it. Defaults to False so every pre-v4 call site (and every pinning test that predates this
+    kwarg) is byte-identical.
 
-    v4 ticket B4 adds the guard the spec calls for: while a proposal is pending, a message that
-    names PROPOSAL scope (``_PROPOSAL_SCOPE_WORDS`` -- "sugestao"/"proposta"/"melhoria"/"item"/
-    their English counterparts) is exempted from the profile_update check entirely, even when it
-    would otherwise match (action verb + profile-fact noun) -- "remove a sugestao sobre skills"
-    means "adjust the proposal's skills item", not "delete skills from my permanent profile".
-    Without a pending proposal this guard never fires (there is no proposal to be talking
-    about), so every pre-B4 profile_update test is unaffected.
+    v4 ticket B4 originally tried to carve out an exception: while a proposal was pending, a
+    message naming literal PROPOSAL-scope vocabulary ("sugestao"/"proposta"/"melhoria"/"item")
+    was exempted from this rule and still routed to profile_update. QA-03 (P1, QA live) found
+    the hole: the natural-language adjustment "adiciona também FastAPI nas skills ... e reordena
+    os projetos ..." names no trigger word, so it slipped past the guard and was routed to
+    profile_update -- silently writing a real ProfileVersion to the permanent Living Profile
+    with no user confirmation. The guard was removed; the rule is now unconditional.
+
+    Security/data-safety rationale (QA-03): the Pending Proposal window is short-lived (closed
+    by approve or supersede) and, by construction, no deterministic heuristic can tell "adjust
+    the proposal" apart from "update my permanent profile" with full reliability -- the
+    vocabulary genuinely overlaps ("remove the FastAPI skill" reads identically either way).
+    Given that ambiguity, routing MUST fail toward the non-destructive outcome: a misroute to
+    ``proposal_turn`` is recoverable (the LLM replies or asks for clarification, nothing is
+    written); the inverse misroute permanently corrupts profile data outside the negotiation the
+    user is actually having. A user who wants to fix a profile fact mid-negotiation gets the
+    conversational turn instead and can make the edit after approving or discarding the proposal.
     """
-    profile_update_guarded = has_pending_proposal and _mentions_proposal_scope(message)
-    if not profile_update_guarded and _looks_like_profile_update(message):
-        return "profile_update"
     if has_pending_proposal:
         return "proposal_turn"
+    if _looks_like_profile_update(message):
+        return "profile_update"
     if not has_active_resume and looks_like_job_description(message):
         return "generate"
     if has_active_resume:
