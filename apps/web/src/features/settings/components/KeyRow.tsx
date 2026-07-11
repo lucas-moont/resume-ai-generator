@@ -48,7 +48,7 @@ export function KeyRow({ entry }: KeyRowProps) {
               onClick={() => deleteKey.mutate(entry.name)}
               disabled={deleteKey.isPending}
               aria-label={`Remove ${label}`}
-              className="rounded-md border border-stone-200 px-2 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              className="rounded-md border border-stone-200 px-2 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               Remove
             </button>

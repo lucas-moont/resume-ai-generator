@@ -83,7 +83,7 @@ export function ProviderForm() {
   const updateProvider = useUpdateProviderSettings()
 
   if (providersQuery.isLoading || keysQuery.isLoading) {
-    return <p className="text-sm text-stone-500 dark:text-zinc-500">Loading settings…</p>
+    return <p className="text-sm text-stone-500 dark:text-zinc-300">Loading settings…</p>
   }
   if (providersQuery.isError || keysQuery.isError || !providersQuery.data || !keysQuery.data) {
     return (
@@ -130,7 +130,7 @@ export function ProviderForm() {
         <div>
           <p className={FIELDSET_LEGEND_CLASS}>Default model</p>
           <EnvLockNote envVar={activeEntry.defaultModelEnvVar} />
-          <p className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-sm text-stone-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+          <p className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-sm text-stone-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
             {activeEntry.defaultModel}
           </p>
         </div>
