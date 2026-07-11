@@ -72,6 +72,24 @@ def _extract_content(data: dict) -> str:
     return ""
 
 
+def _parse_ollama_response(r: httpx.Response, base: str, model: str) -> str:
+    """Raise on a non-2xx status (via _ollama_http_error_message) or a 2xx body that isn't JSON
+    -- mirrors Gemini's explicit json.JSONDecodeError guard so the two providers behave the same
+    way in front of a misbehaving/misconfigured backend instead of surfacing a raw
+    JSONDecodeError."""
+    try:
+        r.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(_ollama_http_error_message(r, base, model)) from e
+    try:
+        data = r.json()
+    except json.JSONDecodeError:
+        raise RuntimeError(
+            f"Ollama API returned non-JSON (HTTP {r.status_code}): {(r.text or '')[:500]}"
+        ) from None
+    return _extract_content(data)
+
+
 class OllamaProvider:
     name: ProviderName = "ollama"
 
@@ -114,11 +132,7 @@ class OllamaProvider:
                         "options": _ollama_options(self._ctx),
                     },
                 )
-            try:
-                r.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                raise RuntimeError(_ollama_http_error_message(r, base, model)) from e
-            return _extract_content(r.json())
+            return _parse_ollama_response(r, base, model)
 
         async with httpx.AsyncClient(timeout=float(self._ctx.llm_timeout_seconds)) as client:
             content = await _request_once(client)

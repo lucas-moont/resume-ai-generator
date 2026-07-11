@@ -48,8 +48,23 @@ def resolve_provider_name_for_model(model: str | None) -> ProviderName | None:
 
 def provider_context_for(mode: ProviderName) -> ProviderContext:
     """Assemble the ``ProviderContext`` a provider adapter is constructed with -- the one place
-    that reads `app.config` module-qualified (call-time, per v3 ticket 01) so the adapters
-    themselves never need to (v3 ticket 02)."""
+    that reads `app.config` so the adapters themselves never need to (v3 ticket 02).
+
+    Two different freshness guarantees are bundled here, not one:
+
+    - Provider/model preferences and API keys (``runtime.*``, from ``get_runtime_config()``) are
+      genuinely call-time per v3 ticket 01 -- a settings write via ``config.set_app_setting`` or
+      the keychain takes effect on the very next call, no restart.
+    - The tuning knobs (``CLAUDE_MAX_OUTPUT_TOKENS``, ``CLAUDE_THINKING``,
+      ``GEMINI_MAX_OUTPUT_TOKENS``, ``OLLAMA_BASE_URL``/``OLLAMA_NUM_CTX``/``OLLAMA_NUM_PREDICT``,
+      ``LLM_TEMPERATURE``, ``LLM_TIMEOUT_SECONDS``) are still plain env-backed constants read
+      once at import time in ``app/config.py`` -- reading them here is call-time in the sense
+      that this function re-reads the (frozen) module attribute on every call, but changing one
+      still requires an env var change + process restart. They are NOT app_settings-backed and
+      NOT PUT-able through a settings API today; ticket 03 would need to promote a knob into
+      ``app_settings`` (following the ``resolve_ai_provider``-style accessor pattern) before
+      exposing it as a runtime-configurable value.
+    """
     runtime = config_module.get_runtime_config()
     return ProviderContext(
         mode=mode,
