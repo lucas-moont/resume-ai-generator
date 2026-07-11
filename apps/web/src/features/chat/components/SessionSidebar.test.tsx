@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { SessionSidebar } from './SessionSidebar'
 import { server } from '../../../test/setup'
 import { renderApp } from '../../../test/render'
@@ -106,11 +106,25 @@ describe('SessionSidebar', () => {
   })
 
   describe('delete', () => {
-    afterEach(() => {
-      vi.restoreAllMocks()
+    it('opens a ConfirmDialog (not window.confirm) with focus on the safe Cancel button', async () => {
+      server.use(
+        http.get('/api/chat/sessions', () =>
+          HttpResponse.json({
+            sessions: [{ id: 3, title: 'Old chat', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+          }),
+        ),
+      )
+
+      const user = userEvent.setup()
+      renderApp(<SessionSidebar />)
+
+      await user.click(await screen.findByRole('button', { name: /delete old chat/i }))
+
+      expect(screen.getByRole('dialog', { name: /delete old chat/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
     })
 
-    it('deletes a session after light confirmation', async () => {
+    it('deletes a session after confirming in the dialog', async () => {
       let deleteCalled = false
       server.use(
         http.get('/api/chat/sessions', () =>
@@ -123,12 +137,12 @@ describe('SessionSidebar', () => {
           return new HttpResponse(null, { status: 204 })
         }),
       )
-      vi.spyOn(window, 'confirm').mockReturnValue(true)
 
       const user = userEvent.setup()
       renderApp(<SessionSidebar />)
 
       await user.click(await screen.findByRole('button', { name: /delete old chat/i }))
+      await user.click(screen.getByRole('button', { name: 'Delete' }))
 
       await waitFor(() => expect(deleteCalled).toBe(true))
     })
@@ -146,14 +160,15 @@ describe('SessionSidebar', () => {
           return new HttpResponse(null, { status: 204 })
         }),
       )
-      vi.spyOn(window, 'confirm').mockReturnValue(false)
 
       const user = userEvent.setup()
       renderApp(<SessionSidebar />)
 
       await user.click(await screen.findByRole('button', { name: /delete keep me/i }))
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
 
       expect(deleteCalled).toBe(false)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(screen.getByText('Keep me')).toBeInTheDocument()
     })
 
@@ -168,12 +183,12 @@ describe('SessionSidebar', () => {
         ),
         http.delete('/api/chat/sessions/6', () => new HttpResponse(null, { status: 204 })),
       )
-      vi.spyOn(window, 'confirm').mockReturnValue(true)
 
       const user = userEvent.setup()
       renderApp(<SessionSidebar />)
 
       await user.click(await screen.findByRole('button', { name: /delete current chat/i }))
+      await user.click(screen.getByRole('button', { name: 'Delete' }))
 
       await waitFor(() => {
         expect(useChatStore.getState().sessionId).toBeNull()
