@@ -31,9 +31,8 @@ export function ConfirmDialog({
   const cancelRef = useRef<HTMLButtonElement>(null)
 
   return (
-    <Dialog open={open} onClose={onCancel} title={title} initialFocusRef={cancelRef}>
-      {description && <p className="text-sm text-stone-600 dark:text-zinc-400">{description}</p>}
-      <div className="mt-4 flex justify-end gap-2">
+    <Dialog open={open} onClose={onCancel} title={title} description={description} initialFocusRef={cancelRef}>
+      <div className="flex justify-end gap-2">
         <button
           ref={cancelRef}
           type="button"

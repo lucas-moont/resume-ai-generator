@@ -15,6 +15,8 @@ export interface DialogProps {
   onClose: () => void
   /** Rendered as the dialog's heading and wired as its accessible name. */
   title: string
+  /** Rendered under the title and wired as the dialog's accessible description. */
+  description?: ReactNode
   children: ReactNode
   /** Element to focus when the dialog opens. Defaults to the first focusable element inside it. */
   initialFocusRef?: RefObject<HTMLElement | null>
@@ -28,11 +30,17 @@ export interface DialogProps {
  * doesn't implement `showModal()`, which would make the primitive
  * untestable; a portal gives the same stacking/focus guarantees under full
  * manual control.
+ *
+ * Assumes a single open Dialog at a time: two simultaneously-open instances
+ * would each install their own document-level keydown listener and
+ * body-scroll-lock cleanup, and would fight over both. Nesting a second
+ * Dialog (e.g. a confirmation inside a Settings dialog) needs that revisited.
  */
-export function Dialog({ open, onClose, title, children, initialFocusRef, className }: DialogProps) {
+export function Dialog({ open, onClose, title, description, children, initialFocusRef, className }: DialogProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const previouslyFocusedRef = useRef<HTMLElement | null>(null)
   const titleId = useId()
+  const descriptionId = useId()
 
   useEffect(() => {
     if (!open) return
@@ -83,8 +91,11 @@ export function Dialog({ open, onClose, title, children, initialFocusRef, classN
       }
     }
 
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    // Capture phase: a descendant (e.g. a combobox or menu) calling
+    // stopPropagation() on keydown must not be able to swallow Escape or
+    // break the focus trap before it reaches us.
+    document.addEventListener('keydown', handleKeyDown, { capture: true })
+    return () => document.removeEventListener('keydown', handleKeyDown, { capture: true })
   }, [open, onClose])
 
   if (!open) return null
@@ -101,12 +112,18 @@ export function Dialog({ open, onClose, title, children, initialFocusRef, classN
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className={`w-full max-w-sm rounded-2xl border border-stone-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900 ${className ?? ''}`}
       >
         <h2 id={titleId} className="text-base font-semibold text-stone-900 dark:text-zinc-100">
           {title}
         </h2>
+        {description && (
+          <p id={descriptionId} className="mt-1 text-sm text-stone-600 dark:text-zinc-400">
+            {description}
+          </p>
+        )}
         <div className="mt-3">{children}</div>
       </div>
     </div>,

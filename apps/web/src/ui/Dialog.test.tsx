@@ -39,6 +39,26 @@ describe('Dialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('Escape still closes when an inner element stops propagation on keydown', async () => {
+    const onClose = vi.fn()
+    function StopPropagationChild() {
+      return (
+        <button type="button" onKeyDown={(e) => e.stopPropagation()}>
+          Inner
+        </button>
+      )
+    }
+    render(
+      <Dialog open onClose={onClose} title="Confirm">
+        <StopPropagationChild />
+      </Dialog>,
+    )
+    const inner = screen.getByRole('button', { name: 'Inner' })
+    inner.focus()
+    await userEvent.setup().keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('traps Tab focus inside the dialog, cycling from the last to the first focusable element', async () => {
     const user = userEvent.setup()
     render(
@@ -107,6 +127,25 @@ describe('Dialog', () => {
       </Dialog>,
     )
     expect(document.body.style.overflow).not.toBe('hidden')
+  })
+
+  it('wires a provided description into aria-describedby', () => {
+    render(
+      <Dialog open onClose={vi.fn()} title="Delete this chat?" description="This can't be undone.">
+        <button type="button">Confirm</button>
+      </Dialog>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Delete this chat?' })
+    expect(dialog).toHaveAccessibleDescription("This can't be undone.")
+  })
+
+  it('has no accessible description when none is provided', () => {
+    render(
+      <Dialog open onClose={vi.fn()} title="Pick one">
+        <button type="button">OK</button>
+      </Dialog>,
+    )
+    expect(screen.getByRole('dialog')).not.toHaveAccessibleDescription()
   })
 
   it('focuses the given initialFocusRef element instead of the first focusable one', () => {
