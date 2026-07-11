@@ -3,6 +3,10 @@ import type { ResumeDocument, TemplateId } from '../../types/resume'
 export interface ModelSuggestion {
   value: string
   label: string
+  /** v3 ticket 03 (additive backend change): which provider this suggestion came from.
+   * Optional — some fixtures/mocks (and historically the Composer) don't need it; the
+   * ModelPicker (ticket 06) is the first consumer that filters on it. */
+  provider?: ProviderName
 }
 
 export interface ModelsResponse {
