@@ -20,4 +20,11 @@ describe('ProfileUpdateAppliedCard', () => {
     expect(screen.getByText(/updated phone number\./i)).toBeInTheDocument()
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
+
+  it('degrades to a label-only "Profile updated" when hydrated from history without profileVersion/summary (v3 ticket 12)', () => {
+    render(<ProfileUpdateAppliedCard card={{ type: 'profileUpdateApplied' }} />)
+
+    expect(screen.getByText('Profile updated')).toBeInTheDocument()
+    expect(screen.queryByText(/version/i)).not.toBeInTheDocument()
+  })
 })

@@ -235,6 +235,44 @@ describe('useResumeChatSession', () => {
     expect(useChatStore.getState().messages[0].card).toMatchObject({ status: 'applied' })
   })
 
+  it('an assistant message with intent profile_update and no sourceDocument gets a degraded ProfileUpdateAppliedCard (v3 ticket 12)', async () => {
+    server.use(
+      http.get('/api/chat/sessions/15', () =>
+        HttpResponse.json({
+          session: { id: 15, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 1,
+              role: 'user',
+              content: 'I changed my phone number',
+              intent: null,
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: null,
+            },
+            {
+              id: 2,
+              role: 'assistant',
+              content: "I've updated your profile. Want me to regenerate your resume with this change?",
+              intent: 'profile_update',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:01Z',
+              sourceDocument: null,
+            },
+          ],
+          activeResume: null,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(15)
+
+    const assistantMsg = useChatStore.getState().messages[1]
+    // Honest degradation: no profileVersion/summary in the DTO, so neither is fabricated.
+    expect(assistantMsg.card).toEqual({ type: 'profileUpdateApplied' })
+  })
+
   it('a message with no sourceDocument and no resumeVersionId gets no card', async () => {
     server.use(
       http.get('/api/chat/sessions/14', () =>
