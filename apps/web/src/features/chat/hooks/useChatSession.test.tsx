@@ -7,13 +7,14 @@ import {
   useCreateSession,
   useDeleteSession,
   useResumeChatSession,
+  useRestoreActiveSession,
   useSession,
   useSessions,
 } from './useChatSession'
 import { useChatStore } from '../store/chatStore'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { server } from '../../../test/setup'
-import { makeResume } from '../../../test/factories'
+import { makeProposal, makeResume } from '../../../test/factories'
 
 beforeEach(() => {
   useChatStore.getState().reset()
@@ -360,5 +361,241 @@ describe('useResumeChatSession', () => {
     await result.current.resumeSession(101)
     expect(useResumeStore.getState().resume?.fullName).toBe('Session A Resume')
     expect(useResumeStore.getState().template).toBe('ats-plain')
+  })
+})
+
+describe('useResumeChatSession — proposal rehydration (v4 F5)', () => {
+  it('an assistant message with a proposed proposal gets a ProposalCard and sets pendingProposalId, never animated', async () => {
+    server.use(
+      http.get('/api/chat/sessions/20', () =>
+        HttpResponse.json({
+          session: { id: 20, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 1,
+              role: 'user',
+              content: 'aqui está a vaga',
+              intent: null,
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: null,
+            },
+            {
+              id: 2,
+              role: 'assistant',
+              content: 'Aqui estão minhas sugestões de melhoria para essa vaga.',
+              intent: 'propose',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:01Z',
+              sourceDocument: null,
+              proposal: makeProposal({ proposalId: 5, revision: 1 }),
+            },
+          ],
+          activeResume: null,
+          pendingProposal: makeProposal({ proposalId: 5, revision: 1 }),
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(20)
+
+    const assistantMsg = useChatStore.getState().messages[1]
+    expect(assistantMsg.card).toEqual({
+      type: 'proposal',
+      proposalId: 5,
+      status: 'proposed',
+      revision: 1,
+      itemsCount: 1,
+    })
+    expect(assistantMsg.animate).toBeUndefined()
+    expect(useChatStore.getState().pendingProposalId).toBe(5)
+  })
+
+  it('an approved proposal renders an approved card and leaves pendingProposalId null', async () => {
+    server.use(
+      http.get('/api/chat/sessions/21', () =>
+        HttpResponse.json({
+          session: { id: 21, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: 6 },
+          messages: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: 'Aqui estão minhas sugestões de melhoria para essa vaga.',
+              intent: 'propose',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: null,
+              proposal: makeProposal({ proposalId: 6, status: 'approved', revision: 2 }),
+            },
+          ],
+          activeResume: null,
+          // The approved proposal is no longer the session's Pending Proposal.
+          pendingProposal: null,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(21)
+
+    expect(useChatStore.getState().messages[0].card).toEqual({
+      type: 'proposal',
+      proposalId: 6,
+      status: 'approved',
+      revision: 2,
+      itemsCount: 1,
+    })
+    expect(useChatStore.getState().pendingProposalId).toBeNull()
+  })
+
+  it('a superseded proposal renders a superseded card', async () => {
+    server.use(
+      http.get('/api/chat/sessions/22', () =>
+        HttpResponse.json({
+          session: { id: 22, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: 'Proposta anterior, substituída por uma nova vaga.',
+              intent: 'propose',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: null,
+              proposal: makeProposal({ proposalId: 7, status: 'superseded', revision: 1 }),
+            },
+            {
+              id: 2,
+              role: 'assistant',
+              content: 'Aqui estão as novas sugestões.',
+              intent: 'propose',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:01Z',
+              sourceDocument: null,
+              proposal: makeProposal({ proposalId: 8, status: 'proposed', revision: 1 }),
+            },
+          ],
+          activeResume: null,
+          pendingProposal: makeProposal({ proposalId: 8, status: 'proposed', revision: 1 }),
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(22)
+
+    expect(useChatStore.getState().messages[0].card).toMatchObject({ proposalId: 7, status: 'superseded' })
+    expect(useChatStore.getState().messages[1].card).toMatchObject({ proposalId: 8, status: 'proposed' })
+    expect(useChatStore.getState().pendingProposalId).toBe(8)
+  })
+
+  it('a session with no proposal at all leaves v3 restore behavior intact and pendingProposalId null', async () => {
+    server.use(
+      http.get('/api/chat/sessions/23', () =>
+        HttpResponse.json({
+          session: { id: 23, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: 'hi there',
+              intent: 'question',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: null,
+            },
+          ],
+          activeResume: null,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(23)
+
+    expect(useChatStore.getState().messages[0].card).toBeUndefined()
+    expect(useChatStore.getState().pendingProposalId).toBeNull()
+  })
+
+  it('switching to a session with no pending proposal clears a stale pendingProposalId from the previous one', async () => {
+    server.use(
+      http.get('/api/chat/sessions/24', () =>
+        HttpResponse.json({
+          session: { id: 24, title: 'A', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [],
+          activeResume: null,
+          pendingProposal: makeProposal({ proposalId: 40 }),
+        }),
+      ),
+      http.get('/api/chat/sessions/25', () =>
+        HttpResponse.json({
+          session: { id: 25, title: 'B', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [],
+          activeResume: null,
+          pendingProposal: null,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper })
+    await result.current.resumeSession(24)
+    expect(useChatStore.getState().pendingProposalId).toBe(40)
+
+    await result.current.resumeSession(25)
+    expect(useChatStore.getState().pendingProposalId).toBeNull()
+  })
+})
+
+describe('useRestoreActiveSession — proposal rehydration (v4 F5)', () => {
+  it('restores a pending proposal card and pendingProposalId on boot', async () => {
+    useChatStore.setState({ sessionId: 30, messages: [], pendingProposalId: null })
+    server.use(
+      http.get('/api/chat/sessions/30', () =>
+        HttpResponse.json({
+          session: { id: 30, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: 'Aqui estão minhas sugestões de melhoria para essa vaga.',
+              intent: 'propose',
+              resumeVersionId: null,
+              createdAt: '2026-07-10T00:00:00Z',
+              sourceDocument: null,
+              proposal: makeProposal({ proposalId: 50, revision: 1 }),
+            },
+          ],
+          activeResume: null,
+          pendingProposal: makeProposal({ proposalId: 50, revision: 1 }),
+        }),
+      ),
+    )
+
+    renderHook(() => useRestoreActiveSession(), { wrapper })
+
+    await waitFor(() => expect(useChatStore.getState().messages).toHaveLength(1))
+    expect(useChatStore.getState().messages[0].card).toMatchObject({ proposalId: 50, status: 'proposed' })
+    expect(useChatStore.getState().messages[0].animate).toBeUndefined()
+    expect(useChatStore.getState().pendingProposalId).toBe(50)
+  })
+
+  it('clears a stale pendingProposalId on boot when the restored session has none pending', async () => {
+    useChatStore.setState({ sessionId: 31, messages: [], pendingProposalId: 999 })
+    server.use(
+      http.get('/api/chat/sessions/31', () =>
+        HttpResponse.json({
+          session: { id: 31, title: 'Hi', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null },
+          messages: [],
+          activeResume: null,
+          pendingProposal: null,
+        }),
+      ),
+    )
+
+    renderHook(() => useRestoreActiveSession(), { wrapper })
+
+    await waitFor(() => expect(useChatStore.getState().sessionId).toBe(31))
+    await waitFor(() => expect(useChatStore.getState().pendingProposalId).toBeNull())
   })
 })

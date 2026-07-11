@@ -8,11 +8,12 @@ import {
 } from '../../../lib/api/endpoints'
 import type {
   ChatMessageDto,
+  ChatMessageProposalDto,
   ChatMessageSourceDocumentDto,
   CreateChatSessionResponse,
 } from '../../../lib/api/dto'
 import { useResumeStore } from '../../resume/store/resumeStore'
-import { useChatStore, type ChatMessage, type ProfileUpdatedCard } from '../store/chatStore'
+import { useChatStore, type ChatMessage, type ProfileUpdatedCard, type ProposalCard } from '../store/chatStore'
 
 export const CHAT_SESSIONS_QUERY_KEY = ['chat-sessions'] as const
 export const chatSessionQueryKey = (sessionId: number) => ['chat-session', sessionId] as const
@@ -82,6 +83,28 @@ function toProfileUpdatedCard(sourceDocument: ChatMessageSourceDocumentDto): Pro
   }
 }
 
+/** v4 F5: the DTO's `status` is the broader ProposalStatus (includes `discarded`,
+ * "reservado sem UI na v4" per spec §1.3) — mirrors useChatStream's toProposalCardStatus,
+ * defensively collapsing anything that isn't approved/superseded to 'proposed' rather than
+ * trusting the join always narrows it itself. */
+function toProposalCardStatus(status: ChatMessageProposalDto['status']): ProposalCard['status'] {
+  return status === 'approved' || status === 'superseded' ? status : 'proposed'
+}
+
+/** v4 F5: reconstructs the ProposalCard a `proposal` SSE event attached live, from
+ * `dto.proposal` (GET /api/chat/sessions/{id} joins improvement_proposals live, at read time,
+ * for its CURRENT status/revision — never a stale copy, same pattern as
+ * toProfileUpdatedCard above). Items completos NÃO vivem no card (spec §5) — only the count. */
+function toProposalCard(proposal: ChatMessageProposalDto): ProposalCard {
+  return {
+    type: 'proposal',
+    proposalId: proposal.proposalId,
+    status: toProposalCardStatus(proposal.status),
+    revision: proposal.revision,
+    itemsCount: proposal.items.length,
+  }
+}
+
 function toChatMessage(dto: ChatMessageDto): ChatMessage {
   return {
     id: String(dto.id),
@@ -90,18 +113,20 @@ function toChatMessage(dto: ChatMessageDto): ChatMessage {
     createdAt: new Date(dto.createdAt).getTime(),
     ...(dto.role === 'assistant' && dto.sourceDocument != null
       ? { card: toProfileUpdatedCard(dto.sourceDocument) }
-      : // A chat-only `profile_update` turn (no upload behind it) never carries a
-        // sourceDocument -- ChatMessageDto only has `intent` for it, not the profileVersion/
-        // summary the live SSE event had, so the card degrades honestly to a label-only
-        // rendering (v3 ticket 12; see ProfileUpdateAppliedCard's own fallback).
-        dto.role === 'assistant' && dto.intent === 'profile_update'
-        ? { card: { type: 'profileUpdateApplied' as const } }
-        : // We don't have the "before" resume to diff against when loading history, so this just
-          // marks that the turn changed the resume at the time (ResumeUpdatedCard renders it with
-          // no section list — see the F5 spec: "ganha ResumeUpdatedCard sem diff").
-          dto.role === 'assistant' && dto.resumeVersionId !== null
-          ? { card: { type: 'resumeUpdated' as const, changedSections: [] } }
-          : {}),
+      : dto.role === 'assistant' && dto.proposal != null
+        ? { card: toProposalCard(dto.proposal) }
+        : // A chat-only `profile_update` turn (no upload behind it) never carries a
+          // sourceDocument -- ChatMessageDto only has `intent` for it, not the profileVersion/
+          // summary the live SSE event had, so the card degrades honestly to a label-only
+          // rendering (v3 ticket 12; see ProfileUpdateAppliedCard's own fallback).
+          dto.role === 'assistant' && dto.intent === 'profile_update'
+          ? { card: { type: 'profileUpdateApplied' as const } }
+          : // We don't have the "before" resume to diff against when loading history, so this
+            // just marks that the turn changed the resume at the time (ResumeUpdatedCard
+            // renders it with no section list — see the F5 spec: "ganha ResumeUpdatedCard sem diff").
+            dto.role === 'assistant' && dto.resumeVersionId !== null
+            ? { card: { type: 'resumeUpdated' as const, changedSections: [] } }
+            : {}),
   }
 }
 
@@ -114,6 +139,10 @@ export function useResumeChatSession() {
       queryFn: () => getChatSession(sessionId),
     })
     useChatStore.getState().loadSession(sessionId, detail.messages.map(toChatMessage))
+    // v4 F5: mirrors the state machine's live join — always set (not just when present),
+    // so a stale pendingProposalId from whatever session was active before this one is
+    // cleared when the new session has no pending proposal of its own.
+    useChatStore.getState().setPendingProposalId(detail.pendingProposal?.proposalId ?? null)
     useResumeStore.getState().setResume(detail.activeResume)
   }
 
@@ -148,6 +177,7 @@ export function useRestoreActiveSession(): void {
       .then((detail) => {
         if (cancelled) return
         useChatStore.getState().loadSession(sessionId, detail.messages.map(toChatMessage))
+        useChatStore.getState().setPendingProposalId(detail.pendingProposal?.proposalId ?? null)
         useResumeStore.getState().setResume(detail.activeResume)
       })
       .catch(() => {
