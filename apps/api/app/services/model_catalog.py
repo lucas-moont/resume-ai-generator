@@ -46,6 +46,11 @@ _transport: httpx.AsyncBaseTransport | None = None
 _clock: Callable[[], float] = time.monotonic
 
 T = TypeVar("T")
+# Correctness invariant: a cached entry only changes on the NEXT read after its TTL expires --
+# there is no write-time staleness check. Any call site that changes what a cached provider's
+# entry represents (a settings write: a key added/removed, in practice) MUST call
+# invalidate_catalog_cache() itself; nothing here does it automatically. The only production
+# call sites today are settings_service.upsert_key/delete_key.
 _cache: dict[str, tuple[float, object]] = {}
 
 
@@ -59,6 +64,19 @@ def invalidate_catalog_cache() -> None:
 
 def _client(timeout: float) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout, transport=_transport)
+
+
+async def _fetch_json(url: str, headers: dict[str, str]) -> dict | None:
+    """GET ``url`` and return the parsed JSON body, or ``None`` on any network/HTTP-status/
+    JSON-parse failure -- the one shared failure-to-None seam all three listing fetchers below
+    fall back to their static suggestions (or "unreachable") on."""
+    try:
+        async with _client(10.0) as client:
+            r = await client.get(url, headers=headers)
+            r.raise_for_status()
+            return r.json()
+    except (httpx.HTTPError, ValueError):
+        return None
 
 
 async def _cached(key: str, fetch: Callable[[], Awaitable[T]]) -> T:
@@ -84,12 +102,8 @@ async def _fetch_ollama_tags() -> tuple[bool, list[str]]:
     ``OllamaProvider.is_available`` is a sync, no-I/O check that is always ``True``.
     """
     base = config_module.OLLAMA_BASE_URL.rstrip("/")
-    try:
-        async with _client(10.0) as client:
-            r = await client.get(f"{base}/api/tags")
-            r.raise_for_status()
-            data = r.json()
-    except (httpx.HTTPError, ValueError):
+    data = await _fetch_json(f"{base}/api/tags", {})
+    if data is None:
         return False, []
     models = data.get("models")
     if not isinstance(models, list):
@@ -104,9 +118,11 @@ async def _fetch_ollama_tags() -> tuple[bool, list[str]]:
 
 async def list_installed_models() -> list[str]:
     """Locally-installed Ollama model names for /api/models. Moved here from the retired
-    ``app.services.ollama_client`` (v3 ticket 03) -- same signature/behavior, now sharing
-    ``_fetch_ollama_tags`` with the reachability probe below."""
-    _, names = await _fetch_ollama_tags()
+    ``app.services.ollama_client`` (v3 ticket 03) -- same signature/behavior, now sharing the
+    cached "ollama" entry with ``ollama_reachable`` below (both go through ``_cached``, so
+    GET /api/settings/providers calling this then ``ollama_reachable()`` back-to-back fires
+    only ONE /api/tags request, not two)."""
+    _, names = await _cached("ollama", _fetch_ollama_tags)
     return names
 
 
@@ -122,15 +138,11 @@ async def _fetch_anthropic_models(api_key: str) -> list[dict[str, str]] | None:
     """``None`` signals a failed fetch (network/HTTP/shape error) -- distinct from an empty
     list (a legitimately empty catalog) -- so the caller only falls back to the static
     suggestions on failure."""
-    try:
-        async with _client(10.0) as client:
-            r = await client.get(
-                ANTHROPIC_MODELS_URL,
-                headers={"x-api-key": api_key, "anthropic-version": ANTHROPIC_API_VERSION},
-            )
-            r.raise_for_status()
-            data = r.json()
-    except (httpx.HTTPError, ValueError):
+    data = await _fetch_json(
+        ANTHROPIC_MODELS_URL,
+        {"x-api-key": api_key, "anthropic-version": ANTHROPIC_API_VERSION},
+    )
+    if data is None:
         return None
     items = data.get("data")
     if not isinstance(items, list):
@@ -146,12 +158,8 @@ async def _fetch_anthropic_models(api_key: str) -> list[dict[str, str]] | None:
 
 
 async def _fetch_gemini_models(api_key: str) -> list[dict[str, str]] | None:
-    try:
-        async with _client(10.0) as client:
-            r = await client.get(GEMINI_MODELS_URL, headers={"x-goog-api-key": api_key})
-            r.raise_for_status()
-            data = r.json()
-    except (httpx.HTTPError, ValueError):
+    data = await _fetch_json(GEMINI_MODELS_URL, {"x-goog-api-key": api_key})
+    if data is None:
         return None
     items = data.get("models")
     if not isinstance(items, list):

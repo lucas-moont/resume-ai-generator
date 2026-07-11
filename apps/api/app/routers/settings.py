@@ -17,7 +17,11 @@ from app.services.errors import http_error
 router = APIRouter()
 
 ProviderModeIn = Literal["auto", "claude", "gemini", "ollama"]
-SecretNameIn = Literal["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GITHUB_TOKEN"]
+# Derived from settings_service.MANAGED_SECRET_NAMES (the single source of truth) rather than
+# hand-duplicated here -- a hand-synced second Literal could let a future key addition 200 on
+# PUT/DELETE while still missing from GET /api/settings/keys. `Literal[a_tuple]` flattens the
+# tuple into individual literal members (see PEP 586), same as `Literal["A", "B", "C"]`.
+SecretNameIn = Literal[settings_service.MANAGED_SECRET_NAMES]
 
 
 class ProvidersUpdateRequest(BaseModel):

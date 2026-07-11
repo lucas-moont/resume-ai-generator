@@ -96,6 +96,44 @@ class TestOllamaReachable(ModelCatalogTestCase):
         self.assertFalse(await model_catalog.ollama_reachable())
 
 
+class TestOllamaCacheSharing(ModelCatalogTestCase):
+    """Standards fix round (v3 ticket 03): list_installed_models() used to call
+    _fetch_ollama_tags() directly, bypassing the cache -- every GET /api/models fired a live
+    /api/tags call, and GET /api/settings/providers (which calls list_installed_models() then
+    ollama_reachable() back-to-back) could fire two. Both must share the one "ollama" cache
+    entry, matching the module's ~5min cache claim."""
+
+    async def test_list_installed_models_does_not_refetch_within_the_ttl(self) -> None:
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            return httpx.Response(200, json={"models": [{"name": "llama3.2"}]})
+
+        self._mock(handler)
+
+        await model_catalog.list_installed_models()
+        await model_catalog.list_installed_models()
+
+        self.assertEqual(calls["n"], 1)
+
+    async def test_list_installed_models_and_ollama_reachable_share_one_fetch(self) -> None:
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            return httpx.Response(200, json={"models": [{"name": "llama3.2"}]})
+
+        self._mock(handler)
+
+        names = await model_catalog.list_installed_models()
+        reachable = await model_catalog.ollama_reachable()
+
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(names, ["llama3.2"])
+        self.assertTrue(reachable)
+
+
 class TestClaudeModels(ModelCatalogTestCase):
     async def test_falls_back_to_static_suggestions_without_a_key(self) -> None:
         models = await model_catalog.claude_models(None)
