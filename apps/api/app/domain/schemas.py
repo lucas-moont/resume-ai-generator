@@ -89,6 +89,33 @@ class GitHubRepoInfo(BaseModel):
     private: bool = False
 
 
+# v4 (ticket 00): the section vocabulary a Proposal Item may target -- the ResumeDocument
+# sections an Analysis is allowed to propose changes to. Anything outside this whitelist is
+# dropped by proposal_json_parser (never an error).
+ProposalSection = Literal[
+    "headline",
+    "summary",
+    "experience",
+    "projects",
+    "skills",
+    "education",
+    "links",
+    "location",
+]
+
+
+class ProposalItem(BaseModel):
+    """One improvement inside an Improvement Proposal (CONTEXT.md: Proposal Item) -- the
+    unit that makes the proposal detailed: WHAT changes (section + proposed), against WHAT
+    (current excerpt), and WHY (rationale anchored in the job description)."""
+
+    id: int
+    section: ProposalSection
+    current: str | None = None
+    proposed: str
+    rationale: str
+
+
 class CreateChatSessionRequest(BaseModel):
     title: str | None = None
 
@@ -104,6 +131,11 @@ class ChatMessageRequest(BaseModel):
     # field (an invalid shape here is a normal 422, before the stream ever starts). Ignored by
     # every intent except `refine` -- see chat_service.handle_chat_turn.
     resume: ResumeDocument | None = None
+    # v4 (ticket 00): deterministic shortcut carried by the "Aprovar e gerar" button -- routes
+    # the turn straight into the approve branch of the Proposal Turn with ZERO LLM
+    # classification spent. Ignored when the session has no Pending Proposal (the message is
+    # then routed normally). See docs/v4-improvement-proposal.md #3.1.
+    proposalAction: Literal["approve"] | None = None
 
 
 class RevertProfileRequest(BaseModel):

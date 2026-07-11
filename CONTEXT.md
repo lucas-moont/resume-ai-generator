@@ -24,8 +24,13 @@ Canonical vocabulary for this project. Use these terms exactly — in code ident
 
 ## Chat & editing
 
-- **Intent** — the deterministic server-side classification of a chat message: `generate` (job description), `refine` (change the active Resume), `profile_update` (change the Living Profile), or a plain reply. No LLM call is spent deciding it.
-- **Chat SSE contract** — the event stream (`stage`, `resume`, `message`, `profile_update`, `done`, `error`) between backend and frontend. It is the seam between the two workstreams: changes require agreement on both sides.
+- **Intent** — the deterministic server-side classification of a chat message: `generate` (job description), `refine` (change the active Resume), `profile_update` (change the Living Profile), `proposal_turn` (a session with a Pending Proposal), or a plain reply. No LLM call is spent deciding it — though a `proposal_turn`, once routed, uses an LLM to interpret the user's conversational reply.
+- **Chat SSE contract** — the event stream (`stage`, `resume`, `message`, `proposal`, `profile_update`, `done`, `error`) between backend and frontend. It is the seam between the two workstreams: changes require agreement on both sides. Since v4, a turn may emit N `message` events (each a complete assistant bubble, appended immediately); card-bearing events (`resume`, `proposal`, `profile_update`) attach to the NEXT `message` in the stream.
+- **Improvement Proposal** _(Proposta de Melhorias)_ — the detailed, job-anchored plan of what a generation will change, produced by an Analysis and negotiated in chat before any Resume is generated. Lifecycle: `proposed → approved | superseded | discarded`. No `generate` intent produces a Resume without an approved Improvement Proposal.
+- **Proposal Item** — one improvement inside an Improvement Proposal: target section, current excerpt, proposed change, and a rationale anchored in the job description.
+- **Pending Proposal** — the single `proposed` Improvement Proposal of a session (invariant: at most one). Its existence switches intent routing to the Proposal Turn.
+- **Analysis** _(Análise)_ — the LLM call comparing Profile × job description that produces an Improvement Proposal (prose message + structured Proposal Items in one response).
+- **Proposal Turn** — the conversational turn while a Pending Proposal exists: one combined LLM call classifies the user's reply as approve / adjust / question / new job description AND writes the assistant's answer. Approval chains straight into generation in the same SSE stream.
 - **Inline Editing** _(edição inline)_ — direct manual edits on the A4 preview, committed on blur/Enter, undoable, synchronized with chat refinements.
 
 ## Settings & runtime config

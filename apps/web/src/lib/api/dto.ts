@@ -82,6 +82,11 @@ export interface ChatMessageDto {
    * upload. GET /api/chat/sessions/{id} joins source_documents LIVE, at read time, for its
    * CURRENT status/diffSummary/opsCount — never a stale copy (see ChatMessageSourceDocumentDto). */
   sourceDocument: ChatMessageSourceDocumentDto | null
+  /** v4 ticket 00: present (non-null) when this message carries an Improvement Proposal.
+   * Same live-join rule as sourceDocument: GET joins improvement_proposals at read time for
+   * the CURRENT status/revision — never a stale copy. Optional (not `| null` alone) so v3
+   * fixtures/mocks compile unchanged until B6/F5 land. */
+  proposal?: ChatMessageProposalDto | null
 }
 
 /** v2 ticket 10: shape of ChatMessageDto's `sourceDocument` field — mirrors the fields
@@ -100,6 +105,10 @@ export interface ChatSessionDetailResponse {
   session: ChatSessionSummary
   messages: ChatMessageDto[]
   activeResume: ResumeDocument | null
+  /** v4 ticket 00: the session's single Pending Proposal (status 'proposed'), or null.
+   * Top-level so the composer/button can rehydrate the state machine without scanning
+   * messages. Optional until B6 ships it. */
+  pendingProposal?: ChatMessageProposalDto | null
 }
 
 export interface CreateChatSessionRequest {
@@ -122,6 +131,10 @@ export interface ChatMessageStreamRequest {
    * what the user is actually looking at instead of the last version the server persisted.
    * Ignored server-side by every intent except `refine`. */
   resume?: ResumeDocument
+  /** v4 ticket 00: deterministic shortcut carried by the "Aprovar e gerar" button — routes
+   * the turn straight into the approve branch of the Proposal Turn, zero LLM classification.
+   * Ignored server-side when the session has no Pending Proposal. */
+  proposalAction?: 'approve'
 }
 
 // Chat-stream-only SSE payloads (stage/error are shared with StreamStagePayload/StreamErrorPayload above).
@@ -138,7 +151,50 @@ export interface ChatDoneEventPayload {
   progress?: number
   messageId: number
   resumeVersionId: number | null
+  /** v4 ticket 00: present on any turn that created/revised/approved an Improvement
+   * Proposal. See docs/v4-improvement-proposal.md §3.4. */
+  proposalId?: number
 }
+
+// --- Improvement Proposal (v4, ticket 00) ---
+// Contract per docs/v4-improvement-proposal.md §1.2/§3.2/§3.7. Frozen: backend and
+// frontend builders implement against these shapes.
+
+export type ProposalSection =
+  | 'headline'
+  | 'summary'
+  | 'experience'
+  | 'projects'
+  | 'skills'
+  | 'education'
+  | 'links'
+  | 'location'
+
+export type ProposalStatus = 'proposed' | 'approved' | 'superseded' | 'discarded'
+
+/** One improvement inside an Improvement Proposal (CONTEXT.md: Proposal Item): WHAT
+ * changes (section + proposed), against WHAT (current excerpt), WHY (rationale anchored
+ * in the job description). */
+export interface ProposalItemDto {
+  id: number
+  section: ProposalSection
+  current: string | null
+  proposed: string
+  rationale: string
+}
+
+/** Chat-stream-only: emitted by the Analysis / adjust / new-JD turns BEFORE the prose
+ * `message` bubble that presents it (the card attaches to that next message). */
+export interface ChatProposalEventPayload {
+  proposalId: number
+  status: ProposalStatus
+  revision: number
+  items: ProposalItemDto[]
+}
+
+/** Shape of ChatMessageDto's `proposal` field and ChatSessionDetailResponse's
+ * `pendingProposal` — same fields the stream event carries (live-joined at read time). */
+export type ChatMessageProposalDto = ChatProposalEventPayload
 
 /** Chat-stream-only: emitted for the `profile_update` intent (v2, ticket 05/09)
  * — the Living Profile changed via chat, source_kind='chat'. Never carried by
