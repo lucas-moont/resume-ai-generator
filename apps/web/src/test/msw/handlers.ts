@@ -1,4 +1,5 @@
 import { http, HttpResponse } from 'msw'
+import type { KeysSettingsResponse, ProvidersSettingsResponse } from '../../lib/api/dto'
 
 export const DEFAULT_MODEL_SUGGESTIONS = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -12,7 +13,7 @@ export const DEFAULT_GITHUB_REPOS = [
 // v3 ticket 06: mirrors the unconfigured/first-use-without-.env defaults GET
 // /api/settings/providers reports (app/services/settings_service.py) — active
 // 'auto', nothing available, static per-provider model suggestions.
-export const DEFAULT_PROVIDERS_SETTINGS = {
+export const DEFAULT_PROVIDERS_SETTINGS: ProvidersSettingsResponse = {
   active: 'auto',
   providers: [
     {
@@ -42,7 +43,7 @@ export const DEFAULT_PROVIDERS_SETTINGS = {
 
 // v3 ticket 06: mirrors GET /api/settings/keys' unconfigured default — none of
 // the three managed keys set via env or keychain.
-export const DEFAULT_KEYS_SETTINGS = {
+export const DEFAULT_KEYS_SETTINGS: KeysSettingsResponse = {
   keys: [
     { name: 'ANTHROPIC_API_KEY', configured: false, source: null }, // pragma: allowlist secret
     { name: 'GEMINI_API_KEY', configured: false, source: null }, // pragma: allowlist secret

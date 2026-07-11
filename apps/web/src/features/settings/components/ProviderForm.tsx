@@ -189,6 +189,10 @@ export function ProviderForm() {
       </fieldset>
 
       <ModelPicker
+        // Keyed by the active provider: switching providers should reset the picker's local
+        // text to THAT provider's own defaultModel, which a remount gives for free (see
+        // ModelPicker's own doc comment on why this isn't a setState-in-effect instead).
+        key={active}
         id="settings-model-picker"
         provider={active}
         value={activeEntry?.defaultModel ?? ''}
