@@ -6,8 +6,8 @@ arbitrary ``Path`` -- against the just-stored upload's ``stored_path`` (not the
 same ``PROFILE_PDF_MAX_CHARS`` cap via ``truncate_for_prompt``, then LLM extraction. A scanned
 PDF with no extractable text (pypdf returns empty) -- or any other unreadable PDF -- raises
 ``PdfIngestionError`` with an actionable message instead of silently handing the LLM an empty
-prompt; the router (routers/profile.py) catches this and marks the Source Document 'failed'
-rather than ever returning a 500.
+prompt; the ingestion pipeline (app/services/ingestion/pipeline.py) catches this and marks the
+Source Document 'failed' rather than ever returning a 500.
 """
 
 from __future__ import annotations

@@ -58,7 +58,7 @@ async def list_chat_sessions(session: Session = Depends(get_session)):
 def _source_document_link_dict(session: Session, meta_raw: str | None) -> dict | None:
     """v2 ticket 10 ("Durabilidade do ProfileUpdatedCard"): when a chat_message's ``meta``
     references a Source Document (``{"sourceDocumentId": int}`` -- written by
-    routers/profile.py's upload endpoint when the upload came from this session), joins
+    routers/documents.py's upload endpoint when the upload came from this session), joins
     source_documents LIVE, at read time, for its CURRENT status/diffSummary/opsCount. This is
     the single source of truth: apply/reject only ever mutate the source_documents row, never
     this message's meta, so a reload always reflects whatever the document's real state is --

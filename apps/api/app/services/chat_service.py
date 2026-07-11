@@ -57,7 +57,7 @@ from collections.abc import AsyncIterator
 from sqlmodel import Session
 
 from app.config import PROMPTS_DIR
-from app.db.tables import ChatMessage, ChatSession
+from app.db.tables import ChatMessage, ChatSession, SourceDocument
 from app.domain.chat_intent import classify_intent
 from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, resolve_locale
 from app.domain.profile_patch import PatchOp, PatchValidationFailed, apply_patch
@@ -139,6 +139,53 @@ def _format_history(messages: list, limit: int) -> str:
         return ""
     lines = [f"{m.role.capitalize()}: {m.content}" for m in recent]
     return "Conversation so far:\n" + "\n".join(lines)
+
+
+# --- Source Document upload -> chat session linking (v2 ticket 10, moved here in ticket 04's
+# backend prefactor: this is chat-domain logic -- persisting a durable assistant chat_message --
+# that had been misfiled in routers/profile.py alongside the upload HTTP handler. The public
+# seam, ``link_upload_to_session``, is called by routers/documents.py's upload endpoint.
+
+
+def _document_link_message_text(row: SourceDocument) -> str:
+    """Mirrors the frontend's client-only synthetic copy (ChatPanel.tsx's
+    profileUpdateMessageText) so the durable, backend-persisted message (v2 ticket 10) reads
+    the same as the live one it exists to survive a session reload for."""
+    if row.status == "failed":
+        return f"Couldn't process {row.filename}."
+    diff_summary = json.loads(row.diff_summary) if row.diff_summary else []
+    if not diff_summary:
+        return f"Checked {row.filename} — nothing new to merge."
+    return f"Reviewed {row.filename} — here's what I found."
+
+
+def link_upload_to_session(session: Session, chat_session_id: int | None, row: SourceDocument) -> None:
+    """v2 ticket 10 ("Durabilidade do ProfileUpdatedCard"): when the upload came from an
+    active chat session, persists a durable assistant chat_message referencing this Source
+    Document, so its ProfileUpdatedCard survives a session reload -- today that card is a
+    client-only synthetic message a reload loses entirely. ``meta`` stores ONLY
+    ``sourceDocumentId`` -- never a copy of ``status`` -- so GET /api/chat/sessions/{id} can
+    join source_documents LIVE at read time for whatever the CURRENT status/diffSummary/
+    opsCount is (routers/chat.py's ``_source_document_link_dict``); apply/reject never need to
+    touch this message, so there is no second, driftable source of truth. An unknown or
+    missing ``chat_session_id`` is silently ignored: the upload itself already succeeded and
+    must not fail over an unrelated (possibly stale) chat session id.
+    """
+    if chat_session_id is None:
+        return
+    chat_session = session.get(ChatSession, chat_session_id)
+    if chat_session is None:
+        return
+    chat_repo.append_message(
+        session,
+        session_id=chat_session.id,
+        role="assistant",
+        content=_document_link_message_text(row),
+        intent="profile_update",
+        meta=json.dumps({"sourceDocumentId": row.id}),
+    )
+    chat_repo.touch_session(session, chat_session.id)
+    session.commit()
 
 
 def _finalize_resume_turn(

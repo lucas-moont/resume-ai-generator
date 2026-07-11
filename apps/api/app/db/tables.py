@@ -32,7 +32,8 @@ ForeignKey constraint:
     column) -- when an upload names the chat session it came from, a durable assistant
     ChatMessage is persisted with `meta: {"sourceDocumentId": <SourceDocument.id>}`, so its
     ProfileUpdatedCard survives a session reload instead of reverting to plain text (see
-    routers/profile.py's `_link_upload_to_session`). Deliberately the SAME soft-ref treatment
+    app/services/chat_service.py's `link_upload_to_session`, moved there in ticket 04's router
+    split since it is chat-domain logic). Deliberately the SAME soft-ref treatment
     as the three above, for the same reason as `source_document_id`: the Source Document may
     be deleted independently of the chat history that references it. This key alone is
     persisted -- NEVER a copy of `status` -- so there is only one source of truth: GET

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import config as config_module
 from app.db.engine import create_db_engine, init_db
 from app.db.seed import seed_profile_from_disk_if_empty
-from app.routers import catalog, chat, export, generate, health, profile, refine, settings
+from app.routers import catalog, chat, documents, export, generate, github, health, profile, refine, settings
 
 
 @asynccontextmanager
@@ -42,6 +42,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(catalog.router)
     app.include_router(profile.router)
+    app.include_router(documents.router)
+    app.include_router(github.router)
     app.include_router(generate.router)
     app.include_router(refine.router)
     app.include_router(export.router)
