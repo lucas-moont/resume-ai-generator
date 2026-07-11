@@ -148,6 +148,7 @@ async def auto_improve_if_needed(
     profile: ResumeDocument,
     job_description: str,
     model: str,
+    agreed_improvements: list[ProposalItem] | None = None,
 ) -> ResumeDocument:
     issues = quality_issues(resume, job_description)
     if not issues:
@@ -167,8 +168,11 @@ Job description:
 Revise the resume to address issues without inventing facts. Return full JSON only."""
     raw = await llm_client.chat_json(system, user_msg, model=model)
     # Anchor to the profile (refine=False) so a hallucinated improvement pass cannot
-    # reintroduce fabricated identity/structure; only prose/bullets are adopted.
-    improved = parse_resume_json(raw, profile, refine=False)
+    # reintroduce fabricated identity/structure; only prose/bullets are adopted. Threading
+    # ``agreed_improvements`` here too (QA-04) matters because this refine pass can be where a
+    # plan-approved skill/project first shows up in the LLM's own output -- un-threaded, the
+    # anchor would silently drop it exactly like the main generation call once did (Bug 2).
+    improved = parse_resume_json(raw, profile, refine=False, agreed_improvements=agreed_improvements)
     return improved
 
 
@@ -273,7 +277,7 @@ async def generate_resume_events(
     raw = llm_task.result()
 
     yield "stage", {"step": "validating_response", "progress": 85, "message": "Validating AI response"}
-    resume = parse_resume_json(raw, profile, refine=False)
+    resume = parse_resume_json(raw, profile, refine=False, agreed_improvements=agreed_improvements)
     resume = enrich_projects_from_sources(resume, md_entries, repos)
     issues = quality_issues(resume, job_description)
     if issues:
@@ -287,6 +291,7 @@ async def generate_resume_events(
             profile=profile,
             job_description=job_description,
             model=model,
+            agreed_improvements=agreed_improvements,
         )
         resume = enrich_projects_from_sources(resume, md_entries, repos)
     yield "stage", {"step": "finalizing", "progress": 95, "message": "Finalizing resume document"}

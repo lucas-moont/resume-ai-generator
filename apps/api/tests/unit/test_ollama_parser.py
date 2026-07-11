@@ -1,6 +1,7 @@
 import json
 import unittest
 
+from app.domain.schemas import ProposalItem
 from app.models import ResumeDocument
 from app.services.llm.resume_json_parser import parse_resume_json
 
@@ -365,6 +366,101 @@ class OllamaParserTests(unittest.TestCase):
             intern.highlights, ["Apoiei o desenvolvimento de projetos web para clientes"]
         )
         self.assertNotEqual(senior.highlights, intern.highlights)
+
+
+class AnchorAgreedImprovementsTests(unittest.TestCase):
+    """v4 ticket QA-04: the anchor's skill/project restrictions are relaxed ONLY for what the
+    user actually approved in an Improvement Proposal (``agreed_improvements``), and ONLY
+    when that argument is present at all -- omitting it must reproduce the pre-QA-04 behavior
+    byte-for-byte (pinned below by calling the very same patch twice)."""
+
+    def test_agreed_skills_item_admits_a_patch_skill_outside_the_profile(self) -> None:
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=["JavaScript", "React"],
+            locale="en",
+        )
+        raw = json.dumps({"skills": ["React", "FastAPI"]})
+        agreed = [
+            ProposalItem(
+                id=1,
+                section="skills",
+                proposed="Adicionar experiência com FastAPI ao currículo.",
+                rationale="A vaga pede FastAPI.",
+            )
+        ]
+
+        parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
+        self.assertIn("FastAPI", parsed.skills)
+
+        # Same patch, no agreed_improvements -- current (pre-QA-04) behavior is unchanged.
+        parsed_without_plan = parse_resume_json(raw, fallback, refine=False)
+        self.assertNotIn("FastAPI", parsed_without_plan.skills)
+
+    def test_agreed_skills_item_does_not_admit_a_skill_it_never_mentions(self) -> None:
+        # Adversarial: the LLM pastes in a skill that was never part of the approved plan --
+        # it must still be discarded even though agreed_improvements IS present.
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=["JavaScript", "React"],
+            locale="en",
+        )
+        raw = json.dumps({"skills": ["React", "Kubernetes"]})
+        agreed = [
+            ProposalItem(
+                id=1,
+                section="skills",
+                proposed="Adicionar experiência com FastAPI ao currículo.",
+                rationale="A vaga pede FastAPI.",
+            )
+        ]
+
+        parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
+        self.assertNotIn("Kubernetes", parsed.skills)
+
+    def test_agreed_projects_item_reorders_projects_to_the_patch_order(self) -> None:
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            projects=[
+                {"name": "Alpha", "description": "Original alpha description."},
+                {"name": "Beta", "description": "Original beta description."},
+            ],
+            locale="en",
+        )
+        raw = json.dumps(
+            {
+                "projects": [
+                    {"name": "Beta", "description": "Rewritten beta description for the job."},
+                    {"name": "Alpha", "description": "Rewritten alpha description for the job."},
+                ]
+            }
+        )
+        agreed = [
+            ProposalItem(
+                id=1,
+                section="projects",
+                proposed="Reordenar para destacar o projeto Beta primeiro.",
+                rationale="A vaga valoriza o projeto Beta.",
+            )
+        ]
+
+        parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
+        self.assertEqual([p.name for p in parsed.projects], ["Beta", "Alpha"])
+        self.assertEqual(parsed.projects[0].description, "Rewritten beta description for the job.")
+
+        # Same patch, no approved "projects" item -- profile order is kept (pre-QA-04 behavior).
+        parsed_without_item = parse_resume_json(raw, fallback, refine=False)
+        self.assertEqual([p.name for p in parsed_without_item.projects], ["Alpha", "Beta"])
+        # The SET of projects never changes either way -- only the order.
+        self.assertEqual(
+            {p.name for p in parsed.projects}, {p.name for p in parsed_without_item.projects}
+        )
 
 
 if __name__ == "__main__":

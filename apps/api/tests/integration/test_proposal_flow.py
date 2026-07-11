@@ -716,6 +716,65 @@ class TestApproveViaButton:
         assert body["session"]["activeResumeVersionId"] == done_event["resumeVersionId"]
         assert body["pendingProposal"] is None
 
+    async def test_approved_skill_item_survives_the_automatic_quality_pass(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        """QA-04 (v4 gate, root cause of Bug 2): a skill approved in the Improvement Plan must
+        survive even when the FIRST generation pass is thin enough to trigger the automatic
+        quality-guard refine pass (``auto_improve_if_needed``) -- that second LLM call's own
+        JSON output goes through the SAME ``agreed_improvements``-aware anchor, or a
+        plan-approved skill introduced only there would be silently dropped exactly like the
+        un-threaded main-pass case."""
+        write_profile(make_profile())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        items = [
+            {
+                "id": 1,
+                "section": "skills",
+                "current": None,
+                "proposed": "Adicionar GraphQL, já que a vaga pede contratos GraphQL com o time de frontend.",
+                "rationale": "A vaga menciona GraphQL explicitamente.",
+            }
+        ]
+        proposal_id = _seed_pending_proposal(test_db_engine, created["id"], items=items)
+
+        # Thin first pass: only 1 highlight on the sole role triggers quality_issues (< 3
+        # bullets), which is what makes generation_service call auto_improve_if_needed at all.
+        thin_pass = make_resume_payload(
+            experience=[
+                {
+                    "company": "Acme Corp",
+                    "title": "Senior Backend Engineer",
+                    "location": "Remote",
+                    "start": "2021",
+                    "end": None,
+                    "highlights": ["Shipped the billing migration"],
+                }
+            ],
+        )
+        # Refine pass introduces the approved-but-not-in-profile skill.
+        refine_pass = make_resume_payload(skills=["Python", "GraphQL"])
+        fake_llm.queue(json.dumps(thin_pass), json.dumps(refine_pass))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Aprovar e gerar", "proposalAction": "approve"},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "error" not in kinds
+        assert kinds[-1] == "done"
+        assert fake_llm.call_count == 2  # generation pass + the auto quality pass
+
+        resume_event = next(data for e, data in events if e == "resume")
+        assert "GraphQL" in resume_event["resume"]["skills"]
+
+        with Session(test_db_engine) as session:
+            row = proposal_repo.get(session, proposal_id)
+            assert row.status == "approved"
+
 
 class TestApproveViaNaturalLanguage:
     """A clear natural-language approval ("sim, pode gerar") takes the SAME approve branch,

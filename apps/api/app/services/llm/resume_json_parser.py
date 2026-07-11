@@ -11,6 +11,7 @@ from app.domain.entity_identity import (
     match_projects_by_name,
     skill_token,
 )
+from app.domain.schemas import ProposalItem
 from app.models import ResumeDocument
 from app.services.html_sanitize import sanitize_resume_for_display
 
@@ -275,7 +276,37 @@ def _fill_missing_scalars_from_fallback(
             merged[key] = b if isinstance(b, str) else ("" if b is None else str(b))
 
 
-def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
+def _agreed_skills_text(agreed_improvements: list[ProposalItem] | None) -> str:
+    """Normalized (``skill_token``-style: lowercased, ``.+#-``-preserving, everything else
+    stripped) blob of every approved item's ``proposed`` text for ``section == "skills"``.
+
+    A patch skill outside the profile is admitted only when its own ``skill_token`` is a
+    substring of this blob -- the user approved that name literally, in the Improvement
+    Proposal they agreed to (v4 ticket QA-04); anything the model pastes in beyond that is
+    still a fabrication and stays discarded.
+    """
+    if not agreed_improvements:
+        return ""
+    texts = [
+        item.proposed
+        for item in agreed_improvements
+        if getattr(item, "section", None) == "skills" and isinstance(getattr(item, "proposed", None), str)
+    ]
+    return skill_token(" ".join(texts))
+
+
+def _has_agreed_projects_item(agreed_improvements: list[ProposalItem] | None) -> bool:
+    return bool(agreed_improvements) and any(
+        getattr(item, "section", None) == "projects" for item in agreed_improvements
+    )
+
+
+def _anchor_generate_to_profile(
+    fallback: ResumeDocument,
+    patch: dict,
+    *,
+    agreed_improvements: list[ProposalItem] | None = None,
+) -> dict:
     """Build a tailored resume that cannot fabricate facts.
 
     The canonical profile is the source of truth for identity/contact and, when it is
@@ -292,6 +323,19 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
     Anything the model invents with no match in the profile is discarded. When a section is
     empty in the profile (e.g. a name-only profile backed by a PDF), the LLM output for that
     section is passed through so PDF/GitHub-sourced facts are not lost.
+
+    ``agreed_improvements`` (v4 ticket QA-04, default ``None``/additive) relaxes exactly two
+    of the above restrictions, and ONLY when present -- with it omitted this function stays
+    byte-identical to the pre-QA-04 behavior:
+      - a patch skill outside the profile is admitted when the user approved an Improvement
+        Proposal item literally naming it (``_agreed_skills_text``);
+      - the profile's projects are reordered to the patch's order (instead of the profile's
+        own order) when the user approved a "projects" item -- the *set* never changes, only
+        the order and, as before, the description of a matched project.
+    Both exist because the anchor previously discarded these two categories unconditionally,
+    even when the user had just explicitly approved them in the Proposal Turn (Bug 2 of the
+    v4 QA live pass) -- the fix is scoped to what was actually agreed to, never a blanket
+    relaxation.
     """
     out = fallback.model_dump()
     out.pop("githubUsername", None)
@@ -380,17 +424,44 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
         out["summary"] = fallback.summary
 
     # Projects: anchor to profile projects, adopting a rewritten description only on a match.
+    # With an agreed "projects" item, ALSO adopt the patch's order for matched projects
+    # (QA-04) -- the *set* is still always the profile's own, only the order and description
+    # can move; non-matched profile projects are appended at the end in their original order.
     base_proj = out.get("projects") or []
     patch_proj = patch.get("projects") if isinstance(patch.get("projects"), list) else []
     if base_proj:
-        by_name = match_projects_by_name(patch_proj)
-        anchored_proj = []
-        for base in base_proj:
-            match = by_name.get(entity_key(base.get("name")))
-            if match and isinstance(match.get("description"), str) and match["description"].strip():
-                base = {**base, "description": match["description"].strip()}
-            anchored_proj.append(base)
-        out["projects"] = anchored_proj
+        if _has_agreed_projects_item(agreed_improvements):
+            base_by_key: dict[str, dict] = {}
+            for b in base_proj:
+                base_by_key.setdefault(entity_key(b.get("name")), b)
+            anchored_proj = []
+            used_keys: set[str] = set()
+            for p in patch_proj:
+                if not isinstance(p, dict):
+                    continue
+                key = entity_key(p.get("name"))
+                base = base_by_key.get(key)
+                if not key or base is None or key in used_keys:
+                    continue
+                desc = p.get("description")
+                merged = dict(base)
+                if isinstance(desc, str) and desc.strip():
+                    merged["description"] = desc.strip()
+                anchored_proj.append(merged)
+                used_keys.add(key)
+            for b in base_proj:
+                if entity_key(b.get("name")) not in used_keys:
+                    anchored_proj.append(b)
+            out["projects"] = anchored_proj
+        else:
+            by_name = match_projects_by_name(patch_proj)
+            anchored_proj = []
+            for base in base_proj:
+                match = by_name.get(entity_key(base.get("name")))
+                if match and isinstance(match.get("description"), str) and match["description"].strip():
+                    base = {**base, "description": match["description"].strip()}
+                anchored_proj.append(base)
+            out["projects"] = anchored_proj
     else:
         out["projects"] = patch_proj
 
@@ -423,6 +494,9 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
             out["education"] = pe
 
     # Skills: restrict to the profile's real skills (LLM only reorders); pass through if empty.
+    # With an agreed "skills" item, ALSO admit a patch skill outside the profile when its own
+    # token is literally named in that item's approved text (QA-04) -- a skill the user never
+    # approved (anywhere in the plan) is still a fabrication and stays discarded.
     base_skills = [s for s in (out.get("skills") or []) if isinstance(s, str) and s.strip()]
     patch_skills = [s for s in (patch.get("skills") or []) if isinstance(s, str) and s.strip()]
     if base_skills:
@@ -430,11 +504,21 @@ def _anchor_generate_to_profile(fallback: ResumeDocument, patch: dict) -> dict:
         # skill_token preserves ".+#-" (e.g. "C++" != "C"), a deliberate distinction from the
         # entity-name matching above (see that module's docstring).
         lookup = build_skill_lookup(base_skills)
+        agreed_skills_text = _agreed_skills_text(agreed_improvements)
         ordered: list[str] = []
+        admitted_tokens: set[str] = set()
         for s in patch_skills:
-            canon = lookup.get(skill_token(s))
-            if canon and canon not in ordered:
-                ordered.append(canon)
+            tok = skill_token(s)
+            canon = lookup.get(tok)
+            if canon:
+                if canon not in ordered:
+                    ordered.append(canon)
+                continue
+            if tok and agreed_skills_text and tok in agreed_skills_text and tok not in admitted_tokens:
+                cleaned = s.strip()
+                if cleaned:
+                    ordered.append(cleaned)
+                    admitted_tokens.add(tok)
         for s in base_skills:
             if s not in ordered:
                 ordered.append(s)
@@ -520,6 +604,7 @@ def parse_resume_json(
     fallback: ResumeDocument | None = None,
     *,
     refine: bool = False,
+    agreed_improvements: list[ProposalItem] | None = None,
 ) -> ResumeDocument:
     raw = raw.strip()
     m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
@@ -533,7 +618,7 @@ def parse_resume_json(
         if refine:
             merged = _merge_llm_patch_into_profile(fallback, patch, refine=True)
         else:
-            merged = _anchor_generate_to_profile(fallback, patch)
+            merged = _anchor_generate_to_profile(fallback, patch, agreed_improvements=agreed_improvements)
         _fill_missing_scalars_from_fallback(merged, fallback, refine=refine)
     else:
         merged = patch
