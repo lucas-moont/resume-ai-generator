@@ -5,6 +5,7 @@ import type { ModelSuggestion } from '../../../lib/api/dto'
 import { useChatStore } from '../store/chatStore'
 import type { UploadAttachment } from '../../upload/useFileUpload'
 import { AttachmentChip } from '../../upload/components/AttachmentChip'
+import { zIndex } from '../../../ui/zIndex'
 
 const FALLBACK_MODEL_SUGGESTIONS: ModelSuggestion[] = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -193,7 +194,7 @@ export function Composer({
           {modelSuggestOpen && (
             <ul
               id="composer-model-suggestions"
-              className="absolute bottom-full right-0 z-20 mb-1 max-h-60 w-56 overflow-auto rounded-xl border border-stone-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+              className={`absolute bottom-full right-0 ${zIndex.dropdown} mb-1 max-h-60 w-56 overflow-auto rounded-xl border border-stone-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900`}
             >
               {modelSuggestions.map((opt) => (
                 <li key={opt.value}>
