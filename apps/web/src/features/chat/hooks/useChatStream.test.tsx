@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import { __resetChatBackendAvailability, useChatStream } from './useChatStream'
+import { CHAT_SESSIONS_QUERY_KEY, chatSessionQueryKey } from './useChatSession'
 import { useChatStore } from '../store/chatStore'
 import { useResumeStore } from '../../resume/store/resumeStore'
 import { server } from '../../../test/setup'
@@ -37,6 +38,17 @@ function wrapper({ children }: { children: ReactNode }) {
 
 function renderChatStream() {
   return renderHook(() => useChatStream(), { wrapper })
+}
+
+/** v4.1-01: variant that hands back the QueryClient so a test can pre-seed cache
+ * entries and assert they get invalidated by a completed/errored turn. */
+function renderChatStreamWithClient() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  function clientWrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  }
+  const rendered = renderHook(() => useChatStream(), { wrapper: clientWrapper })
+  return { ...rendered, queryClient }
 }
 
 /** Mocks POST /api/chat/sessions to always create session id 1. */
@@ -345,6 +357,79 @@ describe('useChatStream — stop', () => {
 
     abortSpy.mockRestore()
     await sendPromise
+  })
+})
+
+describe('useChatStream — cache invalidation on turn completion (v4.1-01)', () => {
+  // These tests pre-seed an existing sessionId (rather than letting `send` create one
+  // via mockSessionCreation) so the assertions isolate the invalidation this ticket adds
+  // to the done/error branches — session CREATION already invalidates CHAT_SESSIONS_QUERY_KEY
+  // on its own (useCreateSession's onSuccess, unrelated to this ticket), which would
+  // otherwise make every variant here look invalidated regardless of this fix.
+
+  it('invalidates the session detail and sessions list caches when a turn completes (done)', async () => {
+    useChatStore.getState().setSessionId(1)
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'message', data: { content: 'Updated your resume.' } },
+          { event: 'done', data: { progress: 100, messageId: 2, resumeVersionId: null } },
+        ]),
+      ),
+    )
+
+    const { result, queryClient } = renderChatStreamWithClient()
+    // Seed both caches as if the sidebar and a prior resumeSession had already fetched them.
+    queryClient.setQueryData(chatSessionQueryKey(1), { session: {}, messages: [], activeResume: null })
+    queryClient.setQueryData(CHAT_SESSIONS_QUERY_KEY, { sessions: [] })
+
+    await result.current.send('First message')
+
+    await waitFor(() => {
+      expect(queryClient.getQueryState(chatSessionQueryKey(1))?.isInvalidated).toBe(true)
+    })
+    expect(queryClient.getQueryState(CHAT_SESSIONS_QUERY_KEY)?.isInvalidated).toBe(true)
+  })
+
+  it('also invalidates on a stream error — the user message persisted server-side even though the turn failed', async () => {
+    useChatStore.getState().setSessionId(1)
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        HttpResponse.json({ detail: 'model unavailable' }, { status: 502 }),
+      ),
+    )
+
+    const { result, queryClient } = renderChatStreamWithClient()
+    queryClient.setQueryData(chatSessionQueryKey(1), { session: {}, messages: [], activeResume: null })
+    queryClient.setQueryData(CHAT_SESSIONS_QUERY_KEY, { sessions: [] })
+
+    await result.current.send('A job description that will fail')
+
+    expect(queryClient.getQueryState(chatSessionQueryKey(1))?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(CHAT_SESSIONS_QUERY_KEY)?.isInvalidated).toBe(true)
+  })
+
+  it('does not invalidate on abort (stop())', async () => {
+    useChatStore.getState().setSessionId(1)
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([{ event: 'done', data: { progress: 100, messageId: 6, resumeVersionId: null }, delayMs: 100 }]),
+      ),
+    )
+
+    const { result, queryClient } = renderChatStreamWithClient()
+    queryClient.setQueryData(chatSessionQueryKey(1), { session: {}, messages: [], activeResume: null })
+    queryClient.setQueryData(CHAT_SESSIONS_QUERY_KEY, { sessions: [] })
+
+    const sendPromise = result.current.send('A slow job description')
+    await waitFor(() => {
+      expect(useChatStore.getState().streaming).not.toBeNull()
+    })
+    result.current.stop()
+    await sendPromise
+
+    expect(queryClient.getQueryState(chatSessionQueryKey(1))?.isInvalidated).toBe(false)
+    expect(queryClient.getQueryState(CHAT_SESSIONS_QUERY_KEY)?.isInvalidated).toBe(false)
   })
 })
 

@@ -27,6 +27,17 @@ function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 }
 
+/** Mirrors main.tsx's real QueryClient config (retry: 1, staleTime: 5min) — unlike
+ * `wrapper` above (retry: false, staleTime defaults to 0), this is the only way to
+ * reproduce the v4.1-01 stale-cache bug: fetchQuery only skips the network within the
+ * staleTime window, so a test QueryClient with staleTime 0 can never see it. */
+function productionWrapper({ children }: { children: ReactNode }) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: 1, staleTime: 5 * 60 * 1000 } },
+  })
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+}
+
 describe('useSessions', () => {
   it('resolves the sessions list (default handler: empty)', async () => {
     const { result } = renderHook(() => useSessions(), { wrapper })
@@ -361,6 +372,53 @@ describe('useResumeChatSession', () => {
     await result.current.resumeSession(101)
     expect(useResumeStore.getState().resume?.fullName).toBe('Session A Resume')
     expect(useResumeStore.getState().template).toBe('ats-plain')
+  })
+
+  it('resumeSession always refetches the session detail from the server, even inside the QueryClient staleTime window (v4.1-01)', async () => {
+    const resumeA = makeResume({ fullName: 'Session A Resume' })
+    const resumeC = makeResume({ fullName: 'Session C Resume' })
+    server.use(
+      http.get('/api/chat/sessions/201', () =>
+        HttpResponse.json({
+          session: { id: 201, title: 'A', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: 1 },
+          messages: [],
+          activeResume: resumeA,
+        }),
+      ),
+      http.get('/api/chat/sessions/202', () =>
+        HttpResponse.json({
+          session: { id: 202, title: 'C', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: 3 },
+          messages: [],
+          activeResume: resumeC,
+        }),
+      ),
+    )
+
+    const { result } = renderHook(() => useResumeChatSession(), { wrapper: productionWrapper })
+    await result.current.resumeSession(201)
+    expect(useResumeStore.getState().resume?.fullName).toBe('Session A Resume')
+
+    // A turn in session 201 regenerated its resume server-side (e.g. from another
+    // tab, or a turn that ran before this switch) — the backend now serves resume B.
+    const resumeB = makeResume({ fullName: 'Session B Resume' })
+    server.use(
+      http.get('/api/chat/sessions/201', () =>
+        HttpResponse.json({
+          session: { id: 201, title: 'A', updatedAt: '2026-07-10T00:05:00Z', activeResumeVersionId: 2 },
+          messages: [],
+          activeResume: resumeB,
+        }),
+      ),
+    )
+
+    // Switch to another session, then back to 201 — all well inside the 5-minute
+    // staleTime window. Before the fix, fetchQuery serves the cached (stale) detail
+    // for 201 instead of hitting the network again.
+    await result.current.resumeSession(202)
+    expect(useResumeStore.getState().resume?.fullName).toBe('Session C Resume')
+
+    await result.current.resumeSession(201)
+    expect(useResumeStore.getState().resume?.fullName).toBe('Session B Resume')
   })
 })
 

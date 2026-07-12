@@ -149,6 +149,10 @@ export function useResumeChatSession() {
     const detail = await queryClient.fetchQuery({
       queryKey: chatSessionQueryKey(sessionId),
       queryFn: () => getChatSession(sessionId),
+      // v4.1-01: the session detail is the rehydration source of truth (a turn that
+      // generated/refined a resume never invalidates this cache on its own) — always
+      // hit the backend on switch, regardless of the global 5min staleTime (main.tsx).
+      staleTime: 0,
     })
     useChatStore.getState().loadSession(sessionId, detail.messages.map(toChatMessage))
     // v4 F5: mirrors the state machine's live join — always set (not just when present),
@@ -184,6 +188,8 @@ export function useRestoreActiveSession(): void {
     queryClient
       .fetchQuery({
         queryKey: chatSessionQueryKey(sessionId),
+        // v4.1-01: same "always hit the backend" rule as resumeSession above.
+        staleTime: 0,
         queryFn: () => getChatSession(sessionId),
       })
       .then((detail) => {

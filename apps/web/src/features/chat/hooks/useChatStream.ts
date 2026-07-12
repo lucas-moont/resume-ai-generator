@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import {
   ApiError,
   chatMessageStream,
@@ -25,7 +26,7 @@ import { TEMPLATE_REGISTRY } from '../../resume/templates/registry'
 import { parseCommand } from '../commands'
 import type { ChatCard, ProposalCard } from '../store/chatStore'
 import { useChatStore } from '../store/chatStore'
-import { useCreateSession } from './useChatSession'
+import { CHAT_SESSIONS_QUERY_KEY, chatSessionQueryKey, useCreateSession } from './useChatSession'
 
 // ADAPTER: routes every non-command message through
 // POST /api/chat/sessions/{id}/messages/stream (B6) — intent routing
@@ -69,6 +70,7 @@ export function __resetChatBackendAvailability(): void {
 export function useChatStream(): UseChatStreamResult {
   const createSessionMutation = useCreateSession()
   const createSession = createSessionMutation.mutateAsync
+  const queryClient = useQueryClient()
 
   const send = useCallback(
     async (message: string, options: SendOptions = {}) => {
@@ -83,16 +85,16 @@ export function useChatStream(): UseChatStreamResult {
       }
 
       useChatStore.getState().appendUserMessage(trimmed)
-      await runTurn(trimmed, options, createSession)
+      await runTurn(trimmed, options, createSession, queryClient)
     },
-    [createSession],
+    [createSession, queryClient],
   )
 
   const retry = useCallback(
     async (message: string, options: SendOptions = {}) => {
-      await runTurn(message, options, createSession)
+      await runTurn(message, options, createSession, queryClient)
     },
-    [createSession],
+    [createSession, queryClient],
   )
 
   const stop = useCallback(() => {
@@ -183,6 +185,7 @@ async function runTurn(
   message: string,
   options: SendOptions,
   createSession: CreateSessionFn,
+  queryClient: QueryClient,
 ): Promise<void> {
   const controller = new AbortController()
   // No `step` yet (falls back to DEFAULT_STREAMING's `''`): this optimistic update fires
@@ -331,6 +334,10 @@ async function runTurn(
           }
         }
         useChatStore.getState().finishStreaming()
+        // v4.1-01: the detail (title/updatedAt/messages/activeResume) and the
+        // sidebar's ordering can both have changed this turn — refetch on next read
+        // rather than trust whatever was cached before the turn started.
+        invalidateSessionCaches(queryClient, sessionId)
         return
       } else if (event === 'error') {
         const err = data as StreamErrorPayload
@@ -347,7 +354,19 @@ async function runTurn(
       .getState()
       .appendAssistantMessage(text, { type: 'error', message: text, retryMessage: message })
     useChatStore.getState().finishStreaming()
+    // v4.1-01: the user's message persisted server-side even though this turn
+    // failed (title/updatedAt/ordering may still have changed) — same rule as done,
+    // deliberately excluding the abort branch above (nothing new was persisted there).
+    invalidateSessionCaches(queryClient, sessionId)
   }
+}
+
+/** v4.1-01: refetch-on-next-read for the two caches a completed or errored turn can
+ * have made stale — the session detail (rehydration source of truth) and the sidebar's
+ * list (title/updatedAt/ordering). Never called from the abort branch. */
+function invalidateSessionCaches(queryClient: QueryClient, sessionId: number): void {
+  void queryClient.invalidateQueries({ queryKey: chatSessionQueryKey(sessionId) })
+  void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_QUERY_KEY })
 }
 
 /** Fallback path (F4-era behavior) when the chat backend isn't available: no-resume
