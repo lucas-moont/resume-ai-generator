@@ -121,6 +121,18 @@ export interface CreateChatSessionResponse {
   createdAt: string
 }
 
+/** v4.1-03 (frozen contract): PATCH /api/chat/sessions/{id} body -- title must be 1..120
+ * chars, non-blank, after trimming (enforced server-side; a violation is a 422). */
+export interface RenameChatSessionRequest {
+  title: string
+}
+
+export interface RenameChatSessionResponse {
+  id: number
+  title: string
+  updatedAt: string
+}
+
 export interface ChatMessageStreamRequest {
   message: string
   model?: string

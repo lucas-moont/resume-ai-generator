@@ -4,8 +4,10 @@ import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { ReactNode } from 'react'
 import {
+  CHAT_SESSIONS_QUERY_KEY,
   useCreateSession,
   useDeleteSession,
+  useRenameSession,
   useResumeChatSession,
   useRestoreActiveSession,
   useSession,
@@ -106,6 +108,40 @@ describe('useDeleteSession', () => {
 
     const { result } = renderHook(() => useDeleteSession(), { wrapper })
     await expect(result.current.mutateAsync(9)).resolves.toBeUndefined()
+  })
+})
+
+describe('useRenameSession (v4.1-03)', () => {
+  it('renames a session and resolves the updated id/title/updatedAt', async () => {
+    server.use(
+      http.patch('/api/chat/sessions/9', () =>
+        HttpResponse.json({ id: 9, title: 'Renamed', updatedAt: '2026-07-10T00:05:00Z' }),
+      ),
+    )
+
+    const { result } = renderHook(() => useRenameSession(), { wrapper })
+    const updated = await result.current.mutateAsync({ sessionId: 9, title: 'Renamed' })
+
+    expect(updated).toEqual({ id: 9, title: 'Renamed', updatedAt: '2026-07-10T00:05:00Z' })
+  })
+
+  it('invalidates the sessions list on success (so the sidebar reflects the new title without a reload)', async () => {
+    server.use(
+      http.patch('/api/chat/sessions/9', () =>
+        HttpResponse.json({ id: 9, title: 'Renamed', updatedAt: '2026-07-10T00:05:00Z' }),
+      ),
+    )
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(CHAT_SESSIONS_QUERY_KEY, { sessions: [] })
+    function client({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    }
+
+    const { result } = renderHook(() => useRenameSession(), { wrapper: client })
+    await result.current.mutateAsync({ sessionId: 9, title: 'Renamed' })
+
+    expect(queryClient.getQueryState(CHAT_SESSIONS_QUERY_KEY)?.isInvalidated).toBe(true)
   })
 })
 

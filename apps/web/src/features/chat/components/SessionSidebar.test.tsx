@@ -196,4 +196,213 @@ describe('SessionSidebar', () => {
       expect(useChatStore.getState().messages).toEqual([])
     })
   })
+
+  describe('rename (v4.1-03)', () => {
+    it('shows a pencil button per session, matching the delete button pattern', async () => {
+      server.use(
+        http.get('/api/chat/sessions', () =>
+          HttpResponse.json({
+            sessions: [{ id: 3, title: 'Old title', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+          }),
+        ),
+      )
+
+      renderApp(<SessionSidebar />)
+
+      expect(await screen.findByRole('button', { name: /rename old title/i })).toBeInTheDocument()
+    })
+
+    it('clicking the pencil enters inline edit: an accessible, focused input replaces the title', async () => {
+      server.use(
+        http.get('/api/chat/sessions', () =>
+          HttpResponse.json({
+            sessions: [{ id: 3, title: 'Old title', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+          }),
+        ),
+      )
+
+      const user = userEvent.setup()
+      renderApp(<SessionSidebar />)
+
+      await user.click(await screen.findByRole('button', { name: /rename old title/i }))
+
+      const input = screen.getByRole('textbox', { name: /rename old title/i })
+      expect(input).toHaveFocus()
+      expect(input).toHaveValue('Old title')
+    })
+
+    it('Enter confirms the rename: PATCHes the title and the list reflects it without a reload', async () => {
+      let capturedBody: unknown
+      // Stateful GET (rather than a fixed fixture): asserts the invalidated list actually
+      // refetches from the server and picks up the renamed title, not just a client-side echo.
+      let currentTitle = 'Old title'
+      server.use(
+        http.get('/api/chat/sessions', () =>
+          HttpResponse.json({
+            sessions: [{ id: 3, title: currentTitle, updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+          }),
+        ),
+        http.patch('/api/chat/sessions/3', async ({ request }) => {
+          capturedBody = await request.json()
+          currentTitle = 'New title'
+          return HttpResponse.json({ id: 3, title: currentTitle, updatedAt: '2026-07-10T00:05:00Z' })
+        }),
+      )
+
+      const user = userEvent.setup()
+      renderApp(<SessionSidebar />)
+
+      await user.click(await screen.findByRole('button', { name: /rename old title/i }))
+      const input = screen.getByRole('textbox', { name: /rename old title/i })
+      await user.clear(input)
+      await user.type(input, 'New title{Enter}')
+
+      expect(capturedBody).toEqual({ title: 'New title' })
+      await waitFor(() => {
+        expect(screen.getByText('New title')).toBeInTheDocument()
+      })
+      expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    })
+
+    it('Escape cancels without saving, and focus returns to the pencil button', async () => {
+      let patchCalled = false
+      server.use(
+        http.get('/api/chat/sessions', () =>
+          HttpResponse.json({
+            sessions: [{ id: 3, title: 'Kept title', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+          }),
+        ),
+        http.patch('/api/chat/sessions/3', () => {
+          patchCalled = true
+          return HttpResponse.json({ id: 3, title: 'Should not happen', updatedAt: '2026-07-10T00:05:00Z' })
+        }),
+      )
+
+      const user = userEvent.setup()
+      renderApp(<SessionSidebar />)
+
+      await user.click(await screen.findByRole('button', { name: /rename kept title/i }))
+      const input = screen.getByRole('textbox', { name: /rename kept title/i })
+      await user.type(input, ' extra')
+      await user.keyboard('{Escape}')
+
+      expect(patchCalled).toBe(false)
+      expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+      expect(screen.getByText('Kept title')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /rename kept title/i })).toHaveFocus()
+    })
+
+    it('blur confirms the rename when the value changed', async () => {
+      let patchCalled = false
+      let currentTitle = 'Old title'
+      server.use(
+        http.get('/api/chat/sessions', () =>
+          HttpResponse.json({
+            sessions: [{ id: 3, title: currentTitle, updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+          }),
+        ),
+        http.patch('/api/chat/sessions/3', () => {
+          patchCalled = true
+          currentTitle = 'Blurred title'
+          return HttpResponse.json({ id: 3, title: currentTitle, updatedAt: '2026-07-10T00:05:00Z' })
+        }),
+      )
+
+      const user = userEvent.setup()
+      renderApp(<SessionSidebar />)
+
+      await user.click(await screen.findByRole('button', { name: /rename old title/i }))
+      const input = screen.getByRole('textbox', { name: /rename old title/i })
+      await user.clear(input)
+      await user.type(input, 'Blurred title')
+      await user.tab()
+
+      expect(patchCalled).toBe(true)
+      await waitFor(() => {
+        expect(screen.getByText('Blurred title')).toBeInTheDocument()
+      })
+    })
+
+    it('blur does not save when the value is unchanged', async () => {
+      let patchCalled = false
+      server.use(
+        http.get('/api/chat/sessions', () =>
+          HttpResponse.json({
+            sessions: [{ id: 3, title: 'Unchanged title', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+          }),
+        ),
+        http.patch('/api/chat/sessions/3', () => {
+          patchCalled = true
+          return HttpResponse.json({ id: 3, title: 'Unchanged title', updatedAt: '2026-07-10T00:05:00Z' })
+        }),
+      )
+
+      const user = userEvent.setup()
+      renderApp(<SessionSidebar />)
+
+      await user.click(await screen.findByRole('button', { name: /rename unchanged title/i }))
+      await user.tab()
+
+      expect(patchCalled).toBe(false)
+    })
+
+    it('does not allow saving an empty title — Enter on a blank input reverts to the original', async () => {
+      let patchCalled = false
+      server.use(
+        http.get('/api/chat/sessions', () =>
+          HttpResponse.json({
+            sessions: [{ id: 3, title: 'Original title', updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+          }),
+        ),
+        http.patch('/api/chat/sessions/3', () => {
+          patchCalled = true
+          return HttpResponse.json({ id: 3, title: '', updatedAt: '2026-07-10T00:05:00Z' })
+        }),
+      )
+
+      const user = userEvent.setup()
+      renderApp(<SessionSidebar />)
+
+      await user.click(await screen.findByRole('button', { name: /rename original title/i }))
+      const input = screen.getByRole('textbox', { name: /rename original title/i })
+      await user.clear(input)
+      await user.keyboard('{Enter}')
+
+      expect(patchCalled).toBe(false)
+      expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+      expect(screen.getByText('Original title')).toBeInTheDocument()
+    })
+
+    it('renaming the currently active session updates only the list, without reloading messages or resetting the chat', async () => {
+      useChatStore.getState().setSessionId(3)
+      useChatStore.getState().appendUserMessage('keep me')
+      let currentTitle = 'Old title'
+      server.use(
+        http.get('/api/chat/sessions', () =>
+          HttpResponse.json({
+            sessions: [{ id: 3, title: currentTitle, updatedAt: '2026-07-10T00:00:00Z', activeResumeVersionId: null }],
+          }),
+        ),
+        http.patch('/api/chat/sessions/3', () => {
+          currentTitle = 'Renamed active chat'
+          return HttpResponse.json({ id: 3, title: currentTitle, updatedAt: '2026-07-10T00:05:00Z' })
+        }),
+      )
+
+      const user = userEvent.setup()
+      renderApp(<SessionSidebar />)
+
+      await user.click(await screen.findByRole('button', { name: /rename old title/i }))
+      const input = screen.getByRole('textbox', { name: /rename old title/i })
+      await user.clear(input)
+      await user.type(input, 'Renamed active chat{Enter}')
+
+      await waitFor(() => {
+        expect(screen.getByText('Renamed active chat')).toBeInTheDocument()
+      })
+      expect(useChatStore.getState().sessionId).toBe(3)
+      expect(useChatStore.getState().messages).toHaveLength(1)
+      expect(useChatStore.getState().messages[0].content).toBe('keep me')
+    })
+  })
 })

@@ -20,6 +20,7 @@ import {
   listChatSessions,
   refineStream,
   rejectSourceDocument,
+  renameChatSession,
   updateProviderSettings,
   uploadSourceDocument,
   upsertKeySetting,
@@ -218,6 +219,60 @@ describe('deleteChatSession', () => {
     server.use(http.delete('/api/chat/sessions/9', () => new HttpResponse(null, { status: 204 })))
 
     await expect(deleteChatSession(9)).resolves.toBeUndefined()
+  })
+})
+
+describe('renameChatSession', () => {
+  it('PATCHes the title and resolves the updated id/title/updatedAt (v4.1-03)', async () => {
+    let capturedBody: unknown
+    let capturedMethod: string | undefined
+    server.use(
+      http.patch('/api/chat/sessions/9', async ({ request }) => {
+        capturedBody = await request.json()
+        capturedMethod = request.method
+        return HttpResponse.json({ id: 9, title: 'Renamed chat', updatedAt: '2026-07-10T00:05:00Z' })
+      }),
+    )
+
+    const result = await renameChatSession(9, 'Renamed chat')
+
+    expect(capturedMethod).toBe('PATCH')
+    expect(capturedBody).toEqual({ title: 'Renamed chat' })
+    expect(result).toEqual({ id: 9, title: 'Renamed chat', updatedAt: '2026-07-10T00:05:00Z' })
+  })
+
+  it('rejects with an ApiError on a 404 (session does not exist)', async () => {
+    server.use(
+      http.patch('/api/chat/sessions/404', () =>
+        HttpResponse.json({ detail: 'Chat session 404 not found' }, { status: 404 }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await renameChatSession(404, 'New title')
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(404)
+  })
+
+  it('rejects with an ApiError on a 422 (blank title)', async () => {
+    server.use(
+      http.patch('/api/chat/sessions/9', () =>
+        HttpResponse.json({ detail: 'title must be 1..120 characters after trimming' }, { status: 422 }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await renameChatSession(9, '   ')
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(422)
   })
 })
 

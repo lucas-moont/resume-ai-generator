@@ -5,6 +5,7 @@ import {
   deleteChatSession,
   getChatSession,
   listChatSessions,
+  renameChatSession,
 } from '../../../lib/api/endpoints'
 import type {
   ChatMessageDto,
@@ -59,6 +60,21 @@ export function useDeleteSession() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (sessionId: number) => deleteChatSession(sessionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_QUERY_KEY })
+    },
+  })
+}
+
+/** v4.1-03: renames a chat session (SessionSidebar's inline pencil edit). Only invalidates
+ * the sessions list — never the session detail (`chatSessionQueryKey`) — so renaming the
+ * currently-open session updates its row in the sidebar without reloading its messages or
+ * resetting the active chat. */
+export function useRenameSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sessionId, title }: { sessionId: number; title: string }) =>
+      renameChatSession(sessionId, title),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_QUERY_KEY })
     },

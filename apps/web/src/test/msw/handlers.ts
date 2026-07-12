@@ -100,6 +100,21 @@ export const handlers = [
     HttpResponse.json({ id: 1, title: 'New chat', createdAt: '2026-07-10T00:00:00Z' }, { status: 201 }),
   ),
 
+  // v4.1-03: mirrors the backend's frozen contract (RenameChatSessionRequest) --
+  // trims and validates the title itself here too, so a test exercising the empty-title
+  // rejection path doesn't need its own server.use() override.
+  http.patch('/api/chat/sessions/:id', async ({ request, params }) => {
+    const body = (await request.json()) as { title?: string }
+    const title = (body.title ?? '').trim()
+    if (!title || title.length > 120) {
+      return HttpResponse.json(
+        { detail: 'title must be 1..120 characters after trimming' },
+        { status: 422 },
+      )
+    }
+    return HttpResponse.json({ id: Number(params.id), title, updatedAt: '2026-07-10T00:05:00Z' })
+  }),
+
   // Living Profile uploads (v2, F7): a happy-path proposed merge by default.
   // Tests override per scenario (invalid/oversize/failed extraction, a
   // specific documentId) with server.use(...). Handlers here never call

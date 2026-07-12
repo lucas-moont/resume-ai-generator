@@ -15,6 +15,8 @@ import type {
   ProvidersSettingsResponse,
   ProvidersSettingsUpdateRequest,
   RefineRequest,
+  RenameChatSessionRequest,
+  RenameChatSessionResponse,
   SecretKeyEntry,
   UploadSourceDocumentResponse,
 } from './dto'
@@ -78,6 +80,18 @@ export function getChatSession(sessionId: number): Promise<ChatSessionDetailResp
 
 export function deleteChatSession(sessionId: number): Promise<void> {
   return requestVoid(`/api/chat/sessions/${sessionId}`, { method: 'DELETE' })
+}
+
+/** v4.1-03: PATCH is not one of client.ts's postInit/putInit helpers (POST/PUT only),
+ * so this builds the JSON request inline rather than adding a third helper for a single
+ * call site. */
+export function renameChatSession(sessionId: number, title: string): Promise<RenameChatSessionResponse> {
+  const payload: RenameChatSessionRequest = { title }
+  return requestJson<RenameChatSessionResponse>(`/api/chat/sessions/${sessionId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function chatMessageStream(
