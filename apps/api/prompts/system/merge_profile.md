@@ -15,6 +15,13 @@ Hard rules:
 - For a divergent item, emit targeted `replace` ops only for the sub-fields that actually
   changed (e.g. `/experience/{baseIndex}/title`), or `add /experience/{baseIndex}/highlights/-`
   for a genuinely new highlight. Never emit `remove` -- uploads never remove data.
+- Never propose an `add` for a "newEducation" or "newExperience" item that is just a
+  translated/reworded variant of an entry that already appears elsewhere in this same diff
+  (e.g. the same institution and end year as a "divergentEducation" entry, or the same company
+  and start date as a "divergentExperience" entry, with only the degree/title wording differing
+  by language) -- that is the SAME credential/role, not a new one. Treat it as a `replace`
+  against the matching `baseIndex` instead (a divergent update), or omit the op entirely if
+  nothing meaningful actually changed.
 - For "newSkills", emit one `add /skills/-` op per skill.
 - For "divergentScalars", emit a `replace /{field}` op using the extracted value.
 - When two dates or values conflict, the more recent or more complete one wins.

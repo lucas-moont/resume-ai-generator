@@ -247,6 +247,118 @@ class TestAdjudicationContainmentEndToEnd:
         assert proposal.ops == []
 
 
+class TestEducationDedupGuard:
+    """v4.1-04 -- guard against the real bug (a Living Profile that ended up with two entries
+    for the same credential: an EN "Associate Degree, Systems Analysis and Development" and a
+    PT "Tecnologo em Analise e Desenvolvimento de Sistemas" variant, same institution, same end
+    year). Adjudication is instructed (merge_profile.md) never to propose this kind of `add` in
+    the first place, but this exercises the deterministic net that catches it regardless of what
+    the (scripted) LLM returns."""
+
+    async def test_language_variant_of_an_existing_credential_is_dropped(self, fake_llm, caplog) -> None:
+        profile = _profile(
+            education=[
+                {
+                    "institution": "Cruzeiro do Sul Virtual",
+                    "degree": "Tecnologo em Analise e Desenvolvimento de Sistemas",
+                    "end": "2022",
+                }
+            ]
+        )
+        extracted = _doc(
+            education=[
+                {
+                    "institution": "Cruzeiro do Sul Virtual",
+                    "degree": "Associate Degree, Systems Analysis and Development",
+                    "end": "2022",
+                }
+            ]
+        )
+        fake_llm.queue(
+            json.dumps(
+                [
+                    {
+                        "op": "add",
+                        "path": "/education/-",
+                        "value": {
+                            "institution": "Cruzeiro do Sul Virtual",
+                            "degree": "Associate Degree, Systems Analysis and Development",
+                            "end": "2022",
+                        },
+                        "reason": "extracted document lists this degree",
+                        "confidence": 0.8,
+                        "sourceExcerpt": "Associate Degree, Systems Analysis and Development, 2022",
+                    }
+                ]
+            )
+        )
+
+        with caplog.at_level("WARNING"):
+            proposal = await propose_merge(profile, extracted)
+
+        assert proposal.ops == []  # never reaches the Patch Validator, let alone gets applied
+        assert any("duplicate" in r.message.lower() for r in caplog.records)
+
+    async def test_same_institution_different_end_year_is_kept(self, fake_llm) -> None:
+        profile = _profile(
+            education=[{"institution": "Cruzeiro do Sul Virtual", "degree": "Bacharelado", "end": "2022"}]
+        )
+        extracted = _doc(
+            education=[{"institution": "Cruzeiro do Sul Virtual", "degree": "Pos-Graduacao", "end": "2024"}]
+        )
+        fake_llm.queue(
+            json.dumps(
+                [
+                    {
+                        "op": "add",
+                        "path": "/education/-",
+                        "value": {
+                            "institution": "Cruzeiro do Sul Virtual",
+                            "degree": "Pos-Graduacao",
+                            "end": "2024",
+                        },
+                        "reason": "a second, later credential from the same institution",
+                        "confidence": 0.8,
+                        "sourceExcerpt": "Pos-Graduacao, 2024",
+                    }
+                ]
+            )
+        )
+
+        proposal = await propose_merge(profile, extracted)
+
+        assert len(proposal.ops) == 1
+        assert proposal.ops[0].value["end"] == "2024"
+
+    async def test_new_institution_add_still_passes(self, fake_llm) -> None:
+        profile = _profile()  # default education: USP / Bacharelado / 2022
+        extracted = _doc(
+            education=[
+                {"institution": "USP", "degree": "Bacharelado", "end": "2022"},
+                {"institution": "FGV", "degree": "MBA", "end": "2024"},
+            ]
+        )
+        fake_llm.queue(
+            json.dumps(
+                [
+                    {
+                        "op": "add",
+                        "path": "/education/-",
+                        "value": {"institution": "FGV", "degree": "MBA", "end": "2024"},
+                        "reason": "a genuinely new institution",
+                        "confidence": 0.8,
+                        "sourceExcerpt": "FGV, MBA, 2024",
+                    }
+                ]
+            )
+        )
+
+        proposal = await propose_merge(profile, extracted)
+
+        assert len(proposal.ops) == 1
+        assert proposal.ops[0].value["institution"] == "FGV"
+
+
 class TestResolveProfileForMerge:
     def test_returns_blank_profile_when_nothing_exists_yet(self, test_db_engine, isolated_data_env) -> None:
         with Session(test_db_engine) as session:

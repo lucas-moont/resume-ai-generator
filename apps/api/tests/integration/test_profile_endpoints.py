@@ -262,6 +262,44 @@ class TestPatchProfileManualEdit:
         assert resp.json()["profileVersion"] == 1
         assert (await client.get("/api/profile")).json()["fullName"] == "Someone New"
 
+    async def test_patch_applies_a_duplicate_looking_education_add_unlike_upload(
+        self, client, test_db_engine
+    ) -> None:
+        """v4.1-04: the education dedup guard lives in ``merge_service.propose_merge`` (the
+        upload/Adjudication pipeline) only -- ``PATCH /api/profile`` calls ``apply_patch``
+        directly and never runs through it, so a manual add that looks like a duplicate
+        (same institution + end year as the existing entry, just reworded) still applies. A
+        manual edit is an explicit, already-reviewed user action, unlike an LLM adjudication."""
+        with Session(test_db_engine) as session:
+            profile_repo.insert_version(session, data=json.dumps(make_profile()), source_kind="seed_disk")
+            session.commit()
+
+        resp = await client.patch(
+            "/api/profile",
+            json={
+                "ops": [
+                    {
+                        "op": "add",
+                        "path": "/education/-",
+                        "value": {
+                            "institution": "Universidade de Sao Paulo",
+                            "degree": "Bacharelado em Ciencia da Computacao",
+                            "end": "2016",
+                        },
+                        "reason": "user manually re-added the same institution/year",
+                        "confidence": 1.0,
+                        "sourceExcerpt": "manual edit",
+                    }
+                ]
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["applied"] == 1
+
+        active = (await client.get("/api/profile")).json()
+        assert len(active["education"]) == 2
+
     async def test_patch_with_a_structurally_invalid_op_is_422(self, client, test_db_engine):
         with Session(test_db_engine) as session:
             profile_repo.insert_version(session, data=json.dumps(make_profile()), source_kind="seed_disk")

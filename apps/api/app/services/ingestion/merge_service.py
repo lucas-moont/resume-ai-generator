@@ -14,7 +14,14 @@ in this exact order:
    adjudicated op whose target the Diff never flagged. This closes a gap the Patch Validator's
    own whitelist/target-exists checks don't cover: those check "is this path shaped like a real
    Profile field" and "does this index exist", not "did THIS diff actually flag it".
-4. **Patch Validator** (``app.domain.profile_patch.apply_patch``, ``source_kind="upload"``) --
+4. **Education dedup guard** (``_drop_duplicate_education_credentials``, v4.1-04) -- drops any
+   `add /education/-` op whose (institution, end) already matches an existing Profile entry:
+   the SAME credential, even when Adjudication worded the degree as a translated/reworded
+   variant of the existing one's. This is the deterministic net behind ``merge_profile.md``'s
+   own instruction not to propose such an op in the first place. Only reachable from THIS
+   pipeline (upload) -- the manual ``PATCH /api/profile`` path calls ``apply_patch`` directly
+   and never runs through here.
+5. **Patch Validator** (``app.domain.profile_patch.apply_patch``, ``source_kind="upload"``) --
    a DRY RUN against a copy of the profile. This is what ``proposedPatch`` in the upload
    response actually is: the already-vetted ``applied`` ops, never the raw LLM output. Nothing
    is persisted as a new Profile Version here -- that only happens when the user later calls
@@ -24,18 +31,22 @@ in this exact order:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 
 from sqlmodel import Session
 
 from app.config import PROMPTS_DIR
+from app.domain.entity_identity import entity_key
 from app.domain.profile_diff import DiffResult, deterministic_diff, filter_ops_to_diff_scope
 from app.domain.profile_patch import PatchOp, apply_patch
 from app.domain.schemas import ProfileMaster, ResumeDocument
 from app.prompt_loader import load_merge_profile_system_prompt
 from app.services import llm_client
 from app.services.profile_resolution import resolve_active_profile
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -141,6 +152,43 @@ def _build_adjudication_user_message(diff: DiffResult) -> str:
     )
 
 
+def _drop_duplicate_education_credentials(profile: ProfileMaster, ops: list[PatchOp]) -> list[PatchOp]:
+    """The deterministic net for the real bug this guards against (v4.1-04): a Living Profile
+    that ended up with the SAME credential twice because Adjudication proposed an `add` whose
+    `degree` was merely a translated/reworded variant of an entry the profile already had (an
+    EN "Associate Degree, Systems Analysis and Development" alongside a PT "Tecnologo em
+    Analise e Desenvolvimento de Sistemas", same institution, same end year). ``degree`` is
+    deliberately NOT part of the identity here -- it is exactly the field Adjudication may
+    legitimately reword; ``institution`` (normalized via ``entity_key``, reused rather than
+    reinvented) plus ``end`` is what makes two entries "the same credential" for this guard.
+    Same institution with a DIFFERENT end year is kept: that is two legitimate credentials
+    (e.g. a Bachelor's, then later a Master's). Runs only in this upload/Adjudication pipeline
+    -- the manual ``PATCH /api/profile`` path calls ``apply_patch`` directly and never reaches
+    this function, by design (a manual edit is an explicit, already-reviewed user action).
+    """
+    existing_index_by_key: dict[tuple[str, str], int] = {}
+    for idx, entry in enumerate(profile.education):
+        key = (entity_key(entry.institution), entity_key(entry.end))
+        if key[0]:
+            existing_index_by_key.setdefault(key, idx)
+
+    kept: list[PatchOp] = []
+    for op in ops:
+        if op.op == "add" and op.path == "/education/-" and isinstance(op.value, dict):
+            key = (entity_key(op.value.get("institution")), entity_key(op.value.get("end")))
+            existing_idx = existing_index_by_key.get(key) if key[0] else None
+            if existing_idx is not None:
+                logger.warning(
+                    "merge_service: dropped duplicate education add -- same institution and "
+                    "end year as existing entry %d (value=%r)",
+                    existing_idx,
+                    op.value,
+                )
+                continue
+        kept.append(op)
+    return kept
+
+
 async def adjudicate(diff: DiffResult, *, model: str | None = None) -> list[PatchOp]:
     system = load_merge_profile_system_prompt(PROMPTS_DIR)
     user = _build_adjudication_user_message(diff)
@@ -160,5 +208,6 @@ async def propose_merge(
 
     raw_ops = await adjudicate(diff, model=model)
     in_scope_ops = filter_ops_to_diff_scope(diff, raw_ops)
-    result = apply_patch(profile, in_scope_ops, source_kind="upload")
+    deduped_ops = _drop_duplicate_education_credentials(profile, in_scope_ops)
+    result = apply_patch(profile, deduped_ops, source_kind="upload")
     return MergeProposal(ops=result.applied, diff_summary=diff.summary())
