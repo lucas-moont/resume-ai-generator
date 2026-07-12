@@ -3,6 +3,7 @@ import { formatRelativeTime } from '../formatRelativeTime'
 import { useDeleteSession, useResumeChatSession, useSessions } from '../hooks/useChatSession'
 import { useChatStore } from '../store/chatStore'
 import { ConfirmDialog } from '../../../ui/ConfirmDialog'
+import { Tooltip } from '../../../ui/Tooltip'
 
 export function SessionSidebar() {
   const { data, isError, isLoading } = useSessions()
@@ -69,16 +70,18 @@ export function SessionSidebar() {
                     {formatRelativeTime(s.updatedAt)}
                   </span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setPendingDelete({ id: s.id, title: s.title })}
-                  aria-label={`Delete ${s.title || 'this chat'}`}
-                  className="shrink-0 rounded-lg p-1.5 text-stone-400 opacity-0 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 group-hover:opacity-100 dark:text-zinc-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
-                >
-                  <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
-                    <path d="M6 6l8 8M14 6l-8 8" strokeLinecap="round" />
-                  </svg>
-                </button>
+                <Tooltip label="Delete chat" placement="top">
+                  <button
+                    type="button"
+                    onClick={() => setPendingDelete({ id: s.id, title: s.title })}
+                    aria-label={`Delete ${s.title || 'this chat'}`}
+                    className="shrink-0 rounded-lg p-1.5 text-stone-400 opacity-0 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 group-hover:opacity-100 dark:text-zinc-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                      <path d="M6 6l8 8M14 6l-8 8" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </Tooltip>
               </li>
             )
           })}

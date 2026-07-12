@@ -1,4 +1,5 @@
 import { fileTypeLabel, formatFileSize } from '../fileMeta'
+import { Tooltip } from '../../../ui/Tooltip'
 import type { UploadAttachment } from '../useFileUpload'
 
 export function AttachmentChip({
@@ -49,16 +50,18 @@ export function AttachmentChip({
         </>
       )}
 
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`Remove ${file.name}`}
-        className="ml-0.5 shrink-0 rounded-full p-0.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-      >
-        <svg aria-hidden="true" viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M5 5l10 10M15 5 5 15" strokeLinecap="round" />
-        </svg>
-      </button>
+      <Tooltip label="Remove" placement="top">
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${file.name}`}
+          className="ml-0.5 shrink-0 rounded-full p-0.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        >
+          <svg aria-hidden="true" viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M5 5l10 10M15 5 5 15" strokeLinecap="round" />
+          </svg>
+        </button>
+      </Tooltip>
     </div>
   )
 }

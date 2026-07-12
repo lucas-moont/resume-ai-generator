@@ -10,4 +10,6 @@ export const zIndex = {
   dropdown: 'z-20',
   /** Dialog primitive: backdrop + panel (see ./Dialog.tsx). Above any dropdown. */
   overlay: 'z-50',
+  /** Tooltip bubble (see ./Tooltip.tsx). Above everything, including dialogs. */
+  tooltip: 'z-[60]',
 } as const

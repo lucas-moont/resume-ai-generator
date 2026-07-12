@@ -1,14 +1,17 @@
 import { useTheme } from './ThemeProvider'
+import { Tooltip } from '../../ui/Tooltip'
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme()
   const isDark = theme === 'dark'
+  const label = isDark ? 'Switch to light mode' : 'Switch to dark mode'
   return (
+    <Tooltip label={label} placement="bottom">
     <button
       type="button"
       onClick={() => setTheme(isDark ? 'light' : 'dark')}
       className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-700 shadow-sm transition-[color,background-color,border-color,box-shadow] hover:border-stone-300 hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:focus-visible:ring-zinc-500 dark:focus-visible:ring-offset-zinc-950"
-      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label={label}
     >
       {isDark ? (
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -35,5 +38,6 @@ export function ThemeToggle() {
         </svg>
       )}
     </button>
+    </Tooltip>
   )
 }

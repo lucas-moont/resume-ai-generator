@@ -29,7 +29,7 @@ export function AppShell() {
 
       <main
         id="main-content"
-        className="print-grid mx-auto flex w-full min-h-0 max-w-[1600px] flex-1 flex-col lg:flex-row"
+        className="print-grid mx-auto flex w-full min-h-0 max-w-[1920px] flex-1 flex-col lg:flex-row"
       >
         <div
           role="tablist"
@@ -78,7 +78,7 @@ export function AppShell() {
 
         <section
           aria-label="Chat"
-          className={`no-print min-h-0 flex-col border-stone-200 bg-white/60 dark:border-zinc-800 dark:bg-zinc-950/40 lg:flex lg:w-[42%] lg:border-r ${
+          className={`no-print min-h-0 flex-col border-stone-200 bg-white/60 dark:border-zinc-800 dark:bg-zinc-950/40 lg:flex lg:w-[38%] lg:max-w-[640px] lg:border-r ${
             mobileTab === 'chat' ? 'flex' : 'hidden'
           }`}
         >

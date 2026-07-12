@@ -5,6 +5,7 @@ import { useChatStore } from '../store/chatStore'
 import type { UploadAttachment } from '../../upload/useFileUpload'
 import { AttachmentChip } from '../../upload/components/AttachmentChip'
 import { Combobox, type ComboboxOption } from '../../../ui/Combobox'
+import { Tooltip } from '../../../ui/Tooltip'
 import { zIndex } from '../../../ui/zIndex'
 
 const MAX_TEXTAREA_HEIGHT_PX = 220
@@ -156,21 +157,22 @@ export function Composer({
           className="min-h-10 flex-1 resize-none rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-[0.9375rem] text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus-visible:ring-zinc-500 dark:focus-visible:ring-offset-zinc-950"
         />
 
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          aria-label="Attach a profile document (.json, .md, or .pdf)"
-          title="Attach a document"
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-500 shadow-sm hover:bg-stone-50 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-        >
-          <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4.5 w-4.5" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path
-              d="M14.5 7.5 8.379 13.621a2 2 0 1 1-2.829-2.829L11.5 4.843a3.333 3.333 0 1 1 4.714 4.714L10.207 15.55a4.667 4.667 0 1 1-6.6-6.6L9.5 3.05"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
+        <Tooltip label="Attach a document (.json, .md, or .pdf)" placement="top">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach a profile document (.json, .md, or .pdf)"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-500 shadow-sm hover:bg-stone-50 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          >
+            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4.5 w-4.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path
+                d="M14.5 7.5 8.379 13.621a2 2 0 1 1-2.829-2.829L11.5 4.843a3.333 3.333 0 1 1 4.714 4.714L10.207 15.55a4.667 4.667 0 1 1-6.6-6.6L9.5 3.05"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </Tooltip>
 
         <Combobox
           id="composer-model"

@@ -5,6 +5,7 @@ import { useLocale, useResume, useResumeStore, useResumeTemporal, useTemplate, u
 import { useEditModeStore, useIsEditing } from '../store/editModeStore'
 import { useUndoRedoShortcuts } from '../editing/undoRedoKeyboard'
 import { useChatStore } from '../../chat/store/chatStore'
+import { Tooltip } from '../../../ui/Tooltip'
 import { TemplatePicker } from './TemplatePicker'
 
 const btnBase =
@@ -67,52 +68,54 @@ export function PreviewToolbar() {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          // NOT onClick={undo}: zundo's undo(steps = 1) takes a step count, and
-          // React invokes onClick handlers with the SyntheticEvent as the first
-          // argument — passed straight through as `steps`, that event object
-          // coerces to NaN/0 in splice()'s arithmetic, undo's `.shift()` comes
-          // back `undefined`, and `userSet(undefined)` nulls out the ENTIRE
-          // resumeStore (confirmed against zustand's vanilla setState: a
-          // non-object partial with no explicit `replace` REPLACES state
-          // wholesale instead of merging). Wrapping in a no-arg arrow avoids
-          // ever leaking the event into zundo.
-          onClick={() => undo()}
-          disabled={pastStates.length === 0}
-          aria-label="Undo"
-          title="Undo (Ctrl+Z)"
-          className={iconBtnBase}
-        >
-          ↶
-        </button>
-        <button
-          type="button"
-          onClick={() => redo()}
-          disabled={futureStates.length === 0}
-          aria-label="Redo"
-          title="Redo (Ctrl+Shift+Z)"
-          className={iconBtnBase}
-        >
-          ↷
-        </button>
-        <button
-          type="button"
-          onClick={toggleEditing}
-          disabled={isStreaming}
-          aria-pressed={isEditing}
-          aria-label={isEditing ? 'Stop editing' : 'Edit inline'}
-          title={
-            isStreaming
-              ? 'Editing is disabled while a response is streaming'
-              : isEditing
-                ? 'Stop editing'
-                : 'Edit inline'
-          }
-          className={`${iconBtnBase} ${isEditing ? 'border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-500 dark:bg-indigo-950 dark:text-indigo-300' : ''}`}
-        >
-          ✎
-        </button>
+        <Tooltip label="Undo (Ctrl+Z)" placement="bottom">
+          <button
+            type="button"
+            // NOT onClick={undo}: zundo's undo(steps = 1) takes a step count, and
+            // React invokes onClick handlers with the SyntheticEvent as the first
+            // argument — passed straight through as `steps`, that event object
+            // coerces to NaN/0 in splice()'s arithmetic, undo's `.shift()` comes
+            // back `undefined`, and `userSet(undefined)` nulls out the ENTIRE
+            // resumeStore (confirmed against zustand's vanilla setState: a
+            // non-object partial with no explicit `replace` REPLACES state
+            // wholesale instead of merging). Wrapping in a no-arg arrow avoids
+            // ever leaking the event into zundo.
+            onClick={() => undo()}
+            disabled={pastStates.length === 0}
+            aria-label="Undo"
+            className={iconBtnBase}
+          >
+            ↶
+          </button>
+        </Tooltip>
+        <Tooltip label="Redo (Ctrl+Shift+Z)" placement="bottom">
+          <button
+            type="button"
+            onClick={() => redo()}
+            disabled={futureStates.length === 0}
+            aria-label="Redo"
+            className={iconBtnBase}
+          >
+            ↷
+          </button>
+        </Tooltip>
+        <Tooltip label={isEditing ? 'Stop editing' : 'Edit inline'} placement="bottom">
+          <button
+            type="button"
+            onClick={toggleEditing}
+            disabled={isStreaming}
+            aria-pressed={isEditing}
+            aria-label={isEditing ? 'Stop editing' : 'Edit inline'}
+            // Kept as a native attribute (not the styled Tooltip): while
+            // streaming the button is disabled + pointer-events-none, so it
+            // fires no hover events for the custom tooltip — but the disabled
+            // explanation is exactly what a user needs then.
+            title={isStreaming ? 'Editing is disabled while a response is streaming' : undefined}
+            className={`${iconBtnBase} ${isEditing ? 'border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-500 dark:bg-indigo-950 dark:text-indigo-300' : ''}`}
+          >
+            ✎
+          </button>
+        </Tooltip>
         <button
           type="button"
           onClick={() => window.print()}
