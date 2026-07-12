@@ -141,6 +141,104 @@ class TestChatSessionCrud:
         assert resp.status_code == 404
 
 
+class TestRenameChatSession:
+    """v4.1-03 (frozen contract): PATCH /api/chat/sessions/{id} {"title": "<1..120 trimmed,
+    non-empty>"} -> 200 {id, title, updatedAt}; 404 for a missing session; 422 for an
+    empty/whitespace-only/over-120-char title (pydantic validation, before any DB write)."""
+
+    async def test_rename_returns_200_and_updates_the_db(self, client, test_db_engine):
+        created = (await client.post("/api/chat/sessions", json={"title": "Old title"})).json()
+
+        resp = await client.patch(
+            f"/api/chat/sessions/{created['id']}", json={"title": "New title"}
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body.keys()) == {"id", "title", "updatedAt"}
+        assert body["id"] == created["id"]
+        assert body["title"] == "New title"
+
+        with Session(test_db_engine) as session:
+            row = session.get(ChatSession, created["id"])
+            assert row.title == "New title"
+
+    async def test_rename_trims_surrounding_whitespace(self, client, test_db_engine):
+        created = (await client.post("/api/chat/sessions", json={})).json()
+
+        resp = await client.patch(
+            f"/api/chat/sessions/{created['id']}", json={"title": "  Trimmed title  "}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "Trimmed title"
+        with Session(test_db_engine) as session:
+            row = session.get(ChatSession, created["id"])
+            assert row.title == "Trimmed title"
+
+    async def test_rename_bumps_updated_at(self, client, test_db_engine):
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        with Session(test_db_engine) as session:
+            before = session.get(ChatSession, created["id"]).updated_at
+
+        resp = await client.patch(
+            f"/api/chat/sessions/{created['id']}", json={"title": "New title"}
+        )
+
+        assert resp.status_code == 200
+        with Session(test_db_engine) as session:
+            after = session.get(ChatSession, created["id"]).updated_at
+            assert after >= before
+        assert resp.json()["updatedAt"] == after.isoformat()
+
+    async def test_rename_missing_session_is_404(self, client):
+        resp = await client.patch("/api/chat/sessions/999999", json={"title": "New title"})
+        assert resp.status_code == 404
+
+    async def test_rename_with_empty_title_is_422(self, client):
+        created = (await client.post("/api/chat/sessions", json={"title": "Old title"})).json()
+
+        resp = await client.patch(f"/api/chat/sessions/{created['id']}", json={"title": ""})
+
+        assert resp.status_code == 422
+
+    async def test_rename_with_whitespace_only_title_is_422(self, client):
+        created = (await client.post("/api/chat/sessions", json={"title": "Old title"})).json()
+
+        resp = await client.patch(f"/api/chat/sessions/{created['id']}", json={"title": "   "})
+
+        assert resp.status_code == 422
+
+    async def test_rename_with_121_char_title_is_422(self, client):
+        created = (await client.post("/api/chat/sessions", json={"title": "Old title"})).json()
+
+        resp = await client.patch(
+            f"/api/chat/sessions/{created['id']}", json={"title": "A" * 121}
+        )
+
+        assert resp.status_code == 422
+
+    async def test_rename_with_exactly_120_char_title_succeeds(self, client):
+        created = (await client.post("/api/chat/sessions", json={"title": "Old title"})).json()
+
+        resp = await client.patch(
+            f"/api/chat/sessions/{created['id']}", json={"title": "A" * 120}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "A" * 120
+
+    async def test_rename_422_does_not_touch_the_db(self, client, test_db_engine):
+        created = (await client.post("/api/chat/sessions", json={"title": "Old title"})).json()
+
+        resp = await client.patch(f"/api/chat/sessions/{created['id']}", json={"title": "   "})
+
+        assert resp.status_code == 422
+        with Session(test_db_engine) as session:
+            row = session.get(ChatSession, created["id"])
+            assert row.title == "Old title"
+
+
 # NOTE (v4 ticket B3): pasting a job description with no active resume and no Pending Proposal
 # no longer generates a resume directly -- it runs the Analysis and proposes changes instead.
 # ``TestChatMessageStreamGenerateIntent`` and ``TestChatGenerateProfileProvenance`` (the "JD paste

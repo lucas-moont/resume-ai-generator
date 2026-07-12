@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session
 
 from app.db.tables import ChatSession, ImprovementProposal
-from app.domain.schemas import ChatMessageRequest, CreateChatSessionRequest
+from app.domain.schemas import ChatMessageRequest, CreateChatSessionRequest, RenameChatSessionRequest
 from app.repositories import chat_repo, proposal_repo, resume_repo, source_document_repo
 from app.routers.deps import get_session, resolve_requested_model
 from app.services.chat_service import handle_chat_turn
@@ -159,6 +159,28 @@ async def get_chat_session(session_id: int, session: Session = Depends(get_sessi
         ],
         "activeResume": active_resume,
         "pendingProposal": _proposal_dict(pending_proposal) if pending_proposal is not None else None,
+    }
+
+
+@router.patch("/api/chat/sessions/{session_id}")
+async def rename_chat_session(
+    session_id: int, body: RenameChatSessionRequest, session: Session = Depends(get_session)
+):
+    """v4.1-03 (frozen contract): {"title": "<1..120 trimmed, non-empty>"} -> 200 {id, title,
+    updatedAt}. ``RenameChatSessionRequest`` already trimmed and length-validated the title
+    (a blank/whitespace-only/over-120 title is a 422 before this handler ever runs)."""
+    chat_session = session.get(ChatSession, session_id)
+    if chat_session is None:
+        raise http_error(404, f"Chat session {session_id} not found")
+    chat_session.title = body.title
+    session.add(chat_session)
+    chat_repo.touch_session(session, session_id)
+    session.commit()
+    session.refresh(chat_session)
+    return {
+        "id": chat_session.id,
+        "title": chat_session.title,
+        "updatedAt": chat_session.updated_at.isoformat(),
     }
 
 

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TemplateId = Literal[
     "modern",
@@ -140,3 +140,20 @@ class ChatMessageRequest(BaseModel):
 
 class RevertProfileRequest(BaseModel):
     toVersion: int
+
+
+class RenameChatSessionRequest(BaseModel):
+    """v4.1-03 (frozen contract): PATCH /api/chat/sessions/{id} body -- ``title`` must be
+    1..120 chars AFTER trimming surrounding whitespace, and non-blank. Validated on the
+    trimmed value (not the raw one) so surrounding whitespace never counts against the
+    120-char limit, and the trimmed, canonical value is what callers get back."""
+
+    title: str
+
+    @field_validator("title")
+    @classmethod
+    def _trim_and_validate(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not (1 <= len(trimmed) <= 120):
+            raise ValueError("title must be 1..120 characters after trimming")
+        return trimmed
