@@ -383,6 +383,7 @@
   border-bottom: none;
   color: var(--c-accent);
   gap: 8px;
+  font-size: 8.5pt;
 }
 
 .resume-doc .page.tpl-modern .section-label::after {
@@ -398,7 +399,30 @@
   background: rgba(79, 70, 229, 0.08);
   color: #3730a3;
   font-weight: 500;
+  font-size: 7.25pt;
 }
+
+/* Body copy trimmed ~1.5pt (~2px) below the shared defaults — every element
+   here has its own absolute font-size in the shared base rules above (none
+   read --base-size, so setting that variable alone has no visible effect;
+   see .page's lone `font-size: var(--base-size)` at the top of this file),
+   hence one override per element instead of a single variable flip. .name
+   (the 21pt name) and .side-title (already the smallest element, an 8pt
+   uppercase sidebar label) are left untouched. */
+.resume-doc .page.tpl-modern .headline { font-size: 9.5pt; }
+.resume-doc .page.tpl-modern .contact-bar { font-size: 8pt; }
+.resume-doc .page.tpl-modern .summary { font-size: 8.5pt; }
+.resume-doc .page.tpl-modern .exp-head { font-size: 8.5pt; }
+.resume-doc .page.tpl-modern .exp-dates { font-size: 7.5pt; }
+.resume-doc .page.tpl-modern .exp-loc { font-size: 7.5pt; }
+.resume-doc .page.tpl-modern .exp-list { font-size: 8.25pt; }
+.resume-doc .page.tpl-modern .proj-name { font-size: 8.5pt; }
+.resume-doc .page.tpl-modern .proj-desc { font-size: 8.25pt; }
+.resume-doc .page.tpl-modern .edu-head { font-size: 8.5pt; }
+.resume-doc .page.tpl-modern .edu-end { font-size: 7.5pt; }
+.resume-doc .page.tpl-modern .edu-details { font-size: 8pt; }
+.resume-doc .page.tpl-modern .side-text { font-size: 8pt; }
+.resume-doc .page.tpl-modern .side-links { font-size: 8pt; }
 
 /* TEMPLATE: CLASSIC */
 .resume-doc .page.tpl-classic {
@@ -670,6 +694,7 @@
 
 .resume-doc .page.tpl-two-column-ats .section-label {
   color: #111111;
+  font-size: 8.5pt;
 }
 
 .resume-doc .page.tpl-two-column-ats .side-title {
@@ -687,7 +712,28 @@
   background: transparent;
   border-radius: 0;
   color: var(--c-text);
+  font-size: 7.25pt;
 }
+
+/* Body copy trimmed ~1.5pt (~2px) below the shared defaults — same rationale
+   as tpl-modern above: every element already carries its own absolute
+   font-size in the shared base rules, so --base-size doesn't cascade to any
+   of them. .name (21pt) and .side-title (8pt uppercase label, already the
+   smallest element) are left untouched. */
+.resume-doc .page.tpl-two-column-ats .headline { font-size: 9.5pt; }
+.resume-doc .page.tpl-two-column-ats .contact-bar { font-size: 8pt; }
+.resume-doc .page.tpl-two-column-ats .summary { font-size: 8.5pt; }
+.resume-doc .page.tpl-two-column-ats .exp-head { font-size: 8.5pt; }
+.resume-doc .page.tpl-two-column-ats .exp-dates { font-size: 7.5pt; }
+.resume-doc .page.tpl-two-column-ats .exp-loc { font-size: 7.5pt; }
+.resume-doc .page.tpl-two-column-ats .exp-list { font-size: 8.25pt; }
+.resume-doc .page.tpl-two-column-ats .proj-name { font-size: 8.5pt; }
+.resume-doc .page.tpl-two-column-ats .proj-desc { font-size: 8.25pt; }
+.resume-doc .page.tpl-two-column-ats .edu-head { font-size: 8.5pt; }
+.resume-doc .page.tpl-two-column-ats .edu-end { font-size: 7.5pt; }
+.resume-doc .page.tpl-two-column-ats .edu-details { font-size: 8pt; }
+.resume-doc .page.tpl-two-column-ats .side-text { font-size: 8pt; }
+.resume-doc .page.tpl-two-column-ats .side-links { font-size: 8pt; }
 
 /* =============================================================================
    TEMPLATE: EXECUTIVE — spacious serif, single column, centered header. Same
