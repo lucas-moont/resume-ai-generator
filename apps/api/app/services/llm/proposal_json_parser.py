@@ -28,10 +28,17 @@ class ParsedProposal:
     """What ``parse_proposal_json`` hands its caller: ``message`` is always non-blank (the
     caller never has to fall back on prose itself -- ``_fallback_message`` already did if the
     LLM's own ``message`` was missing/blank), and ``items`` is always non-empty (a response with
-    zero surviving items is a parse failure, not an empty proposal -- see module docstring)."""
+    zero surviving items is a parse failure, not an empty proposal -- see module docstring).
+
+    ``title`` (v4.1-02) is the job title the LLM proposes for the chat session itself -- totally
+    optional and NEVER the reason a parse fails: missing, blank, or non-string all collapse to
+    ``None`` (unlike ``message``, there is no deterministic fallback to build one from -- the
+    caller just leaves the session's existing title alone), and an oversized value is silently
+    truncated rather than rejected."""
 
     message: str
     items: list[ProposalItem]
+    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,20 @@ def _fallback_message(items: list[ProposalItem]) -> str:
     return "Proposed improvements:\n\n" + "\n".join(lines)
 
 
+_TITLE_MAX_LENGTH = 120
+
+
+def _parse_title(raw: object) -> str | None:
+    """Tolerant by construction (module docstring): absent/blank/non-string all become
+    ``None``, never a parse failure; an oversized title is truncated, never rejected."""
+    if not isinstance(raw, str):
+        return None
+    title = raw.strip()
+    if not title:
+        return None
+    return title[:_TITLE_MAX_LENGTH]
+
+
 def parse_proposal_json(raw: str) -> ParsedProposal | None:
     try:
         data = json.loads(_strip_code_fence(raw))
@@ -97,7 +118,8 @@ def parse_proposal_json(raw: str) -> ParsedProposal | None:
     message = message.strip() if isinstance(message, str) else ""
     if not message:
         message = _fallback_message(items)
-    return ParsedProposal(message=message, items=items)
+    title = _parse_title(data.get("title"))
+    return ParsedProposal(message=message, items=items, title=title)
 
 
 def parse_proposal_turn_json(raw: str) -> ParsedProposalTurn | None:

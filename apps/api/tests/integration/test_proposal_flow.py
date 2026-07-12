@@ -18,7 +18,7 @@ import json
 
 from sqlmodel import Session, select
 
-from app.db.tables import ImprovementProposal
+from app.db.tables import ChatSession, ImprovementProposal
 from app.domain.schemas import ProposalItem
 from app.repositories import chat_repo, profile_repo, proposal_repo
 from tests.factories import make_profile, make_resume_payload
@@ -218,6 +218,76 @@ class TestAnalysisTurnHappyPath:
         prompt = fake_llm.calls[-1]["user"]
         assert "DB Active Person" in prompt
         assert "Disk Decoy Person" not in prompt
+
+
+class TestAnalysisTurnTitle:
+    """v4.1-02: the Analysis's own JSON may name the job via an optional `title` -- when
+    present, it becomes the chat session's own title (replacing whatever excerpt-based title
+    it had before), written in the SAME commit as the rest of the turn. Covers both the plain
+    Analysis (``_handle_propose_turn``, reached directly with no pending proposal) and the
+    `new_jd` short-circuit (the SAME function, reached via the Proposal Turn's classification)."""
+
+    async def test_title_in_llm_response_renames_the_session(
+        self, client, fake_llm, write_profile, test_db_engine
+    ):
+        write_profile(make_profile())
+        fake_llm.queue(_proposal_llm_response(title="Senior Backend Engineer — Platform Team"))
+        created = (await client.post("/api/chat/sessions", json={"title": "Untitled chat"})).json()
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        assert resp.status_code == 200
+        with Session(test_db_engine) as session:
+            row = session.get(ChatSession, created["id"])
+            assert row.title == "Senior Backend Engineer — Platform Team"
+
+        listed = (await client.get("/api/chat/sessions")).json()["sessions"]
+        assert listed[0]["title"] == "Senior Backend Engineer — Platform Team"
+
+    async def test_no_title_in_llm_response_leaves_the_existing_title_untouched(
+        self, client, fake_llm, write_profile, test_db_engine
+    ):
+        write_profile(make_profile())
+        fake_llm.queue(_proposal_llm_response())  # the default response has no "title" key
+        created = (await client.post("/api/chat/sessions", json={"title": "My original title"})).json()
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        assert resp.status_code == 200
+        with Session(test_db_engine) as session:
+            row = session.get(ChatSession, created["id"])
+            assert row.title == "My original title"
+
+    async def test_new_jd_with_a_title_renames_the_session(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile())
+        created = (await client.post("/api/chat/sessions", json={"title": "Old job chat"})).json()
+        _seed_pending_proposal(test_db_engine, created["id"])
+
+        fake_llm.queue(
+            _proposal_turn_llm_response("new_jd", reply="Beleza, vou analisar a nova vaga."),
+            _proposal_llm_response(title="Staff Frontend Engineer — Design Systems"),
+        )
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Na verdade surgiu outra vaga, deixa eu colar a descrição dela."},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        assert "error" not in [e for e, _ in events]
+
+        with Session(test_db_engine) as session:
+            row = session.get(ChatSession, created["id"])
+            assert row.title == "Staff Frontend Engineer — Design Systems"
 
 
 class TestAnalysisTurnFailures:

@@ -23,11 +23,18 @@ This is analysis, not authoring. You are NOT writing a resume — you are propos
 - Present the items as natural prose — a short intro, then the substance of what you found and propose. Do **not** just repeat the JSON structure or dump a bare list of `section: proposed` pairs; write like a recruiter explaining their reasoning to the candidate.
 - End with an explicit, natural invitation to approve or ask for adjustments (e.g. "Quer que eu gere o currículo com essas mudanças, ou prefere ajustar algo antes?" / "Want me to generate the resume with these changes, or would you like to adjust something first?").
 
+## `title` (the job title, used to name this conversation)
+
+A short title (60 characters or fewer) naming the job from the job description, in the job
+description's own language (e.g. "Full Stack Engineer — Trading Platform"). This becomes the
+chat session's own title, replacing whatever excerpt-based title it had before.
+
 ## JSON shape (the ONLY thing in your response)
 
 ```
 {
   "message": "<markdown prose in the user's locale, presenting the proposal and inviting approval/adjustment>",
+  "title": "<short job title, <=60 chars, in the job description's own language, e.g. \"Full Stack Engineer — Trading Platform\">",
   "items": [
     {
       "id": 1,

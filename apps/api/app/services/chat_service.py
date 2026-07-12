@@ -474,6 +474,13 @@ async def _handle_propose_turn(
         intent="propose",
         meta=json.dumps({"proposalId": proposal_row.id}),
     )
+    if parsed.title:
+        # v4.1-02: the Analysis's own JSON names the job -- use it as the session's title,
+        # in the SAME commit as the rest of this turn (also covers new_jd: a fresh job
+        # description renames the session, which is the point). A session that was already
+        # named keeps getting renamed here -- the LLM's title is always the freshest signal.
+        chat_session.title = parsed.title
+        session.add(chat_session)
     chat_repo.touch_session(session, chat_session.id)
     session.commit()
 

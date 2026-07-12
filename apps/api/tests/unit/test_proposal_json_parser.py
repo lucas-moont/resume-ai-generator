@@ -110,6 +110,44 @@ class TestParseProposalJson:
         assert result is not None
         assert result.items[0].id == 1
 
+    # v4.1-02: the Analysis's JSON gained an optional `title` (the job title, for the chat
+    # session's own title) -- tolerant by construction, mirroring `message`'s own fallback
+    # philosophy but simpler (there is no deterministic fallback for a title -- absence just
+    # means "leave the session's existing title alone", decided by the caller, not the parser).
+    def test_title_present_is_parsed(self) -> None:
+        raw = json.dumps({"message": "ok", "items": [_VALID_ITEM], "title": "Full Stack Engineer"})
+        result = parse_proposal_json(raw)
+        assert result is not None
+        assert result.title == "Full Stack Engineer"
+
+    def test_title_absent_is_none_and_does_not_affect_message_or_items(self) -> None:
+        raw = json.dumps({"message": "ok", "items": [_VALID_ITEM]})
+        result = parse_proposal_json(raw)
+        assert result is not None
+        assert result.title is None
+        assert result.message == "ok"
+        assert len(result.items) == 1
+
+    def test_title_empty_string_is_none(self) -> None:
+        raw = json.dumps({"message": "ok", "items": [_VALID_ITEM], "title": "   "})
+        result = parse_proposal_json(raw)
+        assert result is not None
+        assert result.title is None
+
+    def test_title_non_string_is_none_without_failing_the_parse(self) -> None:
+        raw = json.dumps({"message": "ok", "items": [_VALID_ITEM], "title": 12345})
+        result = parse_proposal_json(raw)
+        assert result is not None
+        assert result.title is None
+        assert len(result.items) == 1
+
+    def test_title_over_120_chars_is_truncated(self) -> None:
+        long_title = "A" * 200
+        raw = json.dumps({"message": "ok", "items": [_VALID_ITEM], "title": long_title})
+        result = parse_proposal_json(raw)
+        assert result is not None
+        assert result.title == "A" * 120
+
 
 class TestParseProposalTurnJson:
     def test_clean_approve_response(self) -> None:
