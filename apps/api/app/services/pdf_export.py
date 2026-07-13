@@ -1,4 +1,6 @@
+import asyncio
 import json
+import sys
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -43,20 +45,32 @@ def _safe_template(template: str | None) -> str:
     return key if key in _ALLOWED_TEMPLATES else DEFAULT_TEMPLATE
 
 
+async def _render_html_to_pdf(html: str) -> bytes:
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.set_content(html, wait_until="networkidle")
+        # Margins come from the @page rule in resume_print.html — passing
+        # them here too conflicts with the stylesheet's @page and breaks
+        # Chromium's pagination of the grid-layout templates.
+        pdf = await page.pdf(format="A4", print_background=True)
+        await browser.close()
+    return pdf
+
+
+def _render_html_to_pdf_in_thread(html: str) -> bytes:
+    # Playwright launches Chromium via asyncio subprocesses, which the
+    # SelectorEventLoop uvicorn uses on Windows doesn't implement
+    # (NotImplementedError). Render on a dedicated loop that supports them.
+    loop_factory = asyncio.ProactorEventLoop if sys.platform == "win32" else None
+    with asyncio.Runner(loop_factory=loop_factory) as runner:
+        return runner.run(_render_html_to_pdf(html))
+
+
 async def render_resume_pdf(resume: ResumeDocument, template: str | None = None) -> bytes:
     data = resume.model_dump()
     sanitize_resume_for_display(data)
     filter_skills_non_tech_inplace(data)
     tpl = _env.get_template("resume_print.html")
     html = tpl.render(resume=data, template=_safe_template(template))
-    async with async_playwright() as p:
-        browser = await p.chromium.launch()
-        page = await browser.new_page()
-        await page.set_content(html, wait_until="networkidle")
-        pdf = await page.pdf(
-            format="A4",
-            print_background=True,
-            margin={"top": "12mm", "bottom": "12mm", "left": "12mm", "right": "12mm"},
-        )
-        await browser.close()
-    return pdf
+    return await asyncio.to_thread(_render_html_to_pdf_in_thread, html)

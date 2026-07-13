@@ -15,15 +15,47 @@
       background: #f1f5f9;
     }
 {% include "resume.css" %}
+    /* Page geometry must live ONLY in CSS: passing margins to Playwright's
+       page.pdf() while the shared resume.css declares `@page { margin: 0 }`
+       makes Chromium size the pagination fragmentainer and the painted page
+       differently — the two-column grid templates (modern, two-column-ats)
+       then get shoved wholesale onto page 2 with just the header left on
+       page 1. These @page margins mirror the 14mm/15mm .page padding the web
+       preview shows, so page 1 of the PDF matches the preview and every
+       later page gets the same breathing room. */
+    @page {
+      size: A4;
+      margin: 14mm 15mm;
+    }
     @media print {
       html, body {
         background: #fff;
       }
       .resume-doc .page {
-        padding-left: 0;
-        padding-right: 0;
+        padding: 0;
         max-width: none;
         min-height: 0;
+      }
+      /* When the resume runs past one page, break between items, not
+         through the middle of one, and never strand a section heading at
+         the bottom of a page. */
+      .resume-doc .exp,
+      .resume-doc .proj,
+      .resume-doc .edu,
+      .resume-doc .side-block {
+        break-inside: avoid;
+      }
+      .resume-doc .section-label,
+      .resume-doc .side-title {
+        break-after: avoid;
+      }
+      /* tpl-tech turns .main into a flex column purely to hoist skills via
+         `order: -1` — Chromium refuses to fragment children once `order`
+         reshuffles them, which strands the header alone on page 1. The PDF
+         markup below hoists the skills section itself (skills_first), so
+         print can flatten .main back to a fragmentable block. */
+      .resume-doc .main {
+        display: block !important;
       }
     }
   </style>
@@ -57,8 +89,22 @@
         {% endfor %}
       </ul>
     </header>
+    {% set skills_first = template == 'tech' %}
+    {% set skills_section %}
+        {% if resume.skills %}
+        <section class="main-section">
+          <h2 class="section-label"><span class="section-accent"></span>{{ t_technologies }}</h2>
+          <ul class="skill-chips main-skills">
+            {% for s in resume.skills %}
+            <li>{{ s }}</li>
+            {% endfor %}
+          </ul>
+        </section>
+        {% endif %}
+    {% endset %}
     <div class="layout">
       <main class="main">
+        {% if skills_first %}{{ skills_section }}{% endif %}
         {% if resume.summary %}
         <section class="main-section">
           <h2 class="section-label"><span class="section-accent"></span>{{ t_summary }}</h2>
@@ -98,16 +144,7 @@
           {% endfor %}
         </section>
         {% endif %}
-        {% if resume.skills %}
-        <section class="main-section">
-          <h2 class="section-label"><span class="section-accent"></span>{{ t_technologies }}</h2>
-          <ul class="skill-chips main-skills">
-            {% for s in resume.skills %}
-            <li>{{ s }}</li>
-            {% endfor %}
-          </ul>
-        </section>
-        {% endif %}
+        {% if not skills_first %}{{ skills_section }}{% endif %}
         {% if resume.education %}
         <section class="main-section">
           <h2 class="section-label"><span class="section-accent"></span>{{ t_education }}</h2>
