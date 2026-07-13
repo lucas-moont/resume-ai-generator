@@ -27,6 +27,9 @@ body {
     display: none !important;
   }
   .print-shell {
+    /* h-screen pins height to one viewport; left in place it clips a
+       multi-page resume to a single printed page. */
+    height: auto !important;
     min-height: auto;
     background: #fff !important;
   }
@@ -34,10 +37,21 @@ body {
     display: block !important;
     min-height: auto !important;
   }
+  /* The preview pane's `lg:flex` doesn't apply on A4-wide print viewports,
+     so the mobile-tab `hidden` class would blank the whole printout. */
+  .print-preview-pane {
+    display: block !important;
+  }
   .print-preview {
+    height: auto !important;
     background: #fff !important;
     padding: 0 !important;
     overflow: visible !important;
+  }
+  .print-preview-wrap {
+    /* the scroll container between .print-preview and the page */
+    overflow: visible !important;
+    padding: 0 !important;
   }
   .print-scale-wrapper {
     width: auto !important;
@@ -45,5 +59,18 @@ body {
   .print-scale {
     transform: none !important;
     box-shadow: none !important;
+  }
+  /* Same page-break hygiene as the PDF export template
+     (apps/api/templates/resume_print.html): never split one job/project/
+     degree across pages, never strand a section heading at a page bottom. */
+  .resume-doc .exp,
+  .resume-doc .proj,
+  .resume-doc .edu,
+  .resume-doc .side-block {
+    break-inside: avoid;
+  }
+  .resume-doc .section-label,
+  .resume-doc .side-title {
+    break-after: avoid;
   }
 }

@@ -85,9 +85,14 @@ export function AppShell() {
           <ChatPanel />
         </section>
 
+        {/* print-preview-pane: when printing, the paper width (~A4, 794px) is
+            below the lg breakpoint, so `lg:flex` stops applying and the pane
+            would inherit `hidden` whenever another mobile tab is active —
+            printing a completely blank page. index.css forces it visible
+            under @media print. */}
         <section
           aria-label="Preview"
-          className={`min-h-0 flex-1 flex-col lg:flex ${mobileTab === 'preview' ? 'flex' : 'hidden'}`}
+          className={`print-preview-pane min-h-0 flex-1 flex-col lg:flex ${mobileTab === 'preview' ? 'flex' : 'hidden'}`}
         >
           <PreviewPanel />
         </section>
