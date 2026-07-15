@@ -152,6 +152,20 @@ describe('addListItem', () => {
     expect(next.education[0]).toMatchObject({ institution: '', degree: '' })
   })
 
+  it('appends a blank experience entry to the top-level experience list', () => {
+    const doc = makeResume({ experience: [] })
+    const next = addListItem(doc, 'experience')
+    expect(next.experience).toHaveLength(1)
+    expect(next.experience[0]).toMatchObject({ company: '', title: '', highlights: [] })
+  })
+
+  it('appends a blank project entry to the top-level projects list', () => {
+    const doc = makeResume({ projects: [] })
+    const next = addListItem(doc, 'projects')
+    expect(next.projects).toHaveLength(1)
+    expect(next.projects[0]).toMatchObject({ name: '', description: '' })
+  })
+
   it('is a no-op for an unknown/invalid list path', () => {
     const doc = makeResume()
     expect(addListItem(doc, 'bogus')).toBe(doc)
@@ -182,6 +196,28 @@ describe('removeListItem', () => {
     })
     const next = removeListItem(doc, 'education', 0)
     expect(next.education).toEqual([{ institution: 'Stanford', degree: 'M.Sc.' }])
+  })
+
+  it('removes an experience entry by index', () => {
+    const doc = makeResume({
+      experience: [
+        { company: 'A', title: 'Engineer', start: '2020', highlights: [] },
+        { company: 'B', title: 'Manager', start: '2022', highlights: [] },
+      ],
+    })
+    const next = removeListItem(doc, 'experience', 0)
+    expect(next.experience).toEqual([{ company: 'B', title: 'Manager', start: '2022', highlights: [] }])
+  })
+
+  it('removes a project entry by index', () => {
+    const doc = makeResume({
+      projects: [
+        { name: 'Note G', description: 'Old' },
+        { name: 'Second', description: 'Other' },
+      ],
+    })
+    const next = removeListItem(doc, 'projects', 0)
+    expect(next.projects).toEqual([{ name: 'Second', description: 'Other' }])
   })
 
   it('is a no-op for an out-of-range index', () => {

@@ -1,10 +1,11 @@
-import type { EducationItem, ExperienceItem, ResumeDocument } from '../../../types/resume'
+import type { EducationItem, ExperienceItem, ProjectItem, ResumeDocument } from '../../../types/resume'
 
 /**
  * Dot-path field editing over a ResumeDocument (`applyFieldEdit(doc,
- * "experience.2.highlights.1", value)`), plus add/remove for the three lists
- * the preview exposes +/- buttons for (skills, per-experience highlights,
- * education). Pure and immutable: every function returns either the SAME
+ * "experience.2.highlights.1", value)`), plus add/remove for the five lists
+ * the preview exposes +/- buttons for (skills, education, experience,
+ * projects, per-experience highlights). Pure and immutable: every function
+ * returns either the SAME
  * document reference (path didn't resolve — a no-op, never a throw, since
  * these run from a contenteditable's onBlur where crashing the edit
  * interaction is worse than silently ignoring a stale/invalid path) or a NEW
@@ -104,9 +105,19 @@ function blankEducationItem(): EducationItem {
   return { institution: '', degree: '', end: null, details: null }
 }
 
+function blankExperienceItem(): ExperienceItem {
+  return { company: '', title: '', location: null, start: '', end: null, highlights: [] }
+}
+
+function blankProjectItem(): ProjectItem {
+  return { name: '', description: '' }
+}
+
 const TOP_LEVEL_LIST_FACTORIES = {
   skills: () => '',
   education: blankEducationItem,
+  experience: blankExperienceItem,
+  projects: blankProjectItem,
 } as const
 
 type TopLevelListKey = keyof typeof TOP_LEVEL_LIST_FACTORIES

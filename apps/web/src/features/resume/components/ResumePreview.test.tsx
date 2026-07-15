@@ -82,10 +82,26 @@ describe('ResumePreview — editable=true', () => {
     expect(screen.getByRole('button', { name: /add education/i })).toBeInTheDocument()
   })
 
-  it('renders project name/description as contenteditable, with no +/- (projects are out of scope for lists)', () => {
+  it('renders project name/description as contenteditable, with a remove button per entry and one add button', () => {
     renderWithStore({ projects: [{ name: 'Note G', description: 'A pioneering computational algorithm.' }] }, true)
     expect(screen.getByText('Note G')).toHaveAttribute('contenteditable', 'true')
     expect(screen.getByText('A pioneering computational algorithm.')).toHaveAttribute('contenteditable', 'true')
+    expect(screen.getByRole('button', { name: /remove project/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add project/i })).toBeInTheDocument()
+  })
+
+  it('renders a remove button per experience entry and one add button', () => {
+    renderWithStore(
+      {
+        experience: [
+          { company: 'A', title: 'Engineer 1', start: '2020', highlights: [] },
+          { company: 'B', title: 'Engineer 2', start: '2021', highlights: [] },
+        ],
+      },
+      true,
+    )
+    expect(screen.getAllByRole('button', { name: /remove experience/i })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: /add experience/i })).toBeInTheDocument()
   })
 
   it('clicking "Add skill" appends an empty skill via the store', async () => {
@@ -117,6 +133,64 @@ describe('ResumePreview — editable=true', () => {
     await user.click(removeButtons[1])
 
     expect(useResumeStore.getState().resume?.experience[0].highlights).toEqual(['keep this'])
+  })
+
+  it('clicking an experience entry\'s remove button removes just that entry', async () => {
+    const user = userEvent.setup()
+    renderWithStore(
+      {
+        experience: [
+          { company: 'A', title: 'Engineer 1', start: '2020', highlights: [] },
+          { company: 'B', title: 'Engineer 2', start: '2021', highlights: [] },
+        ],
+      },
+      true,
+    )
+
+    const removeButtons = screen.getAllByRole('button', { name: /remove experience/i })
+    await user.click(removeButtons[0])
+
+    expect(useResumeStore.getState().resume?.experience).toEqual([
+      { company: 'B', title: 'Engineer 2', start: '2021', highlights: [] },
+    ])
+  })
+
+  it('clicking "Add experience" appends a blank experience entry via the store', async () => {
+    const user = userEvent.setup()
+    renderWithStore({ experience: [{ company: 'A', title: 'Engineer', start: '2020', highlights: [] }] }, true)
+
+    await user.click(screen.getByRole('button', { name: /add experience/i }))
+
+    expect(useResumeStore.getState().resume?.experience).toHaveLength(2)
+    expect(useResumeStore.getState().resume?.experience[1]).toMatchObject({ company: '', title: '' })
+  })
+
+  it('clicking a project entry\'s remove button removes just that entry', async () => {
+    const user = userEvent.setup()
+    renderWithStore(
+      {
+        projects: [
+          { name: 'Note G', description: 'Old' },
+          { name: 'Second', description: 'Other' },
+        ],
+      },
+      true,
+    )
+
+    const removeButtons = screen.getAllByRole('button', { name: /remove project/i })
+    await user.click(removeButtons[0])
+
+    expect(useResumeStore.getState().resume?.projects).toEqual([{ name: 'Second', description: 'Other' }])
+  })
+
+  it('clicking "Add project" appends a blank project entry via the store', async () => {
+    const user = userEvent.setup()
+    renderWithStore({ projects: [{ name: 'Note G', description: 'Old' }] }, true)
+
+    await user.click(screen.getByRole('button', { name: /add project/i }))
+
+    expect(useResumeStore.getState().resume?.projects).toHaveLength(2)
+    expect(useResumeStore.getState().resume?.projects[1]).toMatchObject({ name: '', description: '' })
   })
 
   it('scopes each experience item\'s highlight buttons to that item (no cross-item leakage)', () => {

@@ -7,10 +7,10 @@ import { ListAddButton, ListRemoveButton } from '../editing/EditableList'
 // component keeps rendering the SAME conditionals/`.map()`s regardless of
 // `editable` (per the ticket 06 spike's decision: the toggle swaps which
 // LEAF component renders a field, never which tree gets mounted). Only the
-// three lists with +/- buttons (skills, per-experience highlights,
-// education) restructure their list item slightly (a wrapping element for
-// the remove button) — harmless in read mode, where the button renders
-// null anyway.
+// lists with +/- buttons (skills, education, experience, projects,
+// per-experience highlights) restructure their list item slightly (a
+// wrapping element for the remove button) — harmless in read mode, where
+// the button renders null anyway.
 //
 // Scope limits (ticket 08, documented rather than silently improvised):
 // inline editing can change or remove content that's ALREADY rendered; it
@@ -48,6 +48,10 @@ export function ResumePreview({
         removeSkill: 'Remover habilidade',
         addEducation: 'Adicionar formação',
         removeEducation: 'Remover formação',
+        addExperience: 'Adicionar experiência',
+        removeExperience: 'Remover experiência',
+        addProject: 'Adicionar projeto',
+        removeProject: 'Remover projeto',
       }
     : {
         summary: 'Summary',
@@ -67,6 +71,10 @@ export function ResumePreview({
         removeSkill: 'Remove skill',
         addEducation: 'Add education entry',
         removeEducation: 'Remove education entry',
+        addExperience: 'Add experience entry',
+        removeExperience: 'Remove experience entry',
+        addProject: 'Add project',
+        removeProject: 'Remove project',
       }
   return (
     <div className="resume-doc">
@@ -119,7 +127,14 @@ export function ResumePreview({
                   {labels.experience}
                 </h2>
                 {resume.experience.map((job, i) => (
-                  <article className="exp" key={i}>
+                  <article className="exp relative" key={i}>
+                    <ListRemoveButton
+                      path="experience"
+                      index={i}
+                      label={labels.removeExperience}
+                      editable={editable}
+                      className="absolute right-0 top-0"
+                    />
                     <div className="exp-head">
                       <EditableText
                         as="span"
@@ -201,6 +216,7 @@ export function ResumePreview({
                     )}
                   </article>
                 ))}
+                <ListAddButton path="experience" label={labels.addExperience} editable={editable} className="mt-1" />
               </section>
             )}
             {resume.projects?.length > 0 && (
@@ -210,7 +226,14 @@ export function ResumePreview({
                   {labels.projects}
                 </h2>
                 {resume.projects.map((proj, i) => (
-                  <article className="proj" key={i}>
+                  <article className="proj relative" key={i}>
+                    <ListRemoveButton
+                      path="projects"
+                      index={i}
+                      label={labels.removeProject}
+                      editable={editable}
+                      className="absolute right-0 top-0"
+                    />
                     <EditableText
                       as="h3"
                       className="proj-name"
@@ -229,6 +252,7 @@ export function ResumePreview({
                     />
                   </article>
                 ))}
+                <ListAddButton path="projects" label={labels.addProject} editable={editable} className="mt-1" />
               </section>
             )}
             {resume.skills?.length > 0 && (
