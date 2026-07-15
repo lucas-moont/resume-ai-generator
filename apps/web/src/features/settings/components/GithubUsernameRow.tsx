@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useProfile, useUpdateGithubUsername } from '../hooks/useSettings'
 
 const ALERT_CLASS = 'text-xs text-red-600 dark:text-red-400'
@@ -11,13 +11,6 @@ const ALERT_CLASS = 'text-xs text-red-600 dark:text-red-400'
  */
 export function GithubUsernameRow() {
   const profileQuery = useProfile()
-  const updateGithubUsername = useUpdateGithubUsername()
-  const current = profileQuery.data?.githubUsername ?? null
-  const [value, setValue] = useState('')
-
-  useEffect(() => {
-    if (profileQuery.isSuccess) setValue(current ?? '')
-  }, [profileQuery.isSuccess, current])
 
   if (profileQuery.isLoading) {
     return <p className="text-sm text-stone-500 dark:text-zinc-300">Loading…</p>
@@ -29,6 +22,23 @@ export function GithubUsernameRow() {
       </p>
     )
   }
+
+  return <GithubUsernameForm current={profileQuery.data?.githubUsername ?? null} />
+}
+
+interface GithubUsernameFormProps {
+  current: string | null
+}
+
+/**
+ * Mounted only once the profile query has resolved, so `current` is real data
+ * by the time this renders — the input's initial state can be derived from it
+ * directly instead of synced in via an effect (same pattern as KeyRow's local
+ * state).
+ */
+function GithubUsernameForm({ current }: GithubUsernameFormProps) {
+  const updateGithubUsername = useUpdateGithubUsername()
+  const [value, setValue] = useState(current ?? '')
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
