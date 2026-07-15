@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import json
 
-from sqlmodel import Session
+import pytest
+from sqlmodel import Session, select
 
-from app.db.tables import ChatSession
+from app.db.tables import ChatSession, ResumeVersion
+from app.domain.schemas import GitHubRepoInfo
 from app.repositories import chat_repo, profile_repo, resume_repo
+from app.services import refine_service as refine_service_module
 from tests.factories import make_profile, make_resume_payload
 
 PHONE_UPDATE_MESSAGE_PT = "Mudei meu telefone para 11 98888-7777"
@@ -251,7 +254,10 @@ class TestRenameChatSession:
 
 
 class TestChatMessageStreamRefineIntent:
-    async def test_a_short_instruction_refines_the_active_resume(self, client, fake_llm, parse_sse, test_db_engine):
+    async def test_a_short_instruction_refines_the_active_resume(
+        self, client, fake_llm, parse_sse, test_db_engine, write_profile
+    ):
+        write_profile(make_profile())
         strong_resume = make_resume_payload()
         created = (await client.post("/api/chat/sessions", json={})).json()
         _seed_active_resume(test_db_engine, created["id"], strong_resume)
@@ -276,12 +282,13 @@ class TestChatMessageStreamRefineIntent:
         assert after["activeResume"]["summary"] == updated["summary"]
 
     async def test_refine_confirmation_follows_the_resulting_resume_locale_not_the_session_locale(
-        self, client, fake_llm, parse_sse, test_db_engine
+        self, client, fake_llm, parse_sse, test_db_engine, write_profile
     ):
         # Real QA-found bug: pt-BR resume, user asks to translate it to English. The document
         # correctly flips to locale="en", but the confirmation bubble used to stay in
         # Portuguese because it derived its language from the session/request locale (still
         # unset/pt-BR here) instead of the resulting resume's own locale field.
+        write_profile(make_profile())
         created = (await client.post("/api/chat/sessions", json={})).json()
         _seed_active_resume(test_db_engine, created["id"], make_resume_payload(locale="pt-BR"))
 
@@ -297,11 +304,13 @@ class TestChatMessageStreamRefineIntent:
         resume_event = next(data for e, data in events if e == "resume")
         assert resume_event["resume"]["locale"] == "en"
         message_event = next(data for e, data in events if e == "message")
-        assert message_event["content"] == "Updated your resume."
+        # English wording (naming the changed section), not the pt-BR session/seed locale.
+        assert message_event["content"] == "Updated your resume: summary."
 
     async def test_refine_folds_recent_history_into_the_llm_instruction(
-        self, client, fake_llm, test_db_engine
+        self, client, fake_llm, test_db_engine, write_profile
     ):
+        write_profile(make_profile())
         strong_resume = make_resume_payload()
         created = (await client.post("/api/chat/sessions", json={})).json()
         _seed_active_resume(test_db_engine, created["id"], strong_resume)
@@ -318,14 +327,221 @@ class TestChatMessageStreamRefineIntent:
         assert "Make the summary punchier." in refine_call["user"]
 
 
+def _resume_version_count(test_db_engine, session_id: int) -> int:
+    with Session(test_db_engine) as session:
+        rows = session.exec(
+            select(ResumeVersion).where(ResumeVersion.session_id == session_id)
+        ).all()
+        return len(rows)
+
+
+class TestChatMessageStreamRefineSimSimHomemFix:
+    """v4.1-05 plan (giggly-prancing-wilkes): refine must confirm based on a REAL diff (not a
+    static "done" reply), may ask a clarifying question instead of always returning a resume,
+    and threads local project notes + on-demand GitHub context into its own prompt -- see
+    ``chat_service._diff_resume_sections``/``_handle_refine_turn`` and
+    ``refine_service.refine_resume_events``.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_real_project_markdown_for_refine(self, isolated_data_env, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ``isolated_data_env`` only sandboxes generation_service_module.PROJECTS_DIR --
+        # refine_service.py imports the same name directly from app.config, so it still reads
+        # this repo's real data/projects/*.md unless independently sandboxed here too.
+        monkeypatch.setattr(refine_service_module, "PROJECTS_DIR", isolated_data_env / "no-projects-here")
+
+    async def test_refine_that_changes_nothing_reports_honestly_with_no_new_version(
+        self, client, fake_llm, parse_sse, test_db_engine, write_profile
+    ):
+        write_profile(make_profile())
+        strong_resume = make_resume_payload()
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        active_resume_version_id = _seed_active_resume(test_db_engine, created["id"], strong_resume)
+
+        fake_llm.queue(json.dumps(strong_resume))  # the LLM claims a resume but nothing differs
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Ajusta um pouco o texto."},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "resume" not in kinds
+        message_event = next(data for e, data in events if e == "message")
+        assert message_event["content"] == (
+            "I didn't find a real change to apply from that -- can you tell me more "
+            "specifically what to change?"
+        )
+        done_event = next(data for e, data in events if e == "done")
+        assert done_event["resumeVersionId"] is None
+
+        assert _resume_version_count(test_db_engine, created["id"]) == 1  # only the seeded one
+        after = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
+        assert after["session"]["activeResumeVersionId"] == active_resume_version_id
+
+    async def test_refine_that_changes_only_projects_names_the_section_and_creates_a_new_version(
+        self, client, fake_llm, parse_sse, test_db_engine, write_profile
+    ):
+        write_profile(make_profile())
+        seeded_resume = make_resume_payload(locale="pt-BR")
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        active_resume_version_id = _seed_active_resume(test_db_engine, created["id"], seeded_resume)
+
+        updated = make_resume_payload(
+            locale="pt-BR",
+            projects=[
+                {
+                    "name": "novo-projeto",
+                    "description": "Um projeto novo, diferente do que já estava no currículo.",
+                }
+            ],
+        )
+        fake_llm.queue(json.dumps(updated))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Troca o projeto do currículo por um mais relevante."},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        message_event = next(data for e, data in events if e == "message")
+        assert message_event["content"] == "Atualizei seu currículo: projetos."
+        resume_event = next(data for e, data in events if e == "resume")
+        assert resume_event["resume"]["projects"][0]["name"] == "novo-projeto"
+        assert resume_event["resumeVersionId"] != active_resume_version_id
+
+        assert _resume_version_count(test_db_engine, created["id"]) == 2
+        after = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
+        assert after["session"]["activeResumeVersionId"] == resume_event["resumeVersionId"]
+
+    async def test_refine_can_ask_a_clarifying_question_instead_of_returning_a_resume(
+        self, client, fake_llm, parse_sse, test_db_engine, write_profile
+    ):
+        write_profile(make_profile())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
+
+        reply = "Which project would you like me to feature instead?"
+        fake_llm.queue(json.dumps({"type": "question", "reply": reply}))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Swap in a better project."},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        assert "resume" not in [e for e, _ in events]
+        message_event = next(data for e, data in events if e == "message")
+        assert message_event["content"] == reply
+        done_event = next(data for e, data in events if e == "done")
+        assert done_event["resumeVersionId"] is None
+
+        assert _resume_version_count(test_db_engine, created["id"]) == 1  # only the seeded one
+        with Session(test_db_engine) as session:
+            _, messages = chat_repo.get_session_with_messages(session, created["id"])
+            assistant_msg = next(
+                m for m in messages if m.role == "assistant" and m.content == reply
+            )
+            assert assistant_msg.intent == "refine_question"
+
+    async def test_refine_mentioning_github_with_a_configured_username_fetches_and_merges_repos(
+        self, client, fake_llm, test_db_engine, write_profile, monkeypatch: pytest.MonkeyPatch
+    ):
+        write_profile(make_profile(githubUsername="anacosta"))
+        strong_resume = make_resume_payload()
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        _seed_active_resume(test_db_engine, created["id"], strong_resume)
+
+        fetch_calls: list[str] = []
+        merge_calls: list[tuple[list, list]] = []
+        fake_repo = GitHubRepoInfo(
+            name="cool-repo",
+            full_name="anacosta/cool-repo",
+            html_url="https://github.com/anacosta/cool-repo",
+            description="A cool repo",
+        )
+
+        async def fake_fetch_user_repos(username, limit=50):
+            fetch_calls.append(username)
+            return [fake_repo], None
+
+        def fake_merge_github_with_markdown(md_entries, repos):
+            merge_calls.append((md_entries, repos))
+            return "GITHUB_SOURCES_MARKER"
+
+        monkeypatch.setattr(refine_service_module, "fetch_user_repos", fake_fetch_user_repos)
+        monkeypatch.setattr(
+            refine_service_module, "merge_github_with_markdown", fake_merge_github_with_markdown
+        )
+
+        fake_llm.queue(json.dumps(strong_resume))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Pode conferir meus repositórios do GitHub e sugerir melhorias?"},
+        )
+
+        assert resp.status_code == 200
+        assert fetch_calls == ["anacosta"]
+        assert len(merge_calls) == 1
+        assert merge_calls[0][1] == [fake_repo]
+
+        refine_call = fake_llm.calls[-1]["user"]
+        assert "GITHUB_SOURCES_MARKER" in refine_call
+        assert "Supporting sources" in refine_call
+
+    async def test_refine_mentioning_github_without_a_configured_username_warns_and_skips_the_network(
+        self, client, fake_llm, test_db_engine, write_profile, monkeypatch: pytest.MonkeyPatch
+    ):
+        write_profile(make_profile())  # githubUsername stays None (factory default)
+        strong_resume = make_resume_payload()
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        _seed_active_resume(test_db_engine, created["id"], strong_resume)
+
+        fetch_calls: list[str] = []
+        merge_calls: list[tuple[list, list]] = []
+
+        async def fake_fetch_user_repos(username, limit=50):
+            fetch_calls.append(username)
+            return [], None
+
+        def fake_merge_github_with_markdown(md_entries, repos):
+            merge_calls.append((md_entries, repos))
+            return "GITHUB_SOURCES_MARKER"
+
+        monkeypatch.setattr(refine_service_module, "fetch_user_repos", fake_fetch_user_repos)
+        monkeypatch.setattr(
+            refine_service_module, "merge_github_with_markdown", fake_merge_github_with_markdown
+        )
+
+        fake_llm.queue(json.dumps(strong_resume))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Pode conferir meus repositórios do GitHub e sugerir melhorias?"},
+        )
+
+        assert resp.status_code == 200
+        assert fetch_calls == []  # no network call: no githubUsername configured
+        assert merge_calls == []
+
+        refine_call = fake_llm.calls[-1]["user"]
+        assert "GitHub username not configured" in refine_call
+
+
 class TestChatMessageStreamRefineClientResumeOverride:
     """v2 ticket 11: an inline edit made only in the client (never persisted) must not be lost
     by a chat refine -- the refine turn now prefers a client-supplied `resume` override (the
     request's optional `resume` field) over the DB's active_resume_version_id when present."""
 
     async def test_refine_uses_the_client_supplied_override_as_the_refine_base(
-        self, client, fake_llm, parse_sse, test_db_engine
+        self, client, fake_llm, parse_sse, test_db_engine, write_profile
     ):
+        write_profile(make_profile())
         created = (await client.post("/api/chat/sessions", json={})).json()
         active_resume_version_id = _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
 
@@ -364,12 +580,13 @@ class TestChatMessageStreamRefineClientResumeOverride:
             assert meta["clientResumeOverride"] is True
 
     async def test_refine_sanitizes_the_client_override_before_it_reaches_the_llm_prompt(
-        self, client, fake_llm, test_db_engine
+        self, client, fake_llm, test_db_engine, write_profile
     ):
         # Real gap found on review: the override used to flow into build_refine_user_msg's
         # prompt raw -- sanitize_resume_for_display only ran LATER, on parse_resume_json's
         # merged output. Before the DB was the only source at this point (already sanitized by
         # construction); the client override is new, untrusted input at exactly this seam.
+        write_profile(make_profile())
         created = (await client.post("/api/chat/sessions", json={})).json()
         _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
 
@@ -390,8 +607,9 @@ class TestChatMessageStreamRefineClientResumeOverride:
         assert "Shipped a feature" in refine_call  # sanitized, not dropped wholesale
 
     async def test_refine_without_override_uses_the_db_active_resume_and_no_override_flag(
-        self, client, fake_llm, parse_sse, test_db_engine
+        self, client, fake_llm, parse_sse, test_db_engine, write_profile
     ):
+        write_profile(make_profile())
         created = (await client.post("/api/chat/sessions", json={})).json()
         _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
 

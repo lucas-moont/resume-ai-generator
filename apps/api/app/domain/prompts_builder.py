@@ -140,12 +140,31 @@ Target locale for "reply" and any item's "proposed"/"rationale": {locale}
 Return the classification as JSON only, following the schema in the system prompt."""
 
 
-def build_refine_user_msg(*, resume: ResumeDocument, pdf_block: str, message: str) -> str:
-    """Compose the refine user prompt (shared by /api/refine and /api/refine/stream)."""
+def build_refine_user_msg(
+    *,
+    resume: ResumeDocument,
+    pdf_block: str,
+    message: str,
+    project_sources_block: str = "",
+) -> str:
+    """Compose the refine user prompt (shared by /api/refine and /api/refine/stream).
+
+    ``project_sources_block`` (default empty, additive) lets a caller append project
+    context (local notes and/or GitHub) the same way ``build_generation_user_msg`` appends
+    its ``sources_block`` -- keeping the two prompts consistent when refine also has this
+    context available.
+    """
+    sources_block = ""
+    if project_sources_block and project_sources_block.strip():
+        sources_block = (
+            "\n\nSupporting sources (use ONLY to choose wording and which real facts to emphasize; "
+            "never introduce employers, roles, projects, or numbers that are not in the profile):\n"
+            + project_sources_block.strip()
+        )
     return f"""Current resume JSON:
 {resume.model_dump_json(indent=2)}
 
 {pdf_block}User instruction:
-{message.strip()}
+{message.strip()}{sources_block}
 
 Return the full updated resume JSON only."""

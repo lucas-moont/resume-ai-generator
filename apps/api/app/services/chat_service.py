@@ -189,6 +189,74 @@ _PROPOSAL_APPROVE_CONFIRMATION_TEXT = {
     "pt-BR": "Gerando seu currículo com o plano aprovado agora...",
 }
 
+# Mirrors apps/web/src/features/resume/diffResumeSections.ts's RESUME_SECTION_KEYS -- same
+# order, same shallow section-level comparison -- so the refine confirmation names exactly
+# what that card would show, instead of an LLM-authored guess.
+_RESUME_SECTION_KEYS = (
+    "fullName",
+    "headline",
+    "location",
+    "email",
+    "phone",
+    "links",
+    "summary",
+    "experience",
+    "projects",
+    "skills",
+    "education",
+)
+
+_RESUME_SECTION_LABELS = {
+    "fullName": {"en": "name", "pt-BR": "nome"},
+    "headline": {"en": "headline", "pt-BR": "título"},
+    "location": {"en": "location", "pt-BR": "localização"},
+    "email": {"en": "email", "pt-BR": "email"},
+    "phone": {"en": "phone", "pt-BR": "telefone"},
+    "links": {"en": "links", "pt-BR": "links"},
+    "summary": {"en": "summary", "pt-BR": "resumo"},
+    "experience": {"en": "experience", "pt-BR": "experiências"},
+    "projects": {"en": "projects", "pt-BR": "projetos"},
+    "skills": {"en": "skills", "pt-BR": "habilidades"},
+    "education": {"en": "education", "pt-BR": "formação"},
+}
+
+# v4 ticket (refine "sim-sim-homem" fix): refine's own "nothing changed" reply -- same spirit
+# as `_PROFILE_UPDATE_NOTHING_TEXT` but for a resume turn, and distinct wording since the
+# trigger is a no-op diff, not unparseable LLM output.
+_REFINE_NOTHING_CHANGED_TEXT = {
+    "en": (
+        "I didn't find a real change to apply from that -- can you tell me more specifically "
+        "what to change?"
+    ),
+    "pt-BR": (
+        "Não percebi nenhuma mudança real a partir desse pedido -- pode detalhar melhor o que "
+        "você quer alterar?"
+    ),
+}
+_REFINE_UPDATED_TEXT = {
+    "en": "Updated your resume: {sections}.",
+    "pt-BR": "Atualizei seu currículo: {sections}.",
+}
+
+
+def _diff_resume_sections(prev: ResumeDocument, next_: ResumeDocument) -> list[str]:
+    """Deterministic, non-LLM-authored section-level diff -- ports
+    diffResumeSections.ts's shallow JSON-equality comparison so refine's confirmation names
+    what ACTUALLY changed instead of trusting the LLM's own claim."""
+    prev_dump = prev.model_dump()
+    next_dump = next_.model_dump()
+    return [
+        key
+        for key in _RESUME_SECTION_KEYS
+        if json.dumps(prev_dump[key], sort_keys=True) != json.dumps(next_dump[key], sort_keys=True)
+    ]
+
+
+def _refine_updated_text(changed: list[str], locale: str) -> str:
+    resolved = locale if locale in SUPPORTED_LOCALES else DEFAULT_LOCALE
+    labels = [_RESUME_SECTION_LABELS[key][resolved] for key in changed]
+    return _REFINE_UPDATED_TEXT[resolved].format(sections=", ".join(labels))
+
 
 def _reply_text_for_locale(intent: str, locale: str) -> str:
     """``locale`` must already be a concrete language, not run through resolve_locale here --
@@ -269,12 +337,18 @@ def _finalize_resume_turn(
     parent_version_id: int | None = None,
     extra_meta: dict | None = None,
     on_before_commit: Callable[[ResumeVersion], None] | None = None,
+    content_override: str | None = None,
 ):
     """Shared tail of the generate/refine turns (v2 ticket 05 AC: "insert_version deduplicado
     entre generate/refine"): inserts the new ``ResumeVersion``, points the session's active
     resume at it, appends the assistant confirmation message, and persists. Returns
     ``(resume_row, content, assistant_msg)`` for the caller to build its own SSE frames from --
     kept a plain function (not a generator) since it never yields, only the two callers do.
+
+    ``content_override`` (refine "sim-sim-homem" fix): lets ``_handle_refine_turn`` pass a
+    confirmation that NAMES the sections that actually changed (``_refine_updated_text``)
+    instead of the static per-intent copy below -- ``_handle_generate_turn``/
+    ``_handle_approve_branch`` never pass it, so their confirmation is unchanged.
 
     ``extra_meta`` (v2 ticket 11) lets a caller record turn-specific provenance on the
     assistant message's ``meta`` JSON -- e.g. ``{"clientResumeOverride": True}`` for a refine
@@ -304,7 +378,7 @@ def _finalize_resume_turn(
     # Follows the RESULTING resume's own locale, not the session/request locale: a refine
     # turn can itself change the document's language (e.g. "translate this to English"),
     # which would otherwise leave the confirmation bubble in the stale, pre-turn language.
-    content = _reply_text_for_locale(intent, resume_doc.locale)
+    content = content_override if content_override is not None else _reply_text_for_locale(intent, resume_doc.locale)
     meta = {"model": model, "provider": backend_label}
     if extra_meta:
         meta.update(extra_meta)
@@ -767,15 +841,59 @@ async def _handle_refine_turn(
         if client_resume_override is not None
         else ResumeDocument.model_validate_json(active_resume_row.data)
     )
+    resolved_profile = resolve_active_profile(session)
     resume_doc: ResumeDocument | None = None
+    question_text: str | None = None
     async for event, data in refine_resume_events(
-        resume=base_resume, message=enriched_message, model=model, backend_label=backend_label
+        resume=base_resume,
+        message=enriched_message,
+        model=model,
+        backend_label=backend_label,
+        profile=resolved_profile.profile,
     ):
         if event == "done":
             resume_doc = data["resume"]
+            question_text = data.get("question")
         else:
             yield event, data
+
+    if question_text:
+        # Same shape as _handle_proposal_turn's own `question` branch: no new ResumeVersion,
+        # the active resume is left completely untouched.
+        assistant_msg = chat_repo.append_message(
+            session,
+            session_id=chat_session.id,
+            role="assistant",
+            content=question_text,
+            intent="refine_question",
+        )
+        chat_repo.touch_session(session, chat_session.id)
+        session.commit()
+        yield "message", {"content": question_text}
+        yield "done", {"progress": 100, "messageId": assistant_msg.id, "resumeVersionId": None}
+        return
+
     assert resume_doc is not None
+    changed = _diff_resume_sections(base_resume, resume_doc)
+
+    if not changed:
+        # "sim-sim-homem" fix: the LLM claims a resume but nothing actually differs -- same
+        # policy as _PROFILE_UPDATE_NOTHING_TEXT, no new ResumeVersion, active resume untouched.
+        content = _REFINE_NOTHING_CHANGED_TEXT[
+            resume_doc.locale if resume_doc.locale in SUPPORTED_LOCALES else DEFAULT_LOCALE
+        ]
+        assistant_msg = chat_repo.append_message(
+            session,
+            session_id=chat_session.id,
+            role="assistant",
+            content=content,
+            intent="refine",
+        )
+        chat_repo.touch_session(session, chat_session.id)
+        session.commit()
+        yield "message", {"content": content}
+        yield "done", {"progress": 100, "messageId": assistant_msg.id, "resumeVersionId": None}
+        return
 
     resume_row, content, assistant_msg = _finalize_resume_turn(
         session,
@@ -787,6 +905,7 @@ async def _handle_refine_turn(
         profile_version_id=active_resume_row.profile_version_id,
         parent_version_id=active_resume_row.id,
         extra_meta={"clientResumeOverride": True} if client_resume_override is not None else None,
+        content_override=_refine_updated_text(changed, resume_doc.locale),
     )
     yield "resume", {"resume": resume_doc, "resumeVersionId": resume_row.id}
     yield "message", {"content": content}

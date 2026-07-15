@@ -333,7 +333,8 @@ class TestGeneratePlaceholderExtraction:
 
 
 class TestRefineEndpoint:
-    async def test_happy_path_returns_updated_resume(self, client, fake_llm):
+    async def test_happy_path_returns_updated_resume(self, client, fake_llm, write_profile):
+        write_profile(make_profile())
         resume = make_resume_payload()
         updated = make_resume_payload(
             summary="Updated summary reflecting the requested change to the resume."
@@ -352,7 +353,8 @@ class TestRefineEndpoint:
 
 
 class TestRefineStreamEndpoint:
-    async def test_happy_path_event_sequence(self, client, fake_llm, parse_sse):
+    async def test_happy_path_event_sequence(self, client, fake_llm, write_profile, parse_sse):
+        write_profile(make_profile())
         resume = make_resume_payload()
         updated = make_resume_payload(
             summary="Updated summary reflecting the requested change to the resume."
@@ -378,11 +380,12 @@ class TestRefineStreamEndpoint:
         assert fake_llm.call_count == 1
 
     async def test_llm_error_emits_error_event_with_secret_redacted(
-        self, client, fake_llm, parse_sse, monkeypatch
+        self, client, fake_llm, write_profile, parse_sse, monkeypatch
     ):
         # Mirrors TestGenerateStreamEndpoint's equivalent test: proves refine/stream's error
         # path is also covered by streaming.sse()'s centralized redaction (B4.1), not just
         # generate/stream's.
+        write_profile(make_profile())
         secret = "sk-ant-fake-refine-secret-0123456789abcdef"  # pragma: allowlist secret
         monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
         fake_llm.queue(RuntimeError(f"upstream rejected the request: {secret}"))

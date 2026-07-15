@@ -627,3 +627,23 @@ def parse_resume_json(
     sanitize_resume_for_display(merged)
     filter_skills_non_tech_inplace(merged)
     return ResumeDocument.model_validate(merged)
+
+
+def try_parse_refine_question(raw: str) -> str | None:
+    """Detect the refine "question" shape (``{"type": "question", "reply": "..."}"``) without
+    ever raising: any malformed/unexpected input just means "not a question" for the caller,
+    which then falls through to the normal ``parse_resume_json`` path."""
+    raw = raw.strip()
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+    if m:
+        raw = m.group(1).strip()
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("type") != "question":
+        return None
+    reply = data.get("reply")
+    if isinstance(reply, str) and reply.strip():
+        return reply.strip()
+    return None
