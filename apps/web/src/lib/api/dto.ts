@@ -1,4 +1,4 @@
-import type { ResumeDocument, TemplateId } from '../../types/resume'
+import type { ProfileMaster, ResumeDocument, TemplateId } from '../../types/resume'
 
 export interface ModelSuggestion {
   value: string
@@ -317,4 +317,19 @@ export interface KeyUpsertRequest {
   name: ManagedSecretName
   /** Write-only: never populated from a server response — only ever sent, never received. */
   value: string
+}
+
+// --- Profile: GitHub username (v4.1 follow-up — manual githubUsername config) ---
+
+/** GET /api/profile returns the resolved Living Profile as-is (routers/profile.py's
+ * `get_profile`) — same shape as ProfileMaster, no separate wrapper. */
+export type ProfileResponse = ProfileMaster
+
+export interface UpdateGithubUsernameRequest {
+  githubUsername: string | null
+}
+
+export interface UpdateGithubUsernameResponse {
+  profileVersion: number
+  githubUsername: string | null
 }

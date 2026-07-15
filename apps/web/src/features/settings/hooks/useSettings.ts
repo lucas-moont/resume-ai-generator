@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tansta
 import {
   deleteKeySetting,
   fetchKeySettings,
+  fetchProfile,
   fetchProviderSettings,
+  updateGithubUsername,
   updateProviderSettings,
   upsertKeySetting,
 } from '../../../lib/api/endpoints'
@@ -10,10 +12,12 @@ import type {
   KeyUpsertRequest,
   ManagedSecretName,
   ProvidersSettingsUpdateRequest,
+  UpdateGithubUsernameRequest,
 } from '../../../lib/api/dto'
 
 export const PROVIDERS_QUERY_KEY = ['settings', 'providers'] as const
 export const KEYS_QUERY_KEY = ['settings', 'keys'] as const
+export const PROFILE_QUERY_KEY = ['profile'] as const
 // Composer's Combobox (v3 ticket 07) and this feature's ModelPicker share the
 // same query key/producer for the model catalog — invalidating it here is
 // what makes the Composer's suggestion list (and the ModelPicker's own
@@ -64,5 +68,17 @@ export function useDeleteKeySetting() {
       void queryClient.invalidateQueries({ queryKey: KEYS_QUERY_KEY })
       invalidateProvidersAndModels(queryClient)
     },
+  })
+}
+
+export function useProfile() {
+  return useQuery({ queryKey: PROFILE_QUERY_KEY, queryFn: fetchProfile })
+}
+
+export function useUpdateGithubUsername() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: UpdateGithubUsernameRequest) => updateGithubUsername(payload),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: PROFILE_QUERY_KEY }),
   })
 }

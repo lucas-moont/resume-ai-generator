@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import type { KeysSettingsResponse, ProvidersSettingsResponse } from '../../lib/api/dto'
+import type { KeysSettingsResponse, ProfileResponse, ProvidersSettingsResponse } from '../../lib/api/dto'
 
 export const DEFAULT_MODEL_SUGGESTIONS = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -9,6 +9,21 @@ export const DEFAULT_MODEL_SUGGESTIONS = [
 export const DEFAULT_GITHUB_REPOS = [
   { name: 'resume-agent', url: 'https://github.com/example/resume-agent' },
 ]
+
+// v4.1 follow-up: mirrors GET /api/profile's unconfigured default — no
+// githubUsername set yet.
+export const DEFAULT_PROFILE: ProfileResponse = {
+  fullName: 'Jane Doe',
+  headline: 'Software Engineer',
+  links: [],
+  summary: '',
+  experience: [],
+  projects: [],
+  skills: [],
+  education: [],
+  locale: 'en',
+  githubUsername: null,
+}
 
 // v3 ticket 06: mirrors the unconfigured/first-use-without-.env defaults GET
 // /api/settings/providers reports (app/services/settings_service.py) — active
@@ -154,4 +169,7 @@ export const handlers = [
   // capture) with server.use(...).
   http.get('/api/settings/providers', () => HttpResponse.json(DEFAULT_PROVIDERS_SETTINGS)),
   http.get('/api/settings/keys', () => HttpResponse.json(DEFAULT_KEYS_SETTINGS)),
+
+  // Profile: GitHub username (v4.1 follow-up).
+  http.get('/api/profile', () => HttpResponse.json(DEFAULT_PROFILE)),
 ]

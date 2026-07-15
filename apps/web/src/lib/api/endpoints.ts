@@ -12,12 +12,15 @@ import type {
   KeyUpsertRequest,
   ManagedSecretName,
   ModelsResponse,
+  ProfileResponse,
   ProvidersSettingsResponse,
   ProvidersSettingsUpdateRequest,
   RefineRequest,
   RenameChatSessionRequest,
   RenameChatSessionResponse,
   SecretKeyEntry,
+  UpdateGithubUsernameRequest,
+  UpdateGithubUsernameResponse,
   UploadSourceDocumentResponse,
 } from './dto'
 import {
@@ -162,4 +165,16 @@ export function upsertKeySetting(payload: KeyUpsertRequest): Promise<SecretKeyEn
 
 export function deleteKeySetting(name: ManagedSecretName): Promise<void> {
   return requestVoid(`/api/settings/keys/${name}`, { method: 'DELETE' })
+}
+
+// --- Profile: GitHub username (v4.1 follow-up) ---
+
+export function fetchProfile(): Promise<ProfileResponse> {
+  return requestJson<ProfileResponse>('/api/profile')
+}
+
+export function updateGithubUsername(
+  payload: UpdateGithubUsernameRequest,
+): Promise<UpdateGithubUsernameResponse> {
+  return requestJson<UpdateGithubUsernameResponse>('/api/profile/github-username', putInit(payload))
 }

@@ -39,6 +39,10 @@ class PatchProfileRequest(BaseModel):
     ops: list[PatchOp]
 
 
+class SetGithubUsernameRequest(BaseModel):
+    githubUsername: str | None
+
+
 def _version_dict(row: ProfileVersion) -> dict:
     return {
         "version": row.version,
@@ -89,6 +93,37 @@ async def get_profile_version(n: int, session: Session = Depends(get_session)):
     if row is None:
         raise http_error(404, f"Profile version {n} not found")
     return {**_version_dict(row), "data": json.loads(row.data)}
+
+
+@router.put("/api/profile/github-username")
+async def set_github_username(
+    body: SetGithubUsernameRequest, session: Session = Depends(get_session)
+):
+    """Dedicated write path for ``githubUsername`` -- deliberately bypasses ``apply_patch``
+    (see profile_patch.py's module docstring: this field is excluded from the patch
+    whitelist on purpose, populated only by this GitHub-linking flow, never by
+    upload/chat/manual patches). Same insert-a-new-version pattern as ``revert_profile``.
+    """
+    try:
+        profile = resolve_profile_for_merge(session)
+    except ProfileValidationError as e:
+        raise http_error(400, str(e)) from e
+
+    normalized = body.githubUsername.strip() if body.githubUsername else None
+    normalized = normalized or None
+    updated = profile.model_copy(update={"githubUsername": normalized})
+
+    new_row = profile_repo.insert_version(
+        session,
+        data=updated.model_dump_json(),
+        source_kind="manual",
+        change_summary=(
+            f"Set GitHub username to {normalized}" if normalized else "Cleared GitHub username"
+        ),
+    )
+    session.commit()
+    session.refresh(new_row)
+    return {"profileVersion": new_row.version, "githubUsername": normalized}
 
 
 @router.post("/api/profile/revert")

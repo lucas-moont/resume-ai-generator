@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Dialog } from '../../../ui/Dialog'
 import { Tooltip } from '../../../ui/Tooltip'
-import { ProviderForm } from './ProviderForm'
+import { FIELDSET_LEGEND_CLASS, ProviderForm } from './ProviderForm'
+import { GithubUsernameRow } from './GithubUsernameRow'
 
 /**
  * Self-contained gear-button + Dialog (v3 ticket 06), same idiom as
@@ -48,6 +49,10 @@ export function SettingsDialog() {
             scroll-clipping ancestor, so ProviderForm renders unclipped and scopes its OWN
             overflow-y-auto to just the API-keys list — the section that actually grows. */}
         <ProviderForm />
+        <fieldset className="mt-5">
+          <legend className={FIELDSET_LEGEND_CLASS}>GitHub</legend>
+          <GithubUsernameRow />
+        </fieldset>
         <div className="mt-4 flex justify-end">
           <button
             type="button"

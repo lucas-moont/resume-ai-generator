@@ -16,7 +16,7 @@ const AUTH_LABELS: Record<ProviderAuthMode, string> = {
   none: 'No auth required',
 }
 
-const FIELDSET_LEGEND_CLASS =
+export const FIELDSET_LEGEND_CLASS =
   'mb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-300'
 
 function ProviderOption({

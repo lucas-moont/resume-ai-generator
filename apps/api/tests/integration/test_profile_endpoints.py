@@ -322,3 +322,81 @@ class TestPatchProfileManualEdit:
         )
 
         assert resp.status_code == 422
+
+
+class TestSetGithubUsername:
+    """PUT /api/profile/github-username: the dedicated GitHub-linking write path --
+    ``githubUsername`` is intentionally excluded from apply_patch's whitelist (see
+    profile_patch.py's module docstring), so this bypasses it and inserts a new version
+    directly, the same way ``revert_profile`` does."""
+
+    async def test_sets_a_new_username_and_bumps_the_version(self, client, test_db_engine):
+        with Session(test_db_engine) as session:
+            profile_repo.insert_version(session, data=json.dumps(make_profile()), source_kind="seed_disk")
+            session.commit()
+
+        resp = await client.put("/api/profile/github-username", json={"githubUsername": "octocat"})
+
+        assert resp.status_code == 200
+        assert resp.json() == {"profileVersion": 2, "githubUsername": "octocat"}
+
+        active = (await client.get("/api/profile")).json()
+        assert active["githubUsername"] == "octocat"
+
+    async def test_clearing_with_null_sets_it_to_none(self, client, test_db_engine):
+        with Session(test_db_engine) as session:
+            profile_repo.insert_version(
+                session,
+                data=json.dumps(make_profile(githubUsername="octocat")),
+                source_kind="seed_disk",
+            )
+            session.commit()
+
+        resp = await client.put("/api/profile/github-username", json={"githubUsername": None})
+
+        assert resp.status_code == 200
+        assert resp.json()["githubUsername"] is None
+
+        active = (await client.get("/api/profile")).json()
+        assert active["githubUsername"] is None
+
+    async def test_clearing_with_empty_string_sets_it_to_none(self, client, test_db_engine):
+        with Session(test_db_engine) as session:
+            profile_repo.insert_version(
+                session,
+                data=json.dumps(make_profile(githubUsername="octocat")),
+                source_kind="seed_disk",
+            )
+            session.commit()
+
+        resp = await client.put("/api/profile/github-username", json={"githubUsername": "   "})
+
+        assert resp.status_code == 200
+        assert resp.json()["githubUsername"] is None
+
+    async def test_strips_surrounding_whitespace(self, client, test_db_engine):
+        with Session(test_db_engine) as session:
+            profile_repo.insert_version(session, data=json.dumps(make_profile()), source_kind="seed_disk")
+            session.commit()
+
+        resp = await client.put("/api/profile/github-username", json={"githubUsername": "  octocat  "})
+
+        assert resp.status_code == 200
+        assert resp.json()["githubUsername"] == "octocat"
+
+    async def test_with_no_active_profile_bootstraps_version_one(self, client, isolated_data_env):
+        """Mirrors PATCH /api/profile's own behavior in this scenario
+        (test_patch_against_an_empty_profile_bootstraps_version_one): resolve_profile_for_merge
+        bootstraps a blank profile when nothing has ever been saved, it does not 400 --
+        ProfileValidationError (-> 400) is reserved for a genuinely corrupted disk profile."""
+        resp = await client.put("/api/profile/github-username", json={"githubUsername": "octocat"})
+
+        assert resp.status_code == 200
+        assert resp.json() == {"profileVersion": 1, "githubUsername": "octocat"}
+
+    async def test_invalid_disk_profile_is_400(self, client, isolated_data_env):
+        (isolated_data_env / "resume.json").write_text("not valid json", encoding="utf-8")
+
+        resp = await client.put("/api/profile/github-username", json={"githubUsername": "octocat"})
+
+        assert resp.status_code == 400
