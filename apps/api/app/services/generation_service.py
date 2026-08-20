@@ -47,7 +47,7 @@ from app.domain.locale import resolve_locale
 from app.domain.prompts_builder import build_generation_user_msg
 from app.domain.quality import quality_issues
 from app.domain.schemas import GitHubRepoInfo, ProposalItem, ResumeDocument
-from app.prompt_loader import load_generate_system_prompt, load_prompt
+from app.prompt_loader import load_generate_system_prompt, load_refine_system_prompt
 from app.services import llm_client, streaming
 from app.services.extraction_service import extract_profile_from_text
 from app.services.github_client import fetch_user_repos
@@ -153,7 +153,7 @@ async def auto_improve_if_needed(
     issues = quality_issues(resume, job_description)
     if not issues:
         return resume
-    system = load_prompt("system/refine.md", PROMPTS_DIR)
+    system = load_refine_system_prompt(PROMPTS_DIR)
     user_msg = f"""Current resume JSON:
 {resume.model_dump_json(indent=2)}
 

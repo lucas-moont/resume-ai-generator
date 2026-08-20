@@ -12,7 +12,22 @@ def load_generate_system_prompt(prompts_dir: Path) -> str:
     return "\n\n---\n\n".join(
         [
             load_prompt("system/generate.md", prompts_dir),
+            load_prompt("skills/resume-craft.md", prompts_dir),
             load_prompt("skills/tailored-resume-generator.md", prompts_dir),
+        ]
+    )
+
+
+def load_refine_system_prompt(prompts_dir: Path) -> str:
+    """Refine system prompt composed with the shared resume-craft skill block, so a
+    chat refine (and the post-generation auto-improve pass) applies the same bullet /
+    quantification / ATS craft as generation. ``system/refine.md`` still owns the
+    refine-specific rules (apply the user's request precisely, the ask-instead-of-guessing
+    valve, project-source honesty)."""
+    return "\n\n---\n\n".join(
+        [
+            load_prompt("system/refine.md", prompts_dir),
+            load_prompt("skills/resume-craft.md", prompts_dir),
         ]
     )
 

@@ -1,6 +1,6 @@
 # Tailored resume generator (skill)
 
-Behavior aligned with [tailored-resume-generator](https://skills.sh/composiohq/awesome-claude-skills/tailored-resume-generator) (composiohq/awesome-claude-skills): analyze the posting, map experience honestly, optimize for ATS, and emphasize transferable strengths when changing scope.
+Behavior aligned with [tailored-resume-generator](https://skills.sh/composiohq/awesome-claude-skills/tailored-resume-generator) (composiohq/awesome-claude-skills): analyze the posting, map experience honestly, optimize for ATS, and emphasize transferable strengths when changing scope. Tailoring craft here is complemented by the **resume-craft** skill block (bullet shape, honest quantification, ATS keyword hygiene, seniority/role archetypes; distilled from [Paramchoudhary/ResumeSkills](https://github.com/Paramchoudhary/ResumeSkills), MIT) — this block owns the *tailoring workflow*; that block owns *how each field is written*.
 
 ## Internal workflow (before you write JSON)
 

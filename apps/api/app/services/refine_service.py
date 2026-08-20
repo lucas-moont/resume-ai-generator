@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 from app.config import LLM_TIMEOUT_SECONDS, PROJECTS_DIR, PROMPTS_DIR
 from app.domain.prompts_builder import build_refine_user_msg
 from app.domain.schemas import GitHubRepoInfo, ProfileMaster, ResumeDocument
-from app.prompt_loader import load_prompt
+from app.prompt_loader import load_refine_system_prompt
 from app.services import llm_client, streaming
 from app.services.github_client import fetch_user_repos
 from app.services.llm.resume_json_parser import parse_resume_json, try_parse_refine_question
@@ -77,7 +77,7 @@ async def refine_resume_events(
     else:
         project_sources_block = ""
 
-    system = load_prompt("system/refine.md", PROMPTS_DIR)
+    system = load_refine_system_prompt(PROMPTS_DIR)
     user_msg = build_refine_user_msg(
         resume=resume,
         pdf_block=pdf_block,
