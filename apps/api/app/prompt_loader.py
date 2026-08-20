@@ -32,6 +32,13 @@ def load_refine_system_prompt(prompts_dir: Path) -> str:
     )
 
 
+def load_linkedin_analysis_system_prompt(prompts_dir: Path) -> str:
+    """v5 (Profile Analysis): the standalone system prompt for an Analysis Turn. Not composed
+    with generate/refine -- the analysis motor is its own read-only advisor (returns either an
+    Analysis or a Clarifying Question), never emitting the resume JSON."""
+    return load_prompt("skills/linkedin-analysis.md", prompts_dir)
+
+
 def load_extract_profile_system_prompt(prompts_dir: Path) -> str:
     return load_prompt("system/extract_profile.md", prompts_dir)
 

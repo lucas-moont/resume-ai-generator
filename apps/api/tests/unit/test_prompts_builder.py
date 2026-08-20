@@ -11,6 +11,7 @@ Proposal Turn user-message builders.
 from __future__ import annotations
 
 from app.domain.prompts_builder import (
+    build_analysis_user_msg,
     build_generation_user_msg,
     build_proposal_analysis_user_msg,
     build_proposal_turn_user_msg,
@@ -246,3 +247,28 @@ class TestBuildProposalTurnUserMsg:
         )
         assert "aprova" in out
         assert "\n\n\n" not in out
+
+
+class TestBuildAnalysisUserMsg:
+    def test_conversational_mode_includes_message_and_locale_no_pdf_block(self) -> None:
+        out = build_analysis_user_msg(
+            message="melhora meu headline, atual é 'Dev', minha área é dados",
+            locale="pt-BR",
+        )
+        assert "melhora meu headline" in out
+        assert "pt-BR" in out
+        assert "LinkedIn profile (extracted" not in out  # no PDF block in conversational mode
+
+    def test_pdf_mode_appends_extracted_block_framed_as_critique_not_ingest(self) -> None:
+        out = build_analysis_user_msg(
+            message="analisa meu perfil",
+            locale="en",
+            linkedin_pdf_block="John Doe\nSenior PM\n...",
+        )
+        assert "analisa meu perfil" in out
+        assert "John Doe" in out
+        assert "NOT profile truth to ingest" in out
+
+    def test_blank_pdf_block_is_omitted_cleanly(self) -> None:
+        out = build_analysis_user_msg(message="oi", locale="en", linkedin_pdf_block="   ")
+        assert "LinkedIn profile (extracted" not in out

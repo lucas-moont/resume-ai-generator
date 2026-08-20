@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.config import PROMPTS_DIR
 from app.prompt_loader import (
     load_generate_system_prompt,
+    load_linkedin_analysis_system_prompt,
     load_propose_improvements_system_prompt,
     load_proposal_turn_system_prompt,
     load_refine_system_prompt,
@@ -72,3 +73,18 @@ class TestLoadRefineSystemPrompt:
 
         with pytest.raises(FileNotFoundError):
             load_refine_system_prompt(tmp_path)
+
+
+class TestLoadLinkedinAnalysisSystemPrompt:
+    def test_loads_the_analysis_prompt_file(self) -> None:
+        text = load_linkedin_analysis_system_prompt(PROMPTS_DIR)
+        assert "LinkedIn profile advisor" in text
+        # the two output shapes and the ask-instead-of-guessing valve
+        assert '"type": "analysis"' in text
+        assert '"type": "question"' in text
+
+    def test_missing_file_raises_file_not_found(self, tmp_path) -> None:
+        import pytest
+
+        with pytest.raises(FileNotFoundError):
+            load_linkedin_analysis_system_prompt(tmp_path)

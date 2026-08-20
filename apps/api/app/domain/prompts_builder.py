@@ -140,6 +140,33 @@ Target locale for "reply" and any item's "proposed"/"rationale": {locale}
 Return the classification as JSON only, following the schema in the system prompt."""
 
 
+def build_analysis_user_msg(
+    *,
+    message: str,
+    locale: str,
+    linkedin_pdf_block: str = "",
+) -> str:
+    """Compose the Analysis Turn user message (v5, docs/v5-profile-analysis.md §Backend.4).
+
+    Two input modes feed one motor: a conversational per-section request (``message`` carries
+    the user's text, e.g. "melhora meu headline, atual é X, minha área é Y") and/or a LinkedIn
+    PDF export whose extracted text arrives as ``linkedin_pdf_block`` (default empty, additive).
+    The PDF is explicitly framed as material to critique, NEVER profile truth to ingest -- it is
+    the user's LinkedIn, analyzed, and never runs through the Merge pipeline (spec §Backend.6)."""
+    pdf_section = ""
+    if linkedin_pdf_block and linkedin_pdf_block.strip():
+        pdf_section = (
+            "\n\nLinkedIn profile (extracted from the user's uploaded PDF export — analyze this "
+            "whole profile section by section; it is material to critique, NOT profile truth to "
+            "ingest):\n" + linkedin_pdf_block.strip()
+        )
+    return f"""User request:
+{message.strip()}{pdf_section}
+
+Target locale for every reader-visible string (suggestion, rationale, summary, reply): {locale}
+Return the analysis or a clarifying question as JSON only, following the schema in the system prompt."""
+
+
 def build_refine_user_msg(
     *,
     resume: ResumeDocument,
