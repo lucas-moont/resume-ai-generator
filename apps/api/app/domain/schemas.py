@@ -116,6 +116,50 @@ class ProposalItem(BaseModel):
     rationale: str
 
 
+# v5 (ticket 00): the LinkedIn profile sections an Analysis Item may target. Anything outside
+# this whitelist is dropped by analysis_json_parser (never an error) -- mirrors ProposalSection.
+AnalysisSection = Literal[
+    "headline",
+    "about",
+    "experience",
+    "skills",
+    "completeness",
+]
+
+AnalysisPriority = Literal["alta", "média", "baixa"]
+
+
+class AnalysisItem(BaseModel):
+    """One recommendation inside a Profile Analysis (CONTEXT.md: Analysis Item): the target
+    LinkedIn section, the user's current text (optional), the suggested change, a rationale
+    anchored in a LinkedIn best practice / the context given, and a priority."""
+
+    section: AnalysisSection
+    current: str | None = None
+    suggestion: str
+    rationale: str
+    priority: AnalysisPriority
+
+
+class AnalysisResult(BaseModel):
+    """The ``analysis`` outcome of an Analysis Turn: one or more Analysis Items plus a short
+    prose summary in the user's locale. Read-only advice -- an Analysis never mutates the
+    Living Profile nor produces a Resume."""
+
+    type: Literal["analysis"] = "analysis"
+    items: list[AnalysisItem] = Field(default_factory=list)
+    summary: str = ""
+
+
+class AnalysisQuestion(BaseModel):
+    """The ``question`` outcome of an Analysis Turn (CONTEXT.md: Clarifying Question): the
+    motor asks for the missing context (target role, seniority, audience, goal) instead of
+    guessing -- same filosofia as refine.md's ask-instead-of-guessing valve."""
+
+    type: Literal["question"] = "question"
+    reply: str
+
+
 class CreateChatSessionRequest(BaseModel):
     title: str | None = None
 

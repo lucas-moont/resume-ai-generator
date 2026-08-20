@@ -60,11 +60,18 @@ export interface StreamErrorPayload {
 
 // --- Chat (B6/F5): POST/GET/DELETE /api/chat/sessions[...] ---
 
+/** v5 ticket 00: discriminates the resume chat from the Profile Analysis area. Optional
+ * (not required) so every v1–v4 fixture/mock compiles unchanged until b1 ships it; absent is
+ * read as 'resume'. */
+export type ChatSessionKind = 'resume' | 'profile_analysis'
+
 export interface ChatSessionSummary {
   id: number
   title: string | null
   updatedAt: string
   activeResumeVersionId: number | null
+  /** v5 ticket 00: see ChatSessionKind. Absent ⇒ 'resume' (retrocompatible). */
+  kind?: ChatSessionKind
 }
 
 export interface ChatSessionListResponse {
@@ -87,6 +94,10 @@ export interface ChatMessageDto {
    * the CURRENT status/revision — never a stale copy. Optional (not `| null` alone) so v3
    * fixtures/mocks compile unchanged until B6/F5 land. */
   proposal?: ChatMessageProposalDto | null
+  /** v5 ticket 00: present (non-null) when this message carries a Profile Analysis. Rebuilt
+   * from the message `meta` at read time (rehydration, ticket b5). Optional so v1–v4
+   * fixtures/mocks compile unchanged until v5 backend lands. */
+  analysis?: ChatMessageAnalysisDto | null
 }
 
 /** v2 ticket 10: shape of ChatMessageDto's `sourceDocument` field — mirrors the fields
@@ -113,6 +124,9 @@ export interface ChatSessionDetailResponse {
 
 export interface CreateChatSessionRequest {
   title?: string
+  /** v5 ticket 00: create a Profile Analysis conversation instead of a resume chat. Absent ⇒
+   * 'resume' (retrocompatible). Consumed by b1. */
+  kind?: ChatSessionKind
 }
 
 export interface CreateChatSessionResponse {
@@ -215,6 +229,39 @@ export interface ChatProfileUpdateEventPayload {
   profileVersion: number
   summary: string
 }
+
+// --- Profile Analysis (v5, ticket 00) ---
+// Contract per docs/v5-profile-analysis.md. Frozen: backend and frontend builders implement
+// against these shapes. Read-only advice on a LinkedIn profile — an Analysis never mutates
+// the Living Profile nor produces a Resume.
+
+export type AnalysisSection = 'headline' | 'about' | 'experience' | 'skills' | 'completeness'
+
+export type AnalysisPriority = 'alta' | 'média' | 'baixa'
+
+/** One recommendation inside a Profile Analysis (CONTEXT.md: Analysis Item): the target
+ * LinkedIn section, the user's current text (optional), the suggested change, WHY (rationale
+ * anchored in a LinkedIn best practice / the context given), and a priority. */
+export interface AnalysisItemDto {
+  section: AnalysisSection
+  current: string | null
+  suggestion: string
+  rationale: string
+  priority: AnalysisPriority
+}
+
+/** Chat-stream-only: emitted by an Analysis Turn BEFORE the prose `message` bubble that
+ * presents it (the card attaches to that next message) — same semantics as
+ * ChatProposalEventPayload. Absent on a Clarifying-Question turn, which emits only a
+ * `message` bubble. */
+export interface ChatAnalysisEventPayload {
+  items: AnalysisItemDto[]
+  summary: string
+}
+
+/** Shape of ChatMessageDto's `analysis` field — same fields the stream event carries,
+ * reconstructed from the message `meta` at read time (rehydration, ticket b5). */
+export type ChatMessageAnalysisDto = ChatAnalysisEventPayload
 
 // --- Living Profile: Source Documents (v2, F7 — ticket 07) ---
 // Contract per docs/v2-living-profile.md item 3 + ticket 04's addendum
