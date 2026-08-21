@@ -7,7 +7,7 @@
  * handles any single complete read.
  */
 export interface E2eSseEvent {
-  event: 'stage' | 'resume' | 'message' | 'profile_update' | 'proposal' | 'done' | 'error'
+  event: 'stage' | 'resume' | 'message' | 'profile_update' | 'proposal' | 'analysis' | 'done' | 'error'
   data: unknown
 }
 
@@ -145,4 +145,48 @@ export function analysisErrorEvents(options: { message?: string } = {}): E2eSseE
     analyzingJobStageEvent(),
     { event: 'error', data: { message: options.message ?? 'Failed to analyze the job description.' } },
   ]
+}
+
+// --- Profile Analysis (v5) ---
+// Mirrors analysis_service.py's event sequences (b3): an analysis turn emits
+// stage -> analysis (card) -> message (summary) -> done; a clarifying-question / fallback turn
+// emits stage -> message (reply) -> done (no card).
+
+function analyzingProfileStageEvent(): E2eSseEvent {
+  return { event: 'stage', data: { step: 'analyzing_profile', progress: 40, message: 'Analyzing your profile' } }
+}
+
+export function profileAnalysisEvents(
+  items: unknown[],
+  summary: string,
+  options: { messageId?: number } = {},
+): E2eSseEvent[] {
+  return [
+    analyzingProfileStageEvent(),
+    { event: 'analysis', data: { items, summary } },
+    { event: 'message', data: { content: summary } },
+    { event: 'done', data: { progress: 100, messageId: options.messageId ?? 2, resumeVersionId: null } },
+  ]
+}
+
+export function profileAnalysisQuestionEvents(
+  reply: string,
+  options: { messageId?: number } = {},
+): E2eSseEvent[] {
+  return [
+    analyzingProfileStageEvent(),
+    { event: 'message', data: { content: reply } },
+    { event: 'done', data: { progress: 100, messageId: options.messageId ?? 1, resumeVersionId: null } },
+  ]
+}
+
+export function makeAnalysisItem(overrides: Record<string, unknown> = {}) {
+  return {
+    section: 'headline',
+    current: 'Dev',
+    suggestion: 'Desenvolvedor Backend | Python & APIs | Alta disponibilidade',
+    rationale: 'Front-load os termos que recruiters buscam.',
+    priority: 'alta',
+    ...overrides,
+  }
 }
