@@ -1,0 +1,12 @@
+{
+  "name": "agente-de-curriculo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Root scripts to run the whole app (API + web) with one command. See README.md for setup.",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "node scripts/dev-api.mjs",
+    "dev:web": "npm --prefix apps/web run dev"
+  }
+}

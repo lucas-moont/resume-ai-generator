@@ -69,6 +69,8 @@ Optional **`AI_DEFAULT_MODEL`** applies when the UI does not send a `model` fiel
 
 ## Setup
 
+**Single command:** `npm run setup` creates the backend venv, installs Python deps, installs the Playwright Chromium browser, installs frontend deps, and seeds `.env` / `data/profile/resume.json` from their examples when missing. Edit `data/profile/resume.json` afterwards with your real data — it's just seeded from the example. Safe to re-run any time (skips what's already done). See the manual steps below if you'd rather run them one by one or something in `setup` fails.
+
 ### 1) Profile and projects
 
 ```bash
@@ -106,7 +108,17 @@ cd apps/web
 npm install
 ```
 
-## Run (two terminals)
+## Run
+
+**Single command (after the one-time setup above):**
+
+```bash
+npm run dev
+```
+
+Runs the API (`uvicorn`, reloading) and the UI (`vite`) together from the root, using the venv at `apps/api/.venv`. `Ctrl+C` stops both. Cross-platform (Windows/macOS/Linux). Other root scripts: `npm run dev:api` (backend only), `npm run dev:web` (frontend only).
+
+**Or two terminals (manual, if you want them separate):**
 
 **Terminal A — API**
 
