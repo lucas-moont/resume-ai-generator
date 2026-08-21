@@ -946,3 +946,117 @@ class TestProposalActionIgnoredWithoutPendingProposal:
         # routing, spending no LLM call at all (proves the shortcut never fired).
         assert kinds == ["message", "done"]
         assert fake_llm.call_count == 0
+
+
+class TestApproveHonorsTheRelevanceFilter:
+    """v6 (Relevance Filter), end to end: the reported bug was that a resume tailored for a job
+    with no analytics requirement still listed the candidate's analytics stack, no matter what
+    the LLM returned. Two independent mechanisms put it back — the anchor's skill tail pass, and
+    the quality gate's "aim for 8-16" issue driving the auto-improve refine pass — so a unit test
+    on either one alone would not have caught the behavior the user actually sees.
+    """
+
+    # The profile's own relevant stack PLUS three analytics tools the job never mentions. Built
+    # from make_profile() rather than hand-listed so the surviving set still covers the generic
+    # JD's keywords -- otherwise the quality gate fires on a MISSING keyword (not on the drop)
+    # and the test would be measuring the wrong mechanism.
+    _NOISY_SKILLS = [
+        *make_profile()["skills"],
+        "Google Analytics",
+        "Google Tag Manager",
+        "Power BI",
+    ]
+
+    def _drop_items(self) -> list[dict]:
+        return [
+            {
+                "id": 1,
+                "section": "skills",
+                "op": "drop",
+                "current": "Google Analytics, Google Tag Manager, Power BI",
+                "proposed": "Remover as ferramentas de analytics e BI da lista de skills.",
+                "targets": ["Google Analytics", "Google Tag Manager", "Power BI"],
+                "rationale": "A vaga é de backend Python/FastAPI e não menciona analytics ou BI.",
+            }
+        ]
+
+    async def test_an_approved_skill_drop_never_reaches_the_generated_resume(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile(skills=self._NOISY_SKILLS))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        proposal_id = _seed_pending_proposal(test_db_engine, created["id"], items=self._drop_items())
+
+        # Adversarial: the model ignores the plan and re-emits the whole noisy list.
+        fake_llm.queue(json.dumps(make_resume_payload(skills=self._NOISY_SKILLS)))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Aprovar e gerar", "proposalAction": "approve"},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        assert "error" not in [e for e, _ in events], [d for e, d in events if e == "error"]
+        assert fake_llm.call_count == 1  # no quality pass: the lean list is the intended result
+
+        skills = next(data for e, data in events if e == "resume")["resume"]["skills"]
+        assert "Google Analytics" not in skills
+        assert "Google Tag Manager" not in skills
+        assert "Power BI" not in skills
+        assert "Python" in skills
+        assert "FastAPI" in skills
+
+        # The plan reached the LLM as an imperative removal, not as a text swap.
+        prompt = fake_llm.calls[-1]["user"]
+        assert 'DROP (remove from the resume entirely): "Google Analytics"' in prompt
+
+        with Session(test_db_engine) as session:
+            assert proposal_repo.get(session, proposal_id).status == "approved"
+
+    async def test_the_quality_pass_does_not_re_inflate_a_dropped_skill(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        """The second mechanism, in isolation: dropping 3 of 8 skills leaves 5, which trips the
+        `len(skills) < 6` quality issue. Un-suppressed, that issue tells the refine pass to grow
+        the list back — and the refine pass is exactly where an off-topic skill would return."""
+        write_profile(make_profile(skills=self._NOISY_SKILLS))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        _seed_pending_proposal(test_db_engine, created["id"], items=self._drop_items())
+
+        # A thin FIRST pass still triggers the quality gate on its own (1 bullet on the sole
+        # role), so the refine pass runs and gets its chance to re-add the analytics stack.
+        thin_pass = make_resume_payload(
+            skills=["Python", "FastAPI", "PostgreSQL"],
+            experience=[
+                {
+                    "company": "Acme Corp",
+                    "title": "Senior Backend Engineer",
+                    "location": "Remote",
+                    "start": "2021",
+                    "end": None,
+                    "highlights": ["Shipped the billing migration"],
+                }
+            ],
+        )
+        refine_pass = make_resume_payload(skills=self._NOISY_SKILLS)
+        fake_llm.queue(json.dumps(thin_pass), json.dumps(refine_pass))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Aprovar e gerar", "proposalAction": "approve"},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        assert "error" not in [e for e, _ in events]
+        assert fake_llm.call_count == 2  # the quality pass did run
+
+        skills = next(data for e, data in events if e == "resume")["resume"]["skills"]
+        assert "Google Analytics" not in skills
+
+        # The refine call was told what not to bring back, instead of being asked to pad.
+        refine_prompt = fake_llm.calls[-1]["user"]
+        assert "do NOT reintroduce them" in refine_prompt
+        assert "Google Analytics" in refine_prompt
+        assert "aim for 8-16" not in refine_prompt
