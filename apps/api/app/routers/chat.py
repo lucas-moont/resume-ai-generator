@@ -143,6 +143,25 @@ def _proposal_link_dict(session: Session, meta_raw: str | None) -> dict | None:
     return _proposal_dict(row)
 
 
+def _analysis_link_dict(meta_raw: str | None) -> dict | None:
+    """v5 ticket b5: when a chat_message's ``meta`` carries a Profile Analysis
+    (``{"analysis": {"items": [...], "summary": "..."}}`` -- written INLINE by
+    analysis_service, no separate table since an Analysis has no lifecycle to live-join, unlike
+    a Source Document or an Improvement Proposal), return it so the frontend can rebuild the
+    cards on reload (dto.ts's ``ChatMessageAnalysisDto``). Returns None for a plain reply or a
+    Clarifying-Question turn (whose ``meta`` has no ``analysis`` key)."""
+    if not meta_raw:
+        return None
+    try:
+        meta = json.loads(meta_raw)
+    except json.JSONDecodeError:
+        return None
+    analysis = meta.get("analysis")
+    if not isinstance(analysis, dict):
+        return None
+    return {"items": analysis.get("items", []), "summary": analysis.get("summary", "")}
+
+
 @router.get("/api/chat/sessions/{session_id}")
 async def get_chat_session(session_id: int, session: Session = Depends(get_session)):
     chat_session, messages = chat_repo.get_session_with_messages(session, session_id)
@@ -169,6 +188,7 @@ async def get_chat_session(session_id: int, session: Session = Depends(get_sessi
                 "createdAt": m.created_at.isoformat(),
                 "sourceDocument": _source_document_link_dict(session, m.meta),
                 "proposal": _proposal_link_dict(session, m.meta),
+                "analysis": _analysis_link_dict(m.meta),
             }
             for m in messages
         ],

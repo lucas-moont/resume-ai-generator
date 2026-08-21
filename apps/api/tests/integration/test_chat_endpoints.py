@@ -452,6 +452,42 @@ class TestProfileAnalysisPdfUpload:
         assert resp.status_code == 400
 
 
+class TestProfileAnalysisRehydration:
+    """v5 ticket b5: GET /api/chat/sessions/{id} rebuilds the analysis card from the message
+    `meta`, so a reopened conversation shows its cards and questions again."""
+
+    async def _create_analysis_session(self, client) -> int:
+        return (
+            await client.post("/api/chat/sessions", json={"kind": "profile_analysis"})
+        ).json()["id"]
+
+    async def test_analysis_turn_rehydrates_items_and_summary_from_meta(self, client, fake_llm):
+        sid = await self._create_analysis_session(client)
+        fake_llm.queue(json.dumps(_ANALYSIS_RESPONSE))
+        await client.post(
+            f"/api/chat/sessions/{sid}/messages/stream", json={"message": "melhora meu headline"}
+        )
+
+        body = (await client.get(f"/api/chat/sessions/{sid}")).json()
+        assistant = next(m for m in body["messages"] if m["role"] == "assistant")
+        assert assistant["analysis"] is not None
+        assert assistant["analysis"]["items"][0]["section"] == "headline"
+        assert assistant["analysis"]["summary"] == _ANALYSIS_RESPONSE["summary"]
+        assert assistant["content"] == _ANALYSIS_RESPONSE["summary"]
+
+    async def test_question_turn_has_no_analysis_card(self, client, fake_llm):
+        sid = await self._create_analysis_session(client)
+        fake_llm.queue(json.dumps({"type": "question", "reply": "Qual o cargo-alvo?"}))
+        await client.post(
+            f"/api/chat/sessions/{sid}/messages/stream", json={"message": "melhora meu headline"}
+        )
+
+        body = (await client.get(f"/api/chat/sessions/{sid}")).json()
+        assistant = next(m for m in body["messages"] if m["role"] == "assistant")
+        assert assistant["analysis"] is None
+        assert assistant["content"] == "Qual o cargo-alvo?"
+
+
 class TestChatMessageStreamRefineIntent:
     async def test_a_short_instruction_refines_the_active_resume(
         self, client, fake_llm, parse_sse, test_db_engine, write_profile
