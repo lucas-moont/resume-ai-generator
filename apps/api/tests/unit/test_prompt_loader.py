@@ -48,6 +48,8 @@ class TestLoadGenerateSystemPrompt:
         assert "Honest quantification" in text
         # tailoring workflow skill block
         assert "Tailored resume generator" in text
+        # humanizer skill block (distilled blader/humanizer)
+        assert "Human voice" in text
         # composed with the section separator
         assert "\n\n---\n\n" in text
 
@@ -66,6 +68,8 @@ class TestLoadRefineSystemPrompt:
         # shared resume-craft skill block
         assert "Resume writing craft" in text
         assert "surface, never estimate" in text
+        # humanizer skill block
+        assert "Human voice" in text
         assert "\n\n---\n\n" in text
 
     def test_missing_file_raises_file_not_found(self, tmp_path) -> None:
@@ -82,6 +86,9 @@ class TestLoadLinkedinAnalysisSystemPrompt:
         # the two output shapes and the ask-instead-of-guessing valve
         assert '"type": "analysis"' in text
         assert '"type": "question"' in text
+        # humanizer skill block, composed onto the analysis prompt
+        assert "Human voice" in text
+        assert "\n\n---\n\n" in text
 
     def test_missing_file_raises_file_not_found(self, tmp_path) -> None:
         import pytest

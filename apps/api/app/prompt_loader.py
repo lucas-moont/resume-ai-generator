@@ -14,6 +14,7 @@ def load_generate_system_prompt(prompts_dir: Path) -> str:
             load_prompt("system/generate.md", prompts_dir),
             load_prompt("skills/resume-craft.md", prompts_dir),
             load_prompt("skills/tailored-resume-generator.md", prompts_dir),
+            load_prompt("skills/humanizer.md", prompts_dir),
         ]
     )
 
@@ -23,11 +24,13 @@ def load_refine_system_prompt(prompts_dir: Path) -> str:
     chat refine (and the post-generation auto-improve pass) applies the same bullet /
     quantification / ATS craft as generation. ``system/refine.md`` still owns the
     refine-specific rules (apply the user's request precisely, the ask-instead-of-guessing
-    valve, project-source honesty)."""
+    valve, project-source honesty). The humanizer block keeps revised prose from drifting
+    into AI-slop wording."""
     return "\n\n---\n\n".join(
         [
             load_prompt("system/refine.md", prompts_dir),
             load_prompt("skills/resume-craft.md", prompts_dir),
+            load_prompt("skills/humanizer.md", prompts_dir),
         ]
     )
 
@@ -35,8 +38,14 @@ def load_refine_system_prompt(prompts_dir: Path) -> str:
 def load_linkedin_analysis_system_prompt(prompts_dir: Path) -> str:
     """v5 (Profile Analysis): the standalone system prompt for an Analysis Turn. Not composed
     with generate/refine -- the analysis motor is its own read-only advisor (returns either an
-    Analysis or a Clarifying Question), never emitting the resume JSON."""
-    return load_prompt("skills/linkedin-analysis.md", prompts_dir)
+    Analysis or a Clarifying Question), never emitting the resume JSON. Composed with the
+    humanizer block so the LinkedIn copy it suggests reads human, not chatbot."""
+    return "\n\n---\n\n".join(
+        [
+            load_prompt("skills/linkedin-analysis.md", prompts_dir),
+            load_prompt("skills/humanizer.md", prompts_dir),
+        ]
+    )
 
 
 def load_extract_profile_system_prompt(prompts_dir: Path) -> str:
