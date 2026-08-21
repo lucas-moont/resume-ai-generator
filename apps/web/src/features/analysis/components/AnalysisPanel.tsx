@@ -1,4 +1,5 @@
 import { useAnalysisStore } from '../store/analysisStore'
+import { AnalysisComposer } from './AnalysisComposer'
 
 function EmptyState() {
   return (
@@ -21,6 +22,7 @@ function EmptyState() {
  * turn shows its summary/reply text. */
 export function AnalysisPanel() {
   const messages = useAnalysisStore((s) => s.messages)
+  const streaming = useAnalysisStore((s) => s.streaming)
 
   return (
     <div className="flex h-full flex-col">
@@ -45,9 +47,20 @@ export function AnalysisPanel() {
                 </div>
               </li>
             ))}
+            {streaming && (
+              <li className="flex justify-start">
+                <div
+                  role="status"
+                  className="rounded-2xl bg-white px-4 py-2 text-sm text-stone-500 shadow-sm dark:bg-zinc-900 dark:text-zinc-400"
+                >
+                  {streaming.message || 'Analisando…'}
+                </div>
+              </li>
+            )}
           </ul>
         )}
       </div>
+      <AnalysisComposer />
     </div>
   )
 }
