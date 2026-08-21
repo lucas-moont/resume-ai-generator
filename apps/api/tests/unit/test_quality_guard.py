@@ -1,7 +1,9 @@
 import unittest
 
 from app.domain.keywords import extract_jd_keywords as _extract_jd_keywords
+from app.domain.quality import allows_lean_skills as _allows_lean_skills
 from app.domain.quality import quality_issues as _quality_issues
+from app.domain.schemas import ProposalItem as _ProposalItem
 from app.models import ResumeDocument
 from app.services.generation_service import enrich_projects_from_sources as _enrich_projects_from_sources
 
@@ -104,3 +106,57 @@ class QualityGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LeanSkillsTests(unittest.TestCase):
+    """v6 (Relevance Filter): the skills-count check only ever pushes UPWARD, so once the user
+    approves dropping their irrelevant skills it fires on the intended result and hands the
+    auto-improve refine pass an instruction to re-inflate the list. ``allows_lean_skills`` is
+    what stops the quality gate from undoing the subtraction one step after the anchor honored it.
+    """
+
+    def _drop_item(self, section: str = "skills") -> _ProposalItem:
+        return _ProposalItem(
+            id=1,
+            section=section,
+            op="drop",
+            current="Google Analytics",
+            proposed="Remover Google Analytics da lista de skills.",
+            targets=["Google Analytics"],
+            rationale="A vaga não menciona analytics em nenhum requisito.",
+        )
+
+    def _lean_resume(self) -> ResumeDocument:
+        resume = _strong_resume()
+        return resume.model_copy(update={"skills": ["Node.js", "TypeScript", "React"]})
+
+    def test_a_lean_skills_list_is_an_issue_by_default(self) -> None:
+        issues = _quality_issues(self._lean_resume(), "We need a Node.js developer.")
+        self.assertTrue(any("aim for 8-16" in issue for issue in issues))
+
+    def test_an_approved_skill_drop_suppresses_the_lean_skills_issue(self) -> None:
+        issues = _quality_issues(
+            self._lean_resume(), "We need a Node.js developer.", allow_lean_skills=True
+        )
+        self.assertFalse(any("aim for 8-16" in issue for issue in issues))
+
+    def test_allows_lean_skills_only_for_an_approved_skills_drop(self) -> None:
+        self.assertTrue(_allows_lean_skills([self._drop_item()]))
+        # A drop in another section says nothing about the skills list.
+        self.assertFalse(_allows_lean_skills([self._drop_item(section="projects")]))
+        # A pre-v6 item decodes to a rewrite, which never subtracts.
+        self.assertFalse(
+            _allows_lean_skills(
+                [
+                    _ProposalItem(
+                        id=1,
+                        section="skills",
+                        current="React",
+                        proposed="Priorizar React na lista.",
+                        rationale="A vaga pede React.",
+                    )
+                ]
+            )
+        )
+        self.assertFalse(_allows_lean_skills(None))
+        self.assertFalse(_allows_lean_skills([]))

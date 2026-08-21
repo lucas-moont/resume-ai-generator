@@ -45,7 +45,7 @@ from app.config import LLM_TIMEOUT_SECONDS, PROJECTS_DIR, PROMPTS_DIR
 from app.domain.keywords import normalize_token
 from app.domain.locale import resolve_locale
 from app.domain.prompts_builder import build_generation_user_msg
-from app.domain.quality import quality_issues
+from app.domain.quality import allows_lean_skills, quality_issues
 from app.domain.schemas import GitHubRepoInfo, ProposalItem, ResumeDocument
 from app.prompt_loader import load_generate_system_prompt, load_refine_system_prompt
 from app.services import llm_client, streaming
@@ -142,6 +142,32 @@ def enrich_projects_from_sources(
     return ResumeDocument.model_validate(patched)
 
 
+def _format_keep_out_block(agreed_improvements: list[ProposalItem] | None) -> str:
+    """The "do not put these back" line for the auto-improve refine pass (v6, Relevance Filter).
+
+    Belt and braces on purpose. The anchor already re-applies every approved drop when this
+    pass's output is parsed, so a reintroduced skill/project cannot reach the reader either
+    way -- but without telling the model, this pass reliably spends its call re-inflating
+    exactly what the user asked to cut (the quality issues it is fixing all read like "add
+    more"), and the prose it writes around those entries is then anchored away, leaving
+    bullets that argue for skills the resume no longer lists.
+    """
+    labels: list[str] = []
+    for item in agreed_improvements or []:
+        if getattr(item, "op", None) != "drop":
+            continue
+        for target in getattr(item, "targets", None) or []:
+            label = str(target).strip()
+            if label and label not in labels:
+                labels.append(label)
+    if not labels:
+        return ""
+    return (
+        "\nThe user explicitly approved REMOVING the following from this resume as irrelevant "
+        "to the job above — do NOT reintroduce them, in any field:\n- " + "\n- ".join(labels) + "\n"
+    )
+
+
 async def auto_improve_if_needed(
     *,
     resume: ResumeDocument,
@@ -150,7 +176,9 @@ async def auto_improve_if_needed(
     model: str,
     agreed_improvements: list[ProposalItem] | None = None,
 ) -> ResumeDocument:
-    issues = quality_issues(resume, job_description)
+    issues = quality_issues(
+        resume, job_description, allow_lean_skills=allows_lean_skills(agreed_improvements)
+    )
     if not issues:
         return resume
     system = load_refine_system_prompt(PROMPTS_DIR)
@@ -164,7 +192,7 @@ Job description:
 ---
 {job_description.strip()}
 ---
-
+{_format_keep_out_block(agreed_improvements)}
 Revise the resume to address issues without inventing facts. Return full JSON only."""
     raw = await llm_client.chat_json(system, user_msg, model=model)
     # Anchor to the profile (refine=False) so a hallucinated improvement pass cannot
@@ -279,7 +307,9 @@ async def generate_resume_events(
     yield "stage", {"step": "validating_response", "progress": 85, "message": "Validating AI response"}
     resume = parse_resume_json(raw, profile, refine=False, agreed_improvements=agreed_improvements)
     resume = enrich_projects_from_sources(resume, md_entries, repos)
-    issues = quality_issues(resume, job_description)
+    issues = quality_issues(
+        resume, job_description, allow_lean_skills=allows_lean_skills(agreed_improvements)
+    )
     if issues:
         yield "stage", {
             "step": "validating_response",

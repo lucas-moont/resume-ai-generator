@@ -3,7 +3,7 @@
 import re
 
 from app.domain.keywords import extract_jd_keywords, normalize_token
-from app.domain.schemas import ResumeDocument
+from app.domain.schemas import ProposalItem, ResumeDocument
 
 # Weak bullet openers that signal generic, low-impact writing (checked case-insensitively).
 WEAK_BULLET_OPENERS = (
@@ -50,7 +50,28 @@ def has_weak_bullets(resume: ResumeDocument) -> bool:
     return False
 
 
-def quality_issues(resume: ResumeDocument, job_description: str) -> list[str]:
+def allows_lean_skills(agreed_improvements: list[ProposalItem] | None) -> bool:
+    """Whether an approved plan deliberately shortened the skills list (v6, Relevance Filter).
+
+    The skills-count check below exists to catch a lazy generation, and it only ever pushes
+    UPWARD ("aim for 8-16"). Once the user has approved dropping their irrelevant skills, that
+    same check fires on the intended result and hands the auto-improve refine pass an explicit
+    instruction to re-inflate the list -- undoing the subtraction one step after the anchor
+    honored it. Suppressing it here is what makes the drop survive the quality pass."""
+    if not agreed_improvements:
+        return False
+    return any(
+        getattr(item, "section", None) == "skills" and getattr(item, "op", None) == "drop"
+        for item in agreed_improvements
+    )
+
+
+def quality_issues(
+    resume: ResumeDocument,
+    job_description: str,
+    *,
+    allow_lean_skills: bool = False,
+) -> list[str]:
     issues: list[str] = []
 
     summary_words = len((resume.summary or "").split())
@@ -81,7 +102,7 @@ def quality_issues(resume: ResumeDocument, job_description: str) -> list[str]:
             "'Worked on', pronouns) using strong action verbs."
         )
 
-    if len(resume.skills) < 6:
+    if len(resume.skills) < 6 and not allow_lean_skills:
         issues.append("List the relevant technologies the candidate actually has (aim for 8-16).")
 
     jd_keywords = extract_jd_keywords(job_description)
