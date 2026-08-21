@@ -286,6 +286,115 @@ class TestRenameChatSession:
 # since that turn no longer produces a resume (see that helper's docstring).
 
 
+_ANALYSIS_RESPONSE = {
+    "type": "analysis",
+    "items": [
+        {
+            "section": "headline",
+            "current": "Dev",
+            "suggestion": "Desenvolvedor Backend | Python & APIs | Sistemas de alta disponibilidade",
+            "rationale": "Front-load os termos que recruiters buscam.",
+            "priority": "alta",
+        }
+    ],
+    "summary": "Seu headline está genérico; priorize palavras-chave de busca.",
+}
+
+
+class TestProfileAnalysisTurn:
+    """v5 ticket b3: a `profile_analysis` session bypasses intent classification entirely --
+    every turn is a read-only Analysis Turn (analysis card or clarifying question)."""
+
+    async def _create_analysis_session(self, client) -> int:
+        body = (
+            await client.post("/api/chat/sessions", json={"title": "Análise", "kind": "profile_analysis"})
+        ).json()
+        return body["id"]
+
+    async def test_conversational_analysis_emits_analysis_message_and_done(
+        self, client, fake_llm, parse_sse
+    ):
+        sid = await self._create_analysis_session(client)
+        fake_llm.queue(json.dumps(_ANALYSIS_RESPONSE))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{sid}/messages/stream",
+            json={"message": "melhora meu headline, atual é 'Dev', minha área é backend"},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "analysis" in kinds
+        assert kinds.index("analysis") < kinds.index("message")  # card before its bubble
+        analysis = next(data for e, data in events if e == "analysis")
+        assert analysis["items"][0]["section"] == "headline"
+        assert analysis["summary"] == _ANALYSIS_RESPONSE["summary"]
+        message = next(data for e, data in events if e == "message")
+        assert message["content"] == _ANALYSIS_RESPONSE["summary"]
+        assert any(e == "done" for e, _ in events)
+        assert fake_llm.call_count == 1
+
+        # Persisted: the assistant summary is on the session's messages.
+        after = (await client.get(f"/api/chat/sessions/{sid}")).json()
+        assert any(m["content"] == _ANALYSIS_RESPONSE["summary"] for m in after["messages"])
+
+    async def test_clarifying_question_emits_message_without_analysis_card(
+        self, client, fake_llm, parse_sse
+    ):
+        sid = await self._create_analysis_session(client)
+        reply = "Qual é o cargo-alvo e a senioridade que você quer projetar?"
+        fake_llm.queue(json.dumps({"type": "question", "reply": reply}))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{sid}/messages/stream",
+            json={"message": "melhora meu headline"},
+        )
+
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "analysis" not in kinds
+        message = next(data for e, data in events if e == "message")
+        assert message["content"] == reply
+        assert "done" in kinds
+
+    async def test_unusable_output_falls_back_to_a_canned_reply_not_an_error(
+        self, client, fake_llm, parse_sse
+    ):
+        sid = await self._create_analysis_session(client)
+        fake_llm.queue("not json at all")
+
+        resp = await client.post(
+            f"/api/chat/sessions/{sid}/messages/stream",
+            json={"message": "oi"},
+        )
+
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "error" not in kinds
+        assert "analysis" not in kinds
+        assert "message" in kinds and "done" in kinds
+
+    async def test_jd_looking_message_still_routes_to_analysis_not_generate(
+        self, client, fake_llm, parse_sse
+    ):
+        # A long, JD-like message would be `generate` in a resume session; in the analysis area
+        # it must still be an Analysis Turn (the classifier never runs here).
+        sid = await self._create_analysis_session(client)
+        fake_llm.queue(json.dumps(_ANALYSIS_RESPONSE))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{sid}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "analysis" in kinds
+        assert "proposal" not in kinds  # never the v4 Analysis/proposal path
+        assert "resume" not in kinds
+
+
 class TestChatMessageStreamRefineIntent:
     async def test_a_short_instruction_refines_the_active_resume(
         self, client, fake_llm, parse_sse, test_db_engine, write_profile

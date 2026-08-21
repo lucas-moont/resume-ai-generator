@@ -106,6 +106,7 @@ from app.prompt_loader import (
 )
 from app.repositories import chat_repo, profile_repo, proposal_repo, resume_repo
 from app.services import llm_client, streaming
+from app.services.analysis_service import analysis_turn_events
 from app.services.html_sanitize import sanitize_resume_for_display
 from app.services.generation_service import generate_resume_events
 from app.services.ingestion.merge_service import parse_patch_ops_from_llm_response, resolve_profile_for_merge
@@ -1053,6 +1054,37 @@ async def handle_chat_turn(
         chat_session.locale = locale
         session.add(chat_session)
     session.commit()
+
+    # v5 (ticket b3): a Profile Analysis session bypasses intent classification entirely --
+    # every turn is a read-only Analysis Turn. Branched here, before any resume-flow state
+    # (active resume, pending proposal) is even loaded, so nothing about the resume pipeline
+    # can be reached from this area. Its own try/except mirrors the intent path below: a
+    # failure persists an error assistant message (so the turn is visible on reload) and
+    # re-raises for the endpoint to frame as an `error` SSE event.
+    if chat_session.kind == "profile_analysis":
+        try:
+            async for event, data in analysis_turn_events(
+                session=session,
+                chat_session=chat_session,
+                user_message=user_message,
+                model=model,
+                locale=locale,
+                backend_label=backend_label,
+            ):
+                yield event, data
+        except Exception as e:
+            chat_repo.append_message(
+                session,
+                session_id=chat_session.id,
+                role="assistant",
+                content="",
+                intent="analysis",
+                meta=json.dumps({"model": model, "provider": backend_label, "error": redact_secrets(str(e))}),
+            )
+            chat_repo.touch_session(session, chat_session.id)
+            session.commit()
+            raise
+        return
 
     active_resume_row = None
     if chat_session.active_resume_version_id is not None:
