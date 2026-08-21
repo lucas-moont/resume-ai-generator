@@ -113,6 +113,25 @@ export async function chatMessageStream(
   return parseSseStream(response)
 }
 
+/** v5 ticket f2: upload a LinkedIn-exported PDF into a Profile Analysis session and stream the
+ * resulting Analysis Turn. Uses fetch (streaming) with a multipart body — not requestMultipart
+ * (XHR, for upload-progress) — because we need to read the SSE response, not a JSON result.
+ * The browser sets the multipart Content-Type/boundary; do not set it by hand. */
+export async function analysisPdfStream(
+  sessionId: number,
+  file: File,
+  signal?: AbortSignal,
+): Promise<AsyncGenerator<SseEvent>> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await requestStream(`/api/chat/sessions/${sessionId}/analysis/pdf/stream`, {
+    method: 'POST',
+    body: formData,
+    signal,
+  })
+  return parseSseStream(response)
+}
+
 // --- Living Profile: Source Documents (v2, F7) ---
 
 export interface UploadSourceDocumentOptions extends MultipartOptions {
