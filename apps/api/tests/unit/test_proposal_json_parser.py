@@ -216,3 +216,89 @@ class TestParseProposalTurnJson:
         result = parse_proposal_turn_json(raw)
         assert result is not None
         assert result.action == "approve"
+
+
+class TestProposalOpAndTargets:
+    """v6 (Relevance Filter): ``op``/``targets`` are parsed tolerantly, and the section limits
+    on subtraction are enforced here rather than merely requested in the prompt."""
+
+    def _raw(self, item: dict) -> str:
+        return json.dumps({"message": "Análise do perfil.", "items": [item]})
+
+    def _item(self, **overrides) -> dict:
+        base = {
+            "section": "skills",
+            "current": "Google Analytics",
+            "proposed": "Remover Google Analytics.",
+            "rationale": "A vaga não menciona analytics.",
+        }
+        base.update(overrides)
+        return base
+
+    def test_a_valid_drop_keeps_its_op_and_targets(self) -> None:
+        parsed = parse_proposal_json(
+            self._raw(self._item(op="drop", targets=["Google Analytics", "Power BI"]))
+        )
+        assert parsed is not None
+        assert parsed.items[0].op == "drop"
+        assert parsed.items[0].targets == ["Google Analytics", "Power BI"]
+
+    def test_a_missing_op_decodes_to_rewrite_with_no_targets(self) -> None:
+        parsed = parse_proposal_json(self._raw(self._item()))
+        assert parsed is not None
+        assert parsed.items[0].op == "rewrite"
+        assert parsed.items[0].targets == []
+
+    def test_an_invented_op_collapses_to_rewrite_instead_of_losing_the_item(self) -> None:
+        parsed = parse_proposal_json(self._raw(self._item(op="remove", targets=["Power BI"])))
+        assert parsed is not None
+        assert len(parsed.items) == 1
+        assert parsed.items[0].op == "rewrite"
+
+    def test_a_drop_on_experience_is_downgraded_to_compress(self) -> None:
+        # Never let an approved plan carry "remove this employer": that is a timeline gap.
+        parsed = parse_proposal_json(
+            self._raw(self._item(section="experience", op="drop", targets=["Savvi"]))
+        )
+        assert parsed is not None
+        assert parsed.items[0].op == "compress"
+
+    def test_a_drop_on_education_is_downgraded_to_rewrite(self) -> None:
+        parsed = parse_proposal_json(
+            self._raw(self._item(section="education", op="drop", targets=["UFU"]))
+        )
+        assert parsed is not None
+        assert parsed.items[0].op == "rewrite"
+
+    def test_a_compress_outside_experience_is_downgraded_to_rewrite(self) -> None:
+        parsed = parse_proposal_json(self._raw(self._item(section="skills", op="compress")))
+        assert parsed is not None
+        assert parsed.items[0].op == "rewrite"
+
+    def test_garbage_targets_become_an_empty_list(self) -> None:
+        parsed = parse_proposal_json(
+            self._raw(self._item(op="drop", targets=["  ", 7, None, "Power BI"]))
+        )
+        assert parsed is not None
+        assert parsed.items[0].targets == ["Power BI"]
+
+    def test_a_single_string_target_is_accepted_as_a_one_item_list(self) -> None:
+        parsed = parse_proposal_json(self._raw(self._item(op="drop", targets="Power BI")))
+        assert parsed is not None
+        assert parsed.items[0].targets == ["Power BI"]
+
+    def test_the_proposal_turn_carries_ops_through_an_adjust(self) -> None:
+        # An adjust returns the COMPLETE revised list; losing `op`/`targets` on the way through
+        # would silently turn an agreed removal back into a no-op.
+        raw = json.dumps(
+            {
+                "action": "adjust",
+                "reply": "Mantive o Power BI e tirei só o resto.",
+                "items": [self._item(op="drop", targets=["Google Analytics"])],
+            }
+        )
+        parsed = parse_proposal_turn_json(raw)
+        assert parsed is not None
+        assert parsed.items is not None
+        assert parsed.items[0].op == "drop"
+        assert parsed.items[0].targets == ["Google Analytics"]

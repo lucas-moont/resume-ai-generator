@@ -25,6 +25,11 @@ GENERIC_JOB_DESCRIPTION = (
     "and build scalable APIs in Python and collaborate closely with the frontend team."
 )
 
+# Deliberately written WITHOUT the v6 ``op``/``targets`` fields: these dicts stand in for the
+# item blobs already persisted in ``improvement_proposals.items`` before the Relevance Filter
+# existed. What the API serves back for them (``SAMPLE_ITEMS_REHYDRATED``) is the backward
+# compatibility contract -- an old proposal still reads as exactly what it meant then, a rewrite
+# with no targets, rather than failing validation or losing its fields on the way out.
 SAMPLE_ITEMS = [
     {
         "id": 1,
@@ -41,6 +46,8 @@ SAMPLE_ITEMS = [
         "rationale": "The job description lists Kubernetes as a strong plus.",
     },
 ]
+
+SAMPLE_ITEMS_REHYDRATED = [{**item, "op": "rewrite", "targets": []} for item in SAMPLE_ITEMS]
 
 
 def _create_session(test_db_engine) -> int:
@@ -87,7 +94,7 @@ class TestChatSessionRehydratesProposal:
             "proposalId": proposal_id,
             "status": "proposed",
             "revision": 1,
-            "items": SAMPLE_ITEMS,
+            "items": SAMPLE_ITEMS_REHYDRATED,
         }
         assert proposal_message["proposal"] == expected
         assert body["pendingProposal"] == expected

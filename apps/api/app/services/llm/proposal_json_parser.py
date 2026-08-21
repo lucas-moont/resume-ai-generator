@@ -60,19 +60,65 @@ def _strip_code_fence(raw: str) -> str:
     return m.group(1).strip() if m else raw
 
 
+_VALID_OPS = frozenset({"rewrite", "add", "drop", "compress"})
+
+_DROP_SECTIONS = frozenset({"skills", "projects"})
+
+
+def _coerce_op_and_targets(raw_item: dict) -> dict:
+    """Normalize the v6 ``op``/``targets`` fields BEFORE pydantic sees them.
+
+    Both are new and optional, so the tolerance here is deliberately softer than the module's
+    "drop the malformed item" rule: that rule protects required fields, and applying it to a
+    brand-new optional one would throw away an otherwise perfect item over a single invented
+    word (a model writing ``"op": "remove"`` loses its whole recommendation, prose included).
+    Unknown/garbage values collapse to the ``rewrite`` default instead -- the fail-SAFE
+    direction, since a rewrite subtracts nothing.
+
+    The section limits are enforced here too, not just asked for in the prompt: a ``drop`` on
+    ``experience``/``education`` is downgraded to ``compress``/``rewrite`` rather than trusted.
+    The anchor ignores such an item anyway (it only ever prunes skills/projects), but leaving a
+    section-illegal ``drop`` in the item would put "DROP (remove from the resume entirely):
+    Savvi" in the generation prompt and in the user's approved plan -- an instruction to open a
+    timeline gap that the Relevance Filter never intends to give.
+    """
+    item = dict(raw_item)
+    raw_op = item.get("op")
+    op = raw_op if isinstance(raw_op, str) and raw_op in _VALID_OPS else "rewrite"
+    section = item.get("section")
+    if op == "drop" and section not in _DROP_SECTIONS:
+        op = "compress" if section == "experience" else "rewrite"
+    if op == "compress" and section != "experience":
+        op = "rewrite"
+    item["op"] = op
+    raw_targets = item.get("targets")
+    if isinstance(raw_targets, str):
+        raw_targets = [raw_targets]
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    item["targets"] = [t.strip() for t in raw_targets if isinstance(t, str) and t.strip()]
+    return item
+
+
 def _parse_items(raw_items: list) -> list[ProposalItem]:
     """Parses each candidate item independently -- an out-of-whitelist ``section`` or a missing
     required field drops just that item (via ``ProposalItem``'s own pydantic validation),
     mirroring ``merge_service``'s per-op skip philosophy. ``id`` is always assigned here as the
     surviving item's 1-based position, ignoring whatever ``id`` the LLM sent -- this is what
     keeps the "1-based, stable within the proposal" invariant (schemas.py's ``ProposalItem``
-    docstring) true even when earlier items in the raw list were discarded."""
+    docstring) true even when earlier items in the raw list were discarded.
+
+    v6: ``op``/``targets`` are normalized first (``_coerce_op_and_targets``) rather than left to
+    that per-item validation -- see there for why a new optional field gets softer treatment than
+    a required one."""
     items: list[ProposalItem] = []
     for raw_item in raw_items:
         if not isinstance(raw_item, dict):
             continue
         try:
-            item = ProposalItem.model_validate({**raw_item, "id": len(items) + 1})
+            item = ProposalItem.model_validate(
+                {**_coerce_op_and_targets(raw_item), "id": len(items) + 1}
+            )
         except Exception:
             continue
         items.append(item)

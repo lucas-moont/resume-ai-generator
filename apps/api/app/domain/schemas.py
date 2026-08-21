@@ -104,16 +104,50 @@ ProposalSection = Literal[
 ]
 
 
+# v6 (Relevance Filter): the OPERATION a Proposal Item performs on its section. Before v6 every
+# item was implicitly a rewrite, which is why the agent could never offer to *subtract* profile
+# noise -- it could only swap text for other text. The vocabulary is deliberately small:
+#
+# - ``rewrite``  -- the pre-v6 behavior and the default: replace ``current`` wording with
+#                   ``proposed``. Absent/unknown ``op`` on a persisted item decodes to this, so
+#                   proposals stored before v6 keep validating unchanged.
+# - ``add``      -- surface something real the profile has but the resume was not showing
+#                   (already supported downstream by ``_agreed_skills_text``).
+# - ``drop``     -- REMOVE the entities named in ``targets`` from the generated resume because
+#                   they have no bearing on THIS job. Only honored for ``skills`` and
+#                   ``projects``: dropping an employer/role or a degree would open a timeline
+#                   gap, which the Relevance Filter never does (it compresses instead).
+# - ``compress`` -- keep the entity (employer, dates, title stay untouched) but give it far less
+#                   space: an unrelated role drops to one factual bullet instead of four. This op
+#                   is instruction-only -- it reaches the LLM through the APPROVED IMPROVEMENT
+#                   PLAN block and needs no anchor support, since the anchor already adopts
+#                   whatever (non-empty) highlight list the model returns for a matched role.
+ProposalOp = Literal["rewrite", "add", "drop", "compress"]
+
+
 class ProposalItem(BaseModel):
     """One improvement inside an Improvement Proposal (CONTEXT.md: Proposal Item) -- the
     unit that makes the proposal detailed: WHAT changes (section + proposed), against WHAT
-    (current excerpt), and WHY (rationale anchored in the job description)."""
+    (current excerpt), and WHY (rationale anchored in the job description).
+
+    ``op``/``targets`` (v6, Relevance Filter) are additive with defaults, so every item written
+    before v6 -- including the JSON blobs already sitting in ``improvement_proposals.items`` --
+    still validates and still means exactly what it meant then (a rewrite with no targets).
+
+    ``targets`` carries the LITERAL profile labels an ``op`` acts on (skill names, project
+    names). It exists instead of parsing them back out of ``current``/``proposed`` prose
+    because a drop is matched deterministically downstream (``skill_token``/``entity_key``
+    equality, never substring): removing the wrong skill is a worse failure than removing
+    nothing, so the target set is never inferred from free text.
+    """
 
     id: int
     section: ProposalSection
+    op: ProposalOp = "rewrite"
     current: str | None = None
     proposed: str
     rationale: str
+    targets: list[str] = Field(default_factory=list)
 
 
 # v5 (ticket 00): the LinkedIn profile sections an Analysis Item may target. Anything outside

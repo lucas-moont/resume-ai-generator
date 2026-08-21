@@ -198,14 +198,29 @@ export type ProposalSection =
 
 export type ProposalStatus = 'proposed' | 'approved' | 'superseded' | 'discarded'
 
+/** What a Proposal Item DOES to its section (v6, Relevance Filter). Before v6 every item was
+ * implicitly a `rewrite`, so the agent could only swap text for other text — never offer to
+ * subtract profile noise that has no bearing on the job. `drop` removes the `targets` outright
+ * (backend restricts it to `skills`/`projects`); `compress` keeps a role's employer/title/dates
+ * and shrinks it to one bullet (`experience` only). */
+export type ProposalOp = 'rewrite' | 'add' | 'drop' | 'compress'
+
 /** One improvement inside an Improvement Proposal (CONTEXT.md: Proposal Item): WHAT
- * changes (section + proposed), against WHAT (current excerpt), WHY (rationale anchored
- * in the job description). */
+ * changes (section + op + proposed), against WHAT (current excerpt), WHY (rationale anchored
+ * in the job description).
+ *
+ * `op`/`targets` are optional in the DTO rather than required: proposals persisted before v6
+ * are served back without them, and the backend defaults a missing `op` to `'rewrite'`. Read
+ * them as `item.op ?? 'rewrite'` and `item.targets ?? []`. `targets` holds the literal profile
+ * labels an op acts on (skill names, project names, an employer) — the machine-readable half of
+ * a removal, whose human-readable half is in `proposed` and in the assistant's prose. */
 export interface ProposalItemDto {
   id: number
   section: ProposalSection
+  op?: ProposalOp
   current: string | null
   proposed: string
+  targets?: string[]
   rationale: string
 }
 
