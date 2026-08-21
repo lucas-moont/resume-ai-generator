@@ -301,6 +301,41 @@ def _has_agreed_projects_item(agreed_improvements: list[ProposalItem] | None) ->
     )
 
 
+# Absolute floor for the Relevance Filter's skill subtraction: however aggressively the approved
+# plan prunes, a resume that reaches the reader with fewer than this many skills is worse than one
+# carrying some noise (and would immediately trip quality.py's own "list the technologies" gate).
+# When honoring every approved drop would land below it, NO skill drop is applied at all -- an
+# all-or-nothing fallback, deliberately chosen over a partial one because "which of the approved
+# drops did we silently ignore?" is not a question the user can answer from the rendered resume.
+MIN_SKILLS_AFTER_DROPS = 4
+
+
+def _dropped_targets(
+    agreed_improvements: list[ProposalItem] | None,
+    *,
+    section: str,
+    normalizer,
+) -> set[str]:
+    """Normalized identity keys of everything an approved ``op == "drop"`` item removes from
+    ``section`` (v6, Relevance Filter).
+
+    Only an item's ``targets`` are read -- never its prose. Matching downstream is exact
+    equality on ``normalizer`` output, so "Analytics" is never collateral damage from a drop
+    aimed at "Google Analytics" (a substring blob, as ``_agreed_skills_text`` uses for the
+    much safer *admit* direction, would have removed both)."""
+    if not agreed_improvements:
+        return set()
+    keys: set[str] = set()
+    for item in agreed_improvements:
+        if getattr(item, "section", None) != section or getattr(item, "op", None) != "drop":
+            continue
+        for target in getattr(item, "targets", None) or []:
+            key = normalizer(target)
+            if key:
+                keys.add(key)
+    return keys
+
+
 def _anchor_generate_to_profile(
     fallback: ResumeDocument,
     patch: dict,
@@ -336,6 +371,22 @@ def _anchor_generate_to_profile(
     even when the user had just explicitly approved them in the Proposal Turn (Bug 2 of the
     v4 QA live pass) -- the fix is scoped to what was actually agreed to, never a blanket
     relaxation.
+
+    v6 (Relevance Filter) adds the mirror-image relaxation, for the same reason and with the
+    same scoping. Everything above describes an anchor that cannot let the LLM ADD -- but it
+    equally could not let it REMOVE: the skill tail pass re-appended every profile skill the
+    model left out, and the project loop iterated the profile's own set, so a tailored resume
+    always carried the candidate's whole inventory no matter how little of it the job asked
+    for. "Never invent" and "never omit" had been implemented as one rule; they are now two.
+    An approved ``op == "drop"`` item (and ONLY an approved one -- with no plan this function
+    stays no-drop, exactly as before) prunes its ``targets`` from:
+      - ``skills``, unless honoring every drop would leave fewer than
+        ``MIN_SKILLS_AFTER_DROPS`` (then none is applied);
+      - ``projects``, with no floor -- a resume with no Projects section is a valid outcome.
+    Experience and education are never pruned here, at any approval: an omitted employer or
+    degree is a timeline gap, so an off-topic role is compressed to one bullet by the LLM
+    instead (``op == "compress"``, instruction-only -- this function already adopts whatever
+    non-empty highlight list a matched role comes back with).
     """
     out = fallback.model_dump()
     out.pop("githubUsername", None)
@@ -429,7 +480,30 @@ def _anchor_generate_to_profile(
     # can move; non-matched profile projects are appended at the end in their original order.
     base_proj = out.get("projects") or []
     patch_proj = patch.get("projects") if isinstance(patch.get("projects"), list) else []
-    if base_proj:
+    # An approved "projects" drop (v6) prunes the *set* before either branch runs -- the only
+    # case where the anchor lets the profile's project set shrink. No floor here (unlike skills):
+    # a resume with no Projects section at all is a legitimate outcome when none of the
+    # candidate's projects speak to the job, and the templates render the section as empty.
+    #
+    # ``profile_had_projects`` is captured BEFORE pruning on purpose: the `else` branch below is
+    # the PDF/seed passthrough (profile genuinely has no projects, so the LLM's list is the only
+    # source there is). Letting a drop that empties the set fall into it would turn the anchor's
+    # anti-fabrication guarantee inside out -- every real project removed, and an invented one
+    # the model happened to emit waved straight through in their place.
+    profile_had_projects = bool(base_proj)
+    dropped_proj = _dropped_targets(agreed_improvements, section="projects", normalizer=entity_key)
+    if dropped_proj:
+        base_proj = [b for b in base_proj if entity_key(b.get("name")) not in dropped_proj]
+        patch_proj = [
+            p
+            for p in patch_proj
+            if not isinstance(p, dict) or entity_key(p.get("name")) not in dropped_proj
+        ]
+    if not base_proj and profile_had_projects:
+        # Every profile project was dropped by the approved plan: the resume ships without a
+        # Projects section, and the patch's own list is discarded rather than promoted.
+        out["projects"] = []
+    elif base_proj:
         if _has_agreed_projects_item(agreed_improvements):
             base_by_key: dict[str, dict] = {}
             for b in base_proj:
@@ -505,10 +579,20 @@ def _anchor_generate_to_profile(
         # entity-name matching above (see that module's docstring).
         lookup = build_skill_lookup(base_skills)
         agreed_skills_text = _agreed_skills_text(agreed_improvements)
+        dropped = _dropped_targets(agreed_improvements, section="skills", normalizer=skill_token)
+        # Guard the floor BEFORE pruning anything, so the decision is all-or-nothing (see
+        # MIN_SKILLS_AFTER_DROPS): count what would survive, and abandon the whole drop set if
+        # that leaves the resume too thin.
+        if dropped:
+            surviving = [s for s in base_skills if skill_token(s) not in dropped]
+            if len(surviving) < MIN_SKILLS_AFTER_DROPS:
+                dropped = set()
         ordered: list[str] = []
         admitted_tokens: set[str] = set()
         for s in patch_skills:
             tok = skill_token(s)
+            if tok in dropped:
+                continue
             canon = lookup.get(tok)
             if canon:
                 if canon not in ordered:
@@ -519,7 +603,13 @@ def _anchor_generate_to_profile(
                 if cleaned:
                     ordered.append(cleaned)
                     admitted_tokens.add(tok)
+        # The tail pass is what makes the anchor no-drop by default: every profile skill the
+        # model left out is appended back. An approved drop is the ONE thing that exempts a
+        # skill from it -- without this filter the user's approved subtraction was undone here,
+        # silently, on every generation.
         for s in base_skills:
+            if skill_token(s) in dropped:
+                continue
             if s not in ordered:
                 ordered.append(s)
         out["skills"] = ordered

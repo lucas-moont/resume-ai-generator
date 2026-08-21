@@ -465,3 +465,237 @@ class AnchorAgreedImprovementsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnchorRelevanceFilterTests(unittest.TestCase):
+    """v6 (Relevance Filter): an approved ``op="drop"`` item is the ONLY thing that lets the
+    anchor shrink the profile's own set of skills/projects.
+
+    Before v6 the anchor was no-drop by construction -- its skill tail pass re-appended every
+    profile skill the LLM left out, and its project loop iterated the profile's set -- so a
+    resume tailored for a backend job still carried the candidate's whole analytics stack no
+    matter what the LLM decided. Every test here that passes ``agreed_improvements`` also asserts
+    the SAME patch with the argument omitted keeps the pre-v6 behavior, so "never invent" and
+    "never omit" stay separable rather than re-fused by a later change.
+    """
+
+    def _profile(self) -> ResumeDocument:
+        return ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=[
+                "Python",
+                "FastAPI",
+                "PostgreSQL",
+                "React",
+                "TypeScript",
+                "Docker",
+                "Google Analytics",
+                "Power BI",
+            ],
+            locale="en",
+        )
+
+    def _drop_skills(self, *targets: str) -> list[ProposalItem]:
+        return [
+            ProposalItem(
+                id=1,
+                section="skills",
+                op="drop",
+                current=", ".join(targets),
+                proposed="Remover ferramentas de analytics da lista de skills.",
+                targets=list(targets),
+                rationale="A vaga não menciona analytics ou BI em nenhum requisito.",
+            )
+        ]
+
+    def test_approved_skill_drop_removes_it_even_though_the_llm_returned_it(self) -> None:
+        # The adversarial case, and the one the user actually reported: the LLM re-emits the
+        # noise. The drop has to win over BOTH the patch and the tail pass.
+        fallback = self._profile()
+        raw = json.dumps({"skills": ["Python", "FastAPI", "Google Analytics", "Power BI"]})
+        agreed = self._drop_skills("Google Analytics", "Power BI")
+
+        parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
+
+        self.assertNotIn("Google Analytics", parsed.skills)
+        self.assertNotIn("Power BI", parsed.skills)
+        self.assertIn("Python", parsed.skills)
+        self.assertIn("Docker", parsed.skills)  # untargeted profile skill still returns
+
+    def test_approved_skill_drop_survives_the_tail_pass_when_the_llm_omitted_it(self) -> None:
+        # The regression that made the bug invisible: the LLM does the right thing, and the tail
+        # pass silently undoes it.
+        fallback = self._profile()
+        raw = json.dumps({"skills": ["Python", "FastAPI", "PostgreSQL", "Docker"]})
+        agreed = self._drop_skills("Google Analytics", "Power BI")
+
+        parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
+        self.assertNotIn("Google Analytics", parsed.skills)
+
+        parsed_without_plan = parse_resume_json(raw, fallback, refine=False)
+        self.assertIn("Google Analytics", parsed_without_plan.skills)
+
+    def test_drop_matches_the_exact_label_not_a_substring_of_it(self) -> None:
+        # "Analytics" must survive a drop aimed at "Google Analytics": the target set is matched
+        # by skill_token equality, never by the substring blob the *admit* direction uses.
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=["Python", "FastAPI", "PostgreSQL", "React", "Analytics", "Google Analytics"],
+            locale="en",
+        )
+        raw = json.dumps({"skills": ["Python", "FastAPI"]})
+
+        parsed = parse_resume_json(
+            raw, fallback, refine=False, agreed_improvements=self._drop_skills("Google Analytics")
+        )
+
+        self.assertNotIn("Google Analytics", parsed.skills)
+        self.assertIn("Analytics", parsed.skills)
+
+    def test_drop_is_abandoned_wholesale_when_it_would_leave_too_few_skills(self) -> None:
+        # MIN_SKILLS_AFTER_DROPS: a resume with 2 skills is worse than one carrying some noise,
+        # and the fallback is all-or-nothing so the outcome stays explainable.
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=["Python", "FastAPI", "Google Analytics", "Power BI"],
+            locale="en",
+        )
+        raw = json.dumps({"skills": ["Python", "FastAPI"]})
+
+        parsed = parse_resume_json(
+            raw,
+            fallback,
+            refine=False,
+            agreed_improvements=self._drop_skills("Google Analytics", "Power BI"),
+        )
+
+        self.assertIn("Google Analytics", parsed.skills)
+        self.assertIn("Power BI", parsed.skills)
+
+    def test_approved_project_drop_removes_the_project_from_the_set(self) -> None:
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            projects=[
+                {"name": "Trading API", "description": "Low-latency order routing in Python."},
+                {"name": "Marketing Dashboard", "description": "GA4 funnels in Looker Studio."},
+            ],
+            locale="en",
+        )
+        raw = json.dumps({"projects": [{"name": "Trading API", "description": "Order routing."}]})
+        agreed = [
+            ProposalItem(
+                id=1,
+                section="projects",
+                op="drop",
+                current="Marketing Dashboard",
+                proposed="Remover o projeto Marketing Dashboard.",
+                targets=["Marketing Dashboard"],
+                rationale="A vaga é de engenharia backend e não menciona marketing.",
+            )
+        ]
+
+        parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
+        self.assertEqual([p.name for p in parsed.projects], ["Trading API"])
+
+        parsed_without_plan = parse_resume_json(raw, fallback, refine=False)
+        self.assertIn("Marketing Dashboard", [p.name for p in parsed_without_plan.projects])
+
+    def test_dropping_every_project_never_promotes_a_fabricated_one(self) -> None:
+        # The `else` branch of the projects block is the PDF/seed passthrough. A drop that empties
+        # the set must not fall into it, or the anchor's guarantee inverts: real projects out,
+        # invented one in.
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            projects=[{"name": "Marketing Dashboard", "description": "GA4 funnels."}],
+            locale="en",
+        )
+        raw = json.dumps({"projects": [{"name": "Invented Project", "description": "Not real."}]})
+        agreed = [
+            ProposalItem(
+                id=1,
+                section="projects",
+                op="drop",
+                current="Marketing Dashboard",
+                proposed="Remover o projeto Marketing Dashboard.",
+                targets=["Marketing Dashboard"],
+                rationale="A vaga é de engenharia backend e não menciona marketing.",
+            )
+        ]
+
+        parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
+        self.assertEqual(parsed.projects, [])
+
+    def test_no_approved_drop_can_remove_an_employer_or_a_degree(self) -> None:
+        # The Relevance Filter never opens a timeline gap: an experience/education drop item is
+        # simply inert in the anchor (the prompt is what compresses an off-topic role instead).
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            experience=[
+                {
+                    "company": "Savvi",
+                    "title": "Full Stack Developer",
+                    "start": "2023-01",
+                    "end": None,
+                    "highlights": ["Built the billing service in Python."],
+                }
+            ],
+            education=[{"institution": "UFU", "degree": "Systems Analysis", "end": "2022"}],
+            locale="en",
+        )
+        raw = json.dumps({"experience": [], "education": []})
+        agreed = [
+            ProposalItem(
+                id=1,
+                section="experience",
+                op="drop",
+                current="Savvi",
+                proposed="Remover a experiência na Savvi.",
+                targets=["Savvi"],
+                rationale="A vaga não tem relação com o trabalho feito lá.",
+            ),
+            ProposalItem(
+                id=2,
+                section="education",
+                op="drop",
+                current="UFU",
+                proposed="Remover a formação.",
+                targets=["UFU"],
+                rationale="A vaga não pede diploma.",
+            ),
+        ]
+
+        parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
+
+        self.assertEqual([e.company for e in parsed.experience], ["Savvi"])
+        self.assertEqual([e.institution for e in parsed.education], ["UFU"])
+
+    def test_a_rewrite_item_never_drops_anything_even_naming_targets(self) -> None:
+        # Only `op == "drop"` subtracts. A rewrite that happens to carry targets (or a pre-v6
+        # item, which decodes to a rewrite with none) leaves the set alone.
+        fallback = self._profile()
+        raw = json.dumps({"skills": ["Python", "FastAPI"]})
+        agreed = [
+            ProposalItem(
+                id=1,
+                section="skills",
+                current="Google Analytics",
+                proposed="Reordenar as skills priorizando Python e FastAPI.",
+                targets=["Google Analytics"],
+                rationale="A vaga pede Python e FastAPI em primeiro lugar.",
+            )
+        ]
+
+        parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
+        self.assertIn("Google Analytics", parsed.skills)
