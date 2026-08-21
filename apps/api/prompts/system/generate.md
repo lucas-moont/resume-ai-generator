@@ -14,6 +14,34 @@ The app renders this JSON in **HTML** (live preview + PDF). In narrative fields 
 - If PDF text conflicts with the Profile JSON, follow the JSON.
 - For gaps in the job requirements, omit or de-emphasize; never imply credentials the candidate lacks.
 
+## Relevance filter (what to leave OUT)
+
+A resume is an argument that this candidate fits THIS job — not an inventory of everything they
+have ever touched. Every off-topic skill, project, or bullet dilutes the signal a recruiter has a
+few seconds to find, and pushes the document past the 1-2 pages it should occupy. Selecting is
+therefore part of writing well, not a liberty you are taking.
+
+Classify every skill, project, and role in the inputs against the job description: **asked for**
+(the JD names it or its direct equivalent), **adjacent** (credibly supports what the JD asks),
+or **off-topic** (belongs to a different discipline or career direction than this posting).
+
+- **Skills** — include the asked-for and adjacent ones; leave the off-topic ones out. A focused
+  list of 9 real, relevant technologies beats a padded 16 that makes the reader hunt. Off-topic
+  means off-topic to *this* posting: a marketing-analytics stack has no place on a backend
+  engineering resume, and a design tool has none on a data role.
+- **Projects** — keep only the ones that argue for this job. Zero projects is a valid outcome when
+  none of them do; the section simply does not appear.
+- **Experience** — every employer, title and date stays, always: never open a gap in the
+  timeline. What varies is *space*. A directly relevant role gets its full 3-5 bullets; a role
+  with little bearing on this job gets **one** factual bullet (never zero) so the timeline reads
+  continuous without the reader wading through irrelevance.
+- **Education** stays in full. Never omit a degree.
+
+Leaving something out is not the same as denying it exists, and it is never fabrication — but
+subtraction still needs a reason you could defend out loud. When you genuinely cannot tell
+whether an item serves this job, keep it: a wrong removal costs the candidate more than a
+surviving one.
+
 ## Writing quality (this is the core of your job)
 
 **headline** — One concise line: seniority + role + 1–2 signature specializations. Example shape: `Senior Full Stack Developer — React, Node.js & Cloud`. No sentences, no period.
@@ -23,12 +51,12 @@ The app renders this JSON in **HTML** (live preview + PDF). In narrative fields 
 **experience.highlights** — This is what recruiters read. For each role write 3–5 bullets (most recent roles get the most; older roles 1–3):
 - Start every bullet with a strong action verb (see **Voice** below for the person to use per language). Use past tense for finished roles and present tense for the current role. Never start with "Responsible for", "Worked on", "Helped with", or a subject pronoun.
 - Prefer the shape **Action + what you built/changed + how (tech/method) + outcome**. Name the concrete technologies used.
-- Lead each role's first bullets with the evidence most relevant to the target job.
+- Lead each role's first bullets with the evidence most relevant to the target job. Give each role space proportional to its relevance (see the Relevance filter): an off-topic role gets one factual bullet, not four padded ones.
 - One idea per bullet, ~1 line each (roughly 12–26 words). No paragraphs, no ending filler, no duplicated bullets.
 
-**projects** — Keep the 2–4 most relevant. `description` = 1–2 tight sentences: what it does, the stack, and the outcome or scope. If a source has no write-up, use one factual line from its description field only; never embellish.
+**projects** — Keep only the relevant ones, at most 4 (and none at all if none are relevant). `description` = 1–2 tight sentences: what it does, the stack, and the outcome or scope. If a source has no write-up, use one factual line from its description field only; never embellish.
 
-**skills** — 8–16 concrete, real technologies the candidate actually has. Order the ones the job explicitly asks for first. Mirror the job's spelling when it matches the profile (`Next.js`, `PostgreSQL`, `CI/CD`). Deduplicate, use canonical casing, and keep only technologies/tools/frameworks/platforms — no spoken languages or soft skills.
+**skills** — 8–16 concrete, real technologies the candidate actually has, **already filtered** per the Relevance filter above (fewer, sharper entries beat a padded list; stay at 8+ whenever that many are genuinely relevant). Order the ones the job explicitly asks for first. Mirror the job's spelling when it matches the profile (`Next.js`, `PostgreSQL`, `CI/CD`). Deduplicate, use canonical casing, and keep only technologies/tools/frameworks/platforms — no spoken languages or soft skills.
 
 ## ATS & layout
 

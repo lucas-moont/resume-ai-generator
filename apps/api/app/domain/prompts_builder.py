@@ -15,20 +15,19 @@ def _format_agreed_improvements_block(items: list[ProposalItem]) -> str:
     Strings are ``json.dumps``-quoted (not just wrapped in literal quotes) so a ``proposed``/
     ``rationale`` containing an internal ``"`` can never break the block's own quoting.
 
-    QA-02: the hard rules below (see ``build_generation_user_msg``) default to "keep the same
-    set of experience entries, education, and projects" and "reorder/select skills from the
-    profile" -- exactly the conventions an approved plan may need to override (e.g. adding a
-    skill, reordering projects). Without an explicit precedence statement, the LLM was resolving
-    that conflict in favor of the conservative hard rules and silently dropping those plan items.
-    This block now states the plan wins over those default conventions -- only the truthfulness
+    QA-02: the hard rules below (see ``build_generation_user_msg``) set conservative defaults
+    about which entries and skills survive -- exactly the conventions an approved plan may need
+    to override (e.g. adding a skill, reordering projects). Without an explicit precedence
+    statement, the LLM was resolving that conflict in favor of those defaults and silently
+    dropping the plan items. This block states the plan wins over them -- only the truthfulness
     rule (never invent facts) still outranks it -- and ends with a checklist instruction so the
-    model self-checks every item before returning."""
-    lines = [
-        f"{i}. [{item.section}] current: "
-        f"{'null' if item.current is None else json.dumps(item.current, ensure_ascii=False)} "
-        f"-> proposed: {json.dumps(item.proposed, ensure_ascii=False)} (rationale: {item.rationale})"
-        for i, item in enumerate(items, start=1)
-    ]
+    model self-checks every item before returning.
+
+    v6 (Relevance Filter) adds the DROP/COMPRESS gloss at the end: the ops are new enough to the
+    plan vocabulary that spelling out what each one licenses is cheaper than hoping the model
+    infers "omit entirely" from the word alone. See ``_format_agreed_item`` for the per-line
+    shape."""
+    lines = [_format_agreed_item(i, item) for i, item in enumerate(items, start=1)]
     return (
         "APPROVED IMPROVEMENT PLAN (agreed with the user in chat — implement EXACTLY these "
         "changes, nothing beyond them):\n" + "\n".join(lines) + "\n\n"
@@ -36,7 +35,45 @@ def _format_agreed_improvements_block(items: list[ProposalItem]) -> str:
         "selection/order and experience/project order — it was agreed with the user in chat. "
         "Only the truthfulness rule (never invent facts not present in the profile) still "
         "outranks this plan.\n"
+        "A DROP item is an instruction to OMIT the listed entries from the output entirely — "
+        "the user agreed they do not belong on a resume for this job. A COMPRESS item keeps the "
+        "entry (employer, title and dates unchanged) but reduces it to a single factual bullet.\n"
         "Before returning, verify EVERY numbered item above is reflected in the output."
+    )
+
+
+def _format_agreed_item(index: int, item: ProposalItem) -> str:
+    """One numbered line of the APPROVED IMPROVEMENT PLAN block.
+
+    A ``rewrite`` item renders exactly as it did before v6 (``current: ... -> proposed: ...``),
+    which is what keeps the plan-block tests' golden strings valid. The v6 ops render in their
+    own imperative shape instead, because "current -> proposed" reads as a text swap and the LLM
+    was resolving such a line in favor of the conservative hard rules (the same failure mode
+    QA-02 documented above) -- a DROP has to look like a removal to be obeyed as one.
+    ``targets`` are ``json.dumps``-quoted for the same reason every other field is: an internal
+    quote must never break the block's own quoting."""
+    targets = ", ".join(json.dumps(t, ensure_ascii=False) for t in item.targets)
+    if item.op == "drop":
+        subject = targets or json.dumps(item.proposed, ensure_ascii=False)
+        return (
+            f"{index}. [{item.section}] DROP (remove from the resume entirely): {subject} "
+            f"(rationale: {item.rationale})"
+        )
+    if item.op == "compress":
+        subject = targets or json.dumps(item.proposed, ensure_ascii=False)
+        return (
+            f"{index}. [{item.section}] COMPRESS (keep the entry, reduce it to one factual "
+            f"bullet): {subject} (rationale: {item.rationale})"
+        )
+    if item.op == "add":
+        return (
+            f"{index}. [{item.section}] ADD: {json.dumps(item.proposed, ensure_ascii=False)} "
+            f"(rationale: {item.rationale})"
+        )
+    return (
+        f"{index}. [{item.section}] current: "
+        f"{'null' if item.current is None else json.dumps(item.current, ensure_ascii=False)} "
+        f"-> proposed: {json.dumps(item.proposed, ensure_ascii=False)} (rationale: {item.rationale})"
     )
 
 
@@ -84,7 +121,8 @@ def build_generation_user_msg(
 {plan_block}Tailor a resume for the candidate described in the CANDIDATE PROFILE below. Hard rules:
 - Use ONLY facts present in the profile (and supporting sources). Do NOT invent employers, job titles, dates, schools, certifications, projects, or metrics.
 - Keep the candidate's name and contact details EXACTLY as in the profile.
-- Keep the same set of experience entries, education, and projects; you may rewrite their wording (bullets/descriptions) and reorder/select skills from the profile.
+- Keep every employer, role, dates and school from the profile — never open a gap in the timeline. You may rewrite their wording (bullets/descriptions) freely.
+- Relevance beats completeness. Give each role space proportional to how much it serves THIS job: a directly relevant role gets its full 3-5 bullets, a role with little bearing on the job gets one factual bullet (never zero). Same for skills and projects — select the ones this job actually calls for and leave the rest out, rather than listing everything the profile happens to contain. A focused resume of 9 skills beats a padded one of 16.
 - If the profile lacks something the job wants, omit it — never fabricate it.
 
 CANDIDATE PROFILE (authoritative JSON — the single source of truth):

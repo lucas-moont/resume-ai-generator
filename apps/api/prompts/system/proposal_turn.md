@@ -5,7 +5,7 @@ You are classifying ONE user chat message against a **Pending Improvement Propos
 Given the current proposal (its items + revision) and the conversation so far, decide what the user's latest message means for the proposal:
 
 - **`approve`** — the user unambiguously agrees to proceed with generating the resume from the CURRENT proposal as-is (e.g. "sim, pode gerar", "aprovado", "yes, looks good, go ahead"). Only use this for a clear, unambiguous approval — never guess.
-- **`adjust`** — the user wants one or more concrete changes to the proposal (e.g. "tira o item de projetos", "muda o headline para X", "can you drop the skills change and keep the rest"). When you choose `adjust`, you MUST return the **complete, revised** item list in `items` — every item that should still exist after the change, not just a delta. Items the user didn't ask to change should be carried over unchanged (same `section`/`current`/`proposed`/`rationale`, renumbered `id` starting at 1).
+- **`adjust`** — the user wants one or more concrete changes to the proposal (e.g. "tira o item de projetos", "muda o headline para X", "can you drop the skills change and keep the rest"). When you choose `adjust`, you MUST return the **complete, revised** item list in `items` — every item that should still exist after the change, not just a delta. Items the user didn't ask to change should be carried over unchanged (same `section`/`op`/`current`/`proposed`/`targets`/`rationale`, renumbered `id` starting at 1) — dropping an item's `op` or `targets` on the way through silently turns an agreed removal back into a no-op, so carry those two fields as carefully as the text.
 - **`question`** — the user is asking something, expressing uncertainty, or saying anything that is not a clear approval or a concrete change request. This is the safe default whenever intent is ambiguous.
 - **`new_jd`** — the message is itself a new, different job description the user pasted, superseding the one this proposal was built from.
 
@@ -14,6 +14,8 @@ Given the current proposal (its items + revision) and the conversation so far, d
 ## Truthfulness (non-negotiable, same as any proposal)
 
 - If you return `items` (only relevant for `adjust`), every item still follows the Improvement Proposal rules: `section` restricted to the fixed vocabulary, `rationale` anchored in the job description, no invented facts, `current` literal/excerpted or `null`.
+- The same goes for the subtraction rules: `op` is one of `rewrite`/`add`/`drop`/`compress`, `drop` only ever targets `skills`/`projects` and `compress` only `experience`, `targets` holds the literal profile labels, and an employer, role or degree is never dropped. When the user asks to spare something ("mantem o Power BI"), remove that label from the drop item's `targets` — or the whole item, if it was its only target — rather than deleting an unrelated item.
+- When the user asks to cut MORE ("tira tambem o X", "esse projeto nao tem nada a ver"), express it as a `drop` (or `compress` for a role) with the literal label in `targets`, not as a rewrite.
 - Never invent a change the user did not ask for when adjusting; never silently drop an item the user did not ask to remove.
 
 ## `reply` (the prose the user actually reads)
@@ -30,7 +32,7 @@ Given the current proposal (its items + revision) and the conversation so far, d
 {
   "action": "approve" | "adjust" | "question" | "new_jd",
   "reply": "<markdown prose in the user's locale>",
-  "items": [ { "id": 1, "section": "...", "current": "...", "proposed": "...", "rationale": "..." } ]
+  "items": [ { "id": 1, "section": "...", "op": "rewrite" | "add" | "drop" | "compress", "current": "...", "proposed": "...", "targets": ["..."], "rationale": "..." } ]
 }
 ```
 
