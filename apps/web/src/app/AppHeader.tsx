@@ -3,6 +3,41 @@ import { ApiError, fetchGithubRepos } from '../lib/api/endpoints'
 import { SettingsDialog } from '../features/settings/components/SettingsDialog'
 import { ThemeToggle } from './theme/ThemeToggle'
 import { Tooltip } from '../ui/Tooltip'
+import { useAppModeStore, type AppMode } from './appModeStore'
+
+function modeButtonClass(selected: boolean): string {
+  return `rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:focus-visible:ring-zinc-500 ${
+    selected
+      ? 'bg-stone-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
+      : 'text-stone-600 hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800'
+  }`
+}
+
+function AppModeToggle() {
+  const mode = useAppModeStore((s) => s.mode)
+  const setMode = useAppModeStore((s) => s.setMode)
+  const option = (value: AppMode, label: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={mode === value}
+      onClick={() => setMode(value)}
+      className={modeButtonClass(mode === value)}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <div
+      role="tablist"
+      aria-label="Área"
+      className="flex gap-1 rounded-xl border border-stone-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+    >
+      {option('resume', 'Currículo')}
+      {option('analysis', 'Análise de Perfil')}
+    </div>
+  )
+}
 
 export function AppHeader() {
   const [ghInfo, setGhInfo] = useState<string | null>(null)
@@ -48,6 +83,7 @@ export function AppHeader() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <AppModeToggle />
           {ghInfo && (
             <p role="status" className="max-w-xs text-xs text-stone-600 dark:text-zinc-400">
               {ghInfo}

@@ -2,6 +2,7 @@ import type {
   ApplySourceDocumentResponse,
   ChatMessageStreamRequest,
   ChatSessionDetailResponse,
+  ChatSessionKind,
   ChatSessionListResponse,
   CreateChatSessionRequest,
   CreateChatSessionResponse,
@@ -73,8 +74,11 @@ export function createChatSession(
   return requestJson<CreateChatSessionResponse>('/api/chat/sessions', postInit(payload))
 }
 
-export function listChatSessions(): Promise<ChatSessionListResponse> {
-  return requestJson<ChatSessionListResponse>('/api/chat/sessions')
+export function listChatSessions(kind?: ChatSessionKind): Promise<ChatSessionListResponse> {
+  // v5 ticket f1: `kind` filters the list server-side (b1). Omitted -> backend defaults to
+  // 'resume', so the existing resume sidebar is byte-identical.
+  const qs = kind ? `?kind=${encodeURIComponent(kind)}` : ''
+  return requestJson<ChatSessionListResponse>(`/api/chat/sessions${qs}`)
 }
 
 export function getChatSession(sessionId: number): Promise<ChatSessionDetailResponse> {

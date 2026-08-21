@@ -27,8 +27,10 @@ export const chatSessionQueryKey = (sessionId: number) => ['chat-session', sessi
  */
 export function useSessions() {
   return useQuery({
+    // Wrapped (not `queryFn: listChatSessions`) so TanStack's QueryFunctionContext isn't passed
+    // as the optional `kind` arg (v5 ticket f1 added it) — resume sessions use the default kind.
     queryKey: CHAT_SESSIONS_QUERY_KEY,
-    queryFn: listChatSessions,
+    queryFn: () => listChatSessions(),
     retry: false,
   })
 }

@@ -1,8 +1,10 @@
 import { SessionSidebar } from '../features/chat/components/SessionSidebar'
 import { ChatPanel } from '../features/chat/components/ChatPanel'
 import { useRestoreActiveSession } from '../features/chat/hooks/useChatSession'
+import { AnalysisShell } from '../features/analysis/components/AnalysisShell'
 import { PreviewPanel } from '../features/resume/components/PreviewPanel'
 import { AppHeader } from './AppHeader'
+import { useAppModeStore } from './appModeStore'
 import { useMobileTabUrl } from './useMobileTabUrl'
 
 function tabButtonClass(selected: boolean): string {
@@ -15,6 +17,9 @@ function tabButtonClass(selected: boolean): string {
 
 export function AppShell() {
   const [mobileTab, setMobileTab] = useMobileTabUrl()
+  const mode = useAppModeStore((s) => s.mode)
+  // Called unconditionally (rules of hooks); restoring the resume session in the background is
+  // harmless while the analysis area is showing.
   useRestoreActiveSession()
 
   return (
@@ -27,6 +32,9 @@ export function AppShell() {
       </a>
       <AppHeader />
 
+      {mode === 'analysis' ? (
+        <AnalysisShell />
+      ) : (
       <main
         id="main-content"
         className="print-grid mx-auto flex w-full min-h-0 max-w-[1920px] flex-1 flex-col lg:flex-row"
@@ -97,6 +105,7 @@ export function AppShell() {
           <PreviewPanel />
         </section>
       </main>
+      )}
     </div>
   )
 }
