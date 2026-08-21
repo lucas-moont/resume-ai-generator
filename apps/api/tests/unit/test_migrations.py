@@ -21,6 +21,7 @@ def test_migrations_list_is_ordered_drop_then_add() -> None:
         "_drop_legacy_resume_versions_template_id_column",
         "_add_missing_source_documents_diff_summary_column",
         "_note_improvement_proposals_table_added",
+        "_add_missing_chat_sessions_kind_column",
     ]
 
 

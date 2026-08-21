@@ -26,6 +26,7 @@ def _session_dict(row: ChatSession) -> dict:
         "title": row.title,
         "updatedAt": row.updated_at.isoformat(),
         "activeResumeVersionId": row.active_resume_version_id,
+        "kind": row.kind,  # v5 ticket b1
     }
 
 
@@ -43,15 +44,17 @@ def _session_detail_dict(row: ChatSession) -> dict:
 
 @router.post("/api/chat/sessions", status_code=201)
 async def create_chat_session(body: CreateChatSessionRequest, session: Session = Depends(get_session)):
-    row = chat_repo.create_session(session, title=body.title)
+    row = chat_repo.create_session(session, title=body.title, kind=body.kind)
     session.commit()
     session.refresh(row)
-    return {"id": row.id, "title": row.title, "createdAt": row.created_at.isoformat()}
+    return {"id": row.id, "title": row.title, "kind": row.kind, "createdAt": row.created_at.isoformat()}
 
 
 @router.get("/api/chat/sessions")
-async def list_chat_sessions(session: Session = Depends(get_session)):
-    rows = chat_repo.list_sessions(session)
+async def list_chat_sessions(kind: str = "resume", session: Session = Depends(get_session)):
+    # v5 ticket b1: `?kind=` filters the list; defaults to 'resume' so the existing UI is
+    # unchanged and the Profile Analysis area (kind='profile_analysis') has its own list.
+    rows = chat_repo.list_sessions(session, kind=kind)
     return {"sessions": [_session_dict(r) for r in rows]}
 
 

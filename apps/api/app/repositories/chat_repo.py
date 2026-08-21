@@ -15,16 +15,23 @@ def create_session(
     title: str | None = None,
     job_description: str | None = None,
     locale: str | None = None,
+    kind: str = "resume",
 ) -> ChatSession:
-    row = ChatSession(title=title, job_description=job_description, locale=locale)
+    row = ChatSession(title=title, job_description=job_description, locale=locale, kind=kind)
     session.add(row)
     session.flush()
     session.refresh(row)
     return row
 
 
-def list_sessions(session: Session) -> list[ChatSession]:
-    return list(session.exec(select(ChatSession).order_by(ChatSession.updated_at.desc())).all())
+def list_sessions(session: Session, *, kind: str | None = "resume") -> list[ChatSession]:
+    """v5 ticket b1: ``kind`` filters the list so the Profile Analysis area and the resume
+    chat never show each other's conversations. Defaults to ``'resume'`` -- the retrocompatible
+    behavior, since every pre-v5 session is a resume chat. Pass ``kind=None`` for no filter."""
+    stmt = select(ChatSession)
+    if kind is not None:
+        stmt = stmt.where(ChatSession.kind == kind)
+    return list(session.exec(stmt.order_by(ChatSession.updated_at.desc())).all())
 
 
 def get_session_with_messages(

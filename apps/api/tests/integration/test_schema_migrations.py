@@ -135,3 +135,57 @@ def test_init_db_diff_summary_migration_is_a_no_op_on_a_fresh_db(tmp_path):
     init_db(engine)  # second boot must not error
 
     assert "diff_summary" in _table_columns(engine, "source_documents")
+
+
+def _create_legacy_pre_v5_chat_sessions_table(engine) -> None:
+    """Raw SQL matching the pre-v5 chat_sessions schema (before ticket b1 added ``kind``) --
+    same rationale as the legacy tables above: create_all() only creates tables that don't
+    exist yet, so a hand-rolled legacy table is the only way to exercise the ADD COLUMN path."""
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE chat_sessions (
+                    id INTEGER PRIMARY KEY,
+                    title TEXT,
+                    job_description TEXT,
+                    locale TEXT,
+                    active_resume_version_id INTEGER,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO chat_sessions (id, title, created_at, updated_at) "
+                "VALUES (1, 'Legacy chat', '2026-01-01T00:00:00', '2026-01-01T00:00:00')"
+            )
+        )
+        conn.commit()
+
+
+def test_init_db_adds_kind_to_a_legacy_chat_sessions_table_backfilling_resume(tmp_path):
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'legacy_v4.db').as_posix()}")
+    _create_legacy_pre_v5_chat_sessions_table(engine)
+    assert "kind" not in _table_columns(engine, "chat_sessions")
+
+    init_db(engine)
+
+    assert "kind" in _table_columns(engine, "chat_sessions")
+    # The existing row survives and is backfilled to the retrocompatible default.
+    with Session(engine) as session:
+        row = session.exec(text("SELECT id, title, kind FROM chat_sessions WHERE id = 1")).first()
+        assert row is not None
+        assert row[1] == "Legacy chat"
+        assert row[2] == "resume"
+
+
+def test_init_db_kind_migration_is_a_no_op_on_a_fresh_db(tmp_path):
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'fresh_v5.db').as_posix()}")
+
+    init_db(engine)
+    init_db(engine)  # second boot must not error
+
+    assert "kind" in _table_columns(engine, "chat_sessions")

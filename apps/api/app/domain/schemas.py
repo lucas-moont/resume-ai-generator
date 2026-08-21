@@ -160,8 +160,15 @@ class AnalysisQuestion(BaseModel):
     reply: str
 
 
+# v5 (ticket b1): discriminates the resume chat from the Profile Analysis area.
+ChatSessionKind = Literal["resume", "profile_analysis"]
+
+
 class CreateChatSessionRequest(BaseModel):
     title: str | None = None
+    # v5 (ticket b1): create a Profile Analysis conversation instead of a resume chat. Default
+    # 'resume' keeps every pre-v5 caller (which never sent this field) byte-identical.
+    kind: ChatSessionKind = "resume"
 
 
 class ChatMessageRequest(BaseModel):

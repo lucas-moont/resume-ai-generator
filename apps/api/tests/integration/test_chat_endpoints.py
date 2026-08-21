@@ -88,6 +88,39 @@ class TestChatSessionCrud:
         assert resp.status_code == 201
         assert resp.json()["title"] is None
 
+    async def test_create_session_defaults_to_resume_kind(self, client):
+        # v5 ticket b1: a pre-v5 caller sends no `kind` and must get a resume chat.
+        body = (await client.post("/api/chat/sessions", json={})).json()
+        assert body["kind"] == "resume"
+
+    async def test_create_profile_analysis_session_and_list_is_filtered_by_kind(self, client):
+        # v5 ticket b1: the two areas never show each other's conversations.
+        await client.post("/api/chat/sessions", json={"title": "Meu currículo"})
+        analysis = (
+            await client.post("/api/chat/sessions", json={"title": "Análise", "kind": "profile_analysis"})
+        ).json()
+        assert analysis["kind"] == "profile_analysis"
+
+        resume_list = (await client.get("/api/chat/sessions")).json()["sessions"]
+        analysis_list = (await client.get("/api/chat/sessions?kind=profile_analysis")).json()["sessions"]
+
+        assert [s["title"] for s in resume_list] == ["Meu currículo"]
+        assert [s["title"] for s in analysis_list] == ["Análise"]
+        assert all(s["kind"] == "resume" for s in resume_list)
+        assert all(s["kind"] == "profile_analysis" for s in analysis_list)
+
+    async def test_delete_is_isolated_by_kind(self, client):
+        # Deleting an analysis session leaves the resume session list untouched, and vice versa.
+        resume = (await client.post("/api/chat/sessions", json={"title": "R"})).json()
+        analysis = (
+            await client.post("/api/chat/sessions", json={"title": "A", "kind": "profile_analysis"})
+        ).json()
+
+        assert (await client.delete(f"/api/chat/sessions/{analysis['id']}")).status_code == 204
+
+        resume_list = (await client.get("/api/chat/sessions")).json()["sessions"]
+        assert [s["id"] for s in resume_list] == [resume["id"]]
+
     async def test_list_sessions_orders_by_updated_at_desc(self, client):
         await client.post("/api/chat/sessions", json={"title": "First"})
         await client.post("/api/chat/sessions", json={"title": "Second"})
@@ -97,7 +130,7 @@ class TestChatSessionCrud:
         assert resp.status_code == 200
         sessions = resp.json()["sessions"]
         assert [s["title"] for s in sessions] == ["Second", "First"]
-        assert set(sessions[0].keys()) == {"id", "title", "updatedAt", "activeResumeVersionId"}
+        assert set(sessions[0].keys()) == {"id", "title", "updatedAt", "activeResumeVersionId", "kind"}
 
     async def test_get_session_returns_session_messages_and_null_active_resume(self, client):
         created = (await client.post("/api/chat/sessions", json={"title": "Fresh"})).json()
@@ -120,7 +153,7 @@ class TestChatSessionCrud:
 
         session_obj = resp.json()["session"]
         assert set(session_obj.keys()) == {
-            "id", "title", "updatedAt", "activeResumeVersionId", "locale", "jobDescription", "createdAt",
+            "id", "title", "updatedAt", "activeResumeVersionId", "kind", "locale", "jobDescription", "createdAt",
         }
         assert session_obj["createdAt"] == created["createdAt"]
         assert session_obj["locale"] is None

@@ -106,6 +106,10 @@ class ChatSession(SQLModel, table=True):
     job_description: str | None = None
     locale: str | None = None
     active_resume_version_id: int | None = None  # soft ref -- see module docstring
+    # v5 (ticket b1): discriminates the resume chat ('resume') from the Profile Analysis area
+    # ('profile_analysis'). Default preserves every v1-v4 session; a pre-v5 on-disk DB is
+    # backfilled to 'resume' by migrations._add_missing_chat_sessions_kind_column.
+    kind: str = Field(default="resume", index=True)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 

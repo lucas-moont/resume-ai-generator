@@ -55,6 +55,23 @@ def _add_missing_source_documents_diff_summary_column(engine: Engine) -> None:
         conn.commit()
 
 
+def _add_missing_chat_sessions_kind_column(engine: Engine) -> None:
+    """v5 ticket b1 adds ``chat_sessions.kind`` (`'resume' | 'profile_analysis'`). A pre-v5
+    on-disk DB has the table but not the column; ``create_all()`` never ALTERs an existing
+    table, so add it here. ``ALTER TABLE ... ADD COLUMN ... DEFAULT 'resume'`` is supported by
+    every SQLite version and backfills existing rows to 'resume' (exactly the retrocompatible
+    default -- every pre-v5 session is a resume chat). Idempotent: skips when the column exists.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.connect() as conn:
+        columns = conn.execute(text("PRAGMA table_info(chat_sessions)")).fetchall()
+        if not columns or any(row[1] == "kind" for row in columns):
+            return
+        conn.execute(text("ALTER TABLE chat_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'resume'"))
+        conn.commit()
+
+
 def _note_improvement_proposals_table_added(engine: Engine) -> None:
     """v4 ticket B1 adds the brand-new `improvement_proposals` table straight to
     app/db/tables.py. Unlike the two migrations above (which ALTER an existing table),
@@ -74,6 +91,7 @@ MIGRATIONS: list[Callable[[Engine], None]] = [
     _drop_legacy_resume_versions_template_id_column,
     _add_missing_source_documents_diff_summary_column,
     _note_improvement_proposals_table_added,
+    _add_missing_chat_sessions_kind_column,
 ]
 
 
