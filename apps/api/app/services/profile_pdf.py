@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -5,14 +6,24 @@ from pypdf import PdfReader
 from app.config import profile_pdf_max_chars, resolve_profile_pdf_path
 
 
-def extract_pdf_plain_text(path: Path) -> str:
-    reader = PdfReader(str(path))
+def _extract_from_reader(reader: PdfReader) -> str:
     parts: list[str] = []
     for page in reader.pages:
         t = page.extract_text()
         if t:
             parts.append(t)
     return "\n".join(parts).strip()
+
+
+def extract_pdf_plain_text(path: Path) -> str:
+    return _extract_from_reader(PdfReader(str(path)))
+
+
+def extract_pdf_text_from_bytes(data: bytes) -> str:
+    """Extract plain text from an in-memory PDF (v5 ticket b4: an uploaded LinkedIn PDF export
+    analyzed on the fly, never stored or ingested). Same per-page logic as the path-based
+    reader; caller applies ``truncate_for_prompt`` and the no-text check."""
+    return _extract_from_reader(PdfReader(BytesIO(data)))
 
 
 def truncate_for_prompt(text: str) -> str:

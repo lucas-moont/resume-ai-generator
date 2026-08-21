@@ -1,21 +1,33 @@
 import json
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session
 
+from app.config import max_upload_bytes
 from app.db.tables import ChatSession, ImprovementProposal
 from app.domain.schemas import ChatMessageRequest, CreateChatSessionRequest, RenameChatSessionRequest
 from app.repositories import chat_repo, proposal_repo, resume_repo, source_document_repo
 from app.routers.deps import get_session, resolve_requested_model
+from app.services.analysis_service import analysis_turn_events
 from app.services.chat_service import handle_chat_turn
 from app.services.errors import http_error
 from app.services.generation_service import ExtractionError
 from app.services.llm_client import llm_backend_label
+from app.services.profile_pdf import extract_pdf_text_from_bytes, truncate_for_prompt
 from app.services.profile_resolution import ProfileValidationError
+from app.services.secret_redaction import redact_secrets
 from app.services.streaming import sse
 
 router = APIRouter()
+
+# v5 ticket b4: a scanned/image-only LinkedIn PDF export has no text layer -- surface an
+# actionable 422 instead of handing the analysis motor an empty prompt.
+_ANALYSIS_PDF_NO_TEXT_MESSAGE = (
+    "Este PDF não tem texto extraível (provavelmente um scan/imagem). Reexporte o perfil do "
+    "LinkedIn como PDF de texto (no perfil: 'Mais' → 'Salvar como PDF'), ou descreva a seção "
+    "que quer melhorar diretamente no chat."
+)
 
 
 def _session_dict(row: ChatSession) -> dict:
@@ -240,6 +252,77 @@ async def post_chat_message_stream(
         except json.JSONDecodeError as e:
             yield sse("error", {"message": f"LLM returned invalid JSON: {e}"})
         except Exception as e:
+            yield sse("error", {"message": f"LLM error ({llm_backend_label()}): {e}"})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.post("/api/chat/sessions/{session_id}/analysis/pdf/stream")
+async def post_analysis_pdf_stream(
+    session_id: int,
+    file: UploadFile = File(...),
+    model: str | None = Form(None),
+    locale: str | None = Form(None),
+    session: Session = Depends(get_session),
+):
+    """v5 ticket b4: upload a LinkedIn-exported PDF into a Profile Analysis session and stream a
+    full-profile Analysis Turn. Reuses ONLY the PDF text extraction (never the Ingestion/Merge
+    pipeline): no Source Document is stored and no Profile Version is written -- the PDF is the
+    user's LinkedIn, analyzed, not profile truth to ingest."""
+    chat_session = session.get(ChatSession, session_id)
+    if chat_session is None:
+        raise http_error(404, f"Chat session {session_id} not found")
+    if chat_session.kind != "profile_analysis":
+        raise http_error(400, "PDF analysis is only available in a Profile Analysis session.")
+
+    content = await file.read()
+    if len(content) > max_upload_bytes():
+        raise http_error(413, "This PDF is too large.")
+    try:
+        text = extract_pdf_text_from_bytes(content)
+    except Exception as e:
+        raise http_error(422, f"Could not read this PDF: {e}. Try re-exporting it as a text-based PDF.")
+    if not text.strip():
+        raise http_error(422, _ANALYSIS_PDF_NO_TEXT_MESSAGE)
+    pdf_block = truncate_for_prompt(text)
+
+    resolved_model = resolve_requested_model(model)
+    display = f"Analisar meu perfil do LinkedIn (PDF: {file.filename or 'linkedin.pdf'})"
+
+    # Persist the user turn (mirrors handle_chat_turn's head) before streaming the assistant turn.
+    chat_repo.append_message(session, session_id=chat_session.id, role="user", content=display)
+    if locale is not None:
+        chat_session.locale = locale
+        session.add(chat_session)
+    session.commit()
+
+    async def event_stream():
+        try:
+            async for event, data in analysis_turn_events(
+                session=session,
+                chat_session=chat_session,
+                user_message=display,
+                model=resolved_model,
+                locale=locale,
+                backend_label=llm_backend_label(),
+                linkedin_pdf_block=pdf_block,
+            ):
+                yield sse(event, data)
+        except TimeoutError as e:
+            yield sse("error", {"message": str(e)})
+        except Exception as e:
+            chat_repo.append_message(
+                session,
+                session_id=chat_session.id,
+                role="assistant",
+                content="",
+                intent="analysis",
+                meta=json.dumps(
+                    {"model": resolved_model, "provider": llm_backend_label(), "error": redact_secrets(str(e))}
+                ),
+            )
+            chat_repo.touch_session(session, chat_session.id)
+            session.commit()
             yield sse("error", {"message": f"LLM error ({llm_backend_label()}): {e}"})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -16,7 +16,7 @@ import json
 import pytest
 from sqlmodel import Session, select
 
-from app.db.tables import ChatSession, ResumeVersion
+from app.db.tables import ChatSession, ResumeVersion, SourceDocument
 from app.domain.schemas import GitHubRepoInfo
 from app.repositories import chat_repo, profile_repo, resume_repo
 from app.services import refine_service as refine_service_module
@@ -393,6 +393,63 @@ class TestProfileAnalysisTurn:
         assert "analysis" in kinds
         assert "proposal" not in kinds  # never the v4 Analysis/proposal path
         assert "resume" not in kinds
+
+
+class TestProfileAnalysisPdfUpload:
+    """v5 ticket b4: uploading a LinkedIn PDF into the analysis area extracts text and runs a
+    full Analysis Turn -- WITHOUT ingesting it (no Source Document, no Profile Version)."""
+
+    async def _create_analysis_session(self, client) -> int:
+        return (
+            await client.post("/api/chat/sessions", json={"kind": "profile_analysis"})
+        ).json()["id"]
+
+    async def test_pdf_upload_streams_analysis_and_feeds_extracted_text_to_the_llm(
+        self, client, fake_llm, parse_sse, test_db_engine, monkeypatch
+    ):
+        sid = await self._create_analysis_session(client)
+        extracted = "John Doe\nSenior Product Manager at TechCorp\nLed a team of 8."
+        monkeypatch.setattr("app.routers.chat.extract_pdf_text_from_bytes", lambda data: extracted)
+        fake_llm.queue(json.dumps(_ANALYSIS_RESPONSE))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{sid}/analysis/pdf/stream",
+            files={"file": ("linkedin.pdf", b"%PDF-1.4 fake bytes", "application/pdf")},
+        )
+
+        assert resp.status_code == 200
+        kinds = [e for e, _ in parse_sse(resp.text)]
+        assert "analysis" in kinds and "message" in kinds and "done" in kinds
+        # The extracted PDF text reached the LLM prompt (linkedin_pdf_block).
+        assert extracted in fake_llm.calls[-1]["user"]
+
+        # Read-only: the upload created NO Source Document and NO Resume Version.
+        with Session(test_db_engine) as s:
+            assert s.exec(select(SourceDocument)).all() == []
+            assert s.exec(select(ResumeVersion)).all() == []
+
+    async def test_scanned_pdf_with_no_text_is_an_actionable_422(self, client, monkeypatch):
+        sid = await self._create_analysis_session(client)
+        monkeypatch.setattr("app.routers.chat.extract_pdf_text_from_bytes", lambda data: "   ")
+
+        resp = await client.post(
+            f"/api/chat/sessions/{sid}/analysis/pdf/stream",
+            files={"file": ("scan.pdf", b"%PDF-1.4 scanned", "application/pdf")},
+        )
+
+        assert resp.status_code == 422
+        assert "não tem texto extraível" in resp.json()["detail"]
+
+    async def test_pdf_upload_rejected_on_a_resume_session(self, client, monkeypatch):
+        resume_sid = (await client.post("/api/chat/sessions", json={})).json()["id"]
+        monkeypatch.setattr("app.routers.chat.extract_pdf_text_from_bytes", lambda data: "text")
+
+        resp = await client.post(
+            f"/api/chat/sessions/{resume_sid}/analysis/pdf/stream",
+            files={"file": ("linkedin.pdf", b"%PDF-1.4", "application/pdf")},
+        )
+
+        assert resp.status_code == 400
 
 
 class TestChatMessageStreamRefineIntent:
