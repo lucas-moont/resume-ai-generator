@@ -30,6 +30,7 @@ from app.domain.keywords import extract_jd_keywords
 
 Intent = Literal[
     "generate",
+    "generate_baseline",
     "refine",
     "profile_update",
     "proposal_turn",
@@ -268,6 +269,76 @@ def looks_like_refine_instruction(message: str) -> bool:
     return False
 
 
+# --- baseline (no-posting) resume requests (v6, Baseline Resume) -------------------------------
+#
+# Every generation path in this app is anchored to a pasted posting -- CONTEXT.md states the
+# invariant outright ("No `generate` intent produces a Resume without an approved Improvement
+# Proposal"). So "preciso de um curriculo um pouco mais generalista pra por no meu indeed" had
+# nowhere to go: 13 words, zero JD keywords, so not a posting; no imperative, so not a refine
+# instruction; and the fallback reply could only say "paste a job description". The user was not
+# misunderstood -- the capability did not exist.
+#
+# A baseline request is recognized by TWO signals together, never one: it must name the document
+# (``_RESUME_SCOPE_WORDS``) AND ask for breadth. Requiring both is what keeps "tira o Google
+# Analytics do currículo" (document named, no breadth word) and a posting that happens to say
+# "perfil generalista" (breadth word, document never named) out of this bucket.
+
+_BREADTH_WORDS = frozenset(
+    {
+        # pt-BR
+        "generalista",
+        "generalistas",
+        "generico",
+        "genérico",
+        "generica",
+        "genérica",
+        "geral",
+        "abrangente",
+        "amplo",
+        "ampla",
+        "base",
+        "padrao",
+        "padrão",
+        "aberto",
+        "aberta",
+        # en
+        "generalist",
+        "generic",
+        "general",
+        "broad",
+        "baseline",
+        "master",
+        "standard",
+        "open",
+        "all-purpose",
+    }
+)
+
+# Places a baseline resume gets published. Naming one is itself the request ("um currículo pro
+# meu Indeed" means an open resume even with no breadth adjective anywhere).
+_JOB_BOARD_WORDS = frozenset({"indeed", "catho", "vagas", "infojobs", "glassdoor", "monster"})
+
+# Phrases that say outright there is no posting behind the request.
+_NO_POSTING_MARKERS = ("sem vaga", "sem uma vaga", "nao tenho vaga", "no specific job", "no job posting")
+
+
+def looks_like_baseline_resume_request(message: str) -> bool:
+    """Whether ``message`` asks for an OPEN resume -- one not aimed at a specific posting.
+
+    Two independent ways to qualify, both of which still require the message to name the
+    document itself, so this can never swallow a posting or an ordinary edit:
+      - a breadth word (generalista / generic / base / broad ...), or
+      - a job board the resume is destined for (Indeed, Catho, ...), or an explicit "no posting".
+    """
+    tokens = _tokenize(message)
+    if not _mentions_any(tokens, _RESUME_SCOPE_WORDS):
+        return False
+    if _mentions_any(tokens, _BREADTH_WORDS) or _mentions_any(tokens, _JOB_BOARD_WORDS):
+        return True
+    normalized = _normalized(message)
+    return any(marker in normalized for marker in _NO_POSTING_MARKERS)
+
+
 def _looks_like_profile_update(message: str) -> bool:
     if looks_like_job_description(message):
         return False  # a genuine JD paste always wins -- see classify_intent's docstring
@@ -314,11 +385,23 @@ def classify_intent(
     if _looks_like_profile_update(message):
         return "profile_update"
     if not has_active_resume:
+        # Nothing to refine, so a baseline request is unambiguous here and is checked before the
+        # posting heuristic (a baseline request is not posting-shaped anyway, but the order
+        # states the precedence rather than relying on that).
+        if looks_like_baseline_resume_request(message):
+            return "generate_baseline"
         return "generate" if looks_like_job_description(message) else "question"
     # An active resume no longer wins unconditionally (v6, Second Posting). Order matters and is
     # the whole safety argument -- see the block comment above ``looks_like_new_job_posting``.
+    #
+    # ``refine`` is checked BEFORE the baseline gate on purpose: with a document already open,
+    # "deixa o currículo mais generalista" is an edit of THAT document (the user is pointing at
+    # it), while "preciso de um currículo mais generalista" asks for a new one. The imperative is
+    # what separates the two, and it is the only signal that reliably does.
     if looks_like_refine_instruction(message):
         return "refine"
+    if looks_like_baseline_resume_request(message):
+        return "generate_baseline"
     if looks_like_new_job_posting(message):
         return "generate"
     if looks_like_job_description(message):

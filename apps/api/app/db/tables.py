@@ -181,7 +181,12 @@ class ImprovementProposal(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     session_id: int = Field(foreign_key="chat_sessions.id", ondelete="CASCADE")
-    job_description: str  # the JD that produced this Analysis -- source of truth for approve
+    # The JD that produced this Analysis -- source of truth for approve. Since v6 this holds
+    # EITHER a real pasted posting OR a Target Brief (app/domain/baseline_brief.py), the synthetic
+    # stand-in a Baseline Resume request runs on, so a no-posting request reuses this one pipeline
+    # instead of a parallel path that would skip the Proposal. Use ``is_target_brief`` to tell them
+    # apart -- notably, never read the output language off a brief: it is English prompt text.
+    job_description: str
     items: str  # JSON-serialized list[ProposalItem] (app/domain/schemas.py)
     revision: int = 1  # +1 each `adjust` turn (items replaced in place, never appended)
     status: str = "proposed"  # 'proposed' | 'approved' | 'superseded' | 'discarded'

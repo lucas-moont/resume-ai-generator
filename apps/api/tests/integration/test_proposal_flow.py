@@ -1060,3 +1060,146 @@ class TestApproveHonorsTheRelevanceFilter:
         assert "do NOT reintroduce them" in refine_prompt
         assert "Google Analytics" in refine_prompt
         assert "aim for 8-16" not in refine_prompt
+
+
+class TestBaselineResumeFlow:
+    """v6 (Baseline Resume), end to end: a request with no posting behind it runs the SAME
+    Analysis -> Proposal -> generate pipeline, on a synthetic Target Brief.
+
+    The reported bug was not a misroute — it was a missing capability. "Preciso de um currículo um
+    pouco mais generalista pra pôr no meu indeed" got the canned "paste a job description" reply
+    because every generation path in the app was anchored to a pasted posting.
+    """
+
+    _REPORTED = "Preciso de um currículo um pouco mais generalista pra pôr no meu indeed."
+
+    async def test_a_baseline_request_produces_a_proposal_not_the_canned_reply(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile(headline="Desenvolvedor Full Stack", locale="pt-BR"))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        fake_llm.queue(_proposal_llm_response())
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": self._REPORTED},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "error" not in kinds
+        assert "proposal" in kinds, "a baseline request must reach the Analysis, not a canned reply"
+
+        with Session(test_db_engine) as session:
+            pending = proposal_repo.get_pending(session, created["id"])
+            assert pending is not None
+
+    async def test_the_analysis_receives_a_target_brief_carrying_the_career_target(
+        self, client, fake_llm, write_profile, parse_sse
+    ):
+        write_profile(make_profile(headline="Desenvolvedor Full Stack", locale="pt-BR"))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        fake_llm.queue(_proposal_llm_response())
+
+        await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": self._REPORTED},
+        )
+
+        prompt = fake_llm.calls[-1]["user"]
+        assert "TARGET BRIEF" in prompt
+        assert "no specific job posting" in prompt
+        assert "Career target: Desenvolvedor Full Stack" in prompt
+        # The user's own words travel verbatim, so a narrower target in them can still win.
+        assert "generalista" in prompt
+
+    async def test_the_baseline_locale_comes_from_the_user_not_from_the_english_brief(
+        self, client, fake_llm, write_profile, parse_sse
+    ):
+        """The brief is English prompt text (like every system prompt here), so reading the output
+        language off it would make every baseline resume come out in English. The locale is
+        resolved from the user's own message, falling back to the Profile's."""
+        write_profile(make_profile(headline="Desenvolvedor Full Stack", locale="pt-BR"))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        fake_llm.queue(_proposal_llm_response())
+
+        await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": self._REPORTED},
+        )
+
+        prompt = fake_llm.calls[-1]["user"]
+        assert "pt-BR" in prompt
+        assert 'locale for "message"' in prompt or "Target locale" in prompt
+
+    async def test_a_profile_with_no_headline_is_asked_for_a_target_instead(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        # Broad is not unfocused: an open resume still argues for ONE kind of role, and the
+        # headline is where that comes from. With none, inventing a career direction for someone
+        # is not a guess worth making — and no LLM call is spent finding that out.
+        write_profile(make_profile(headline="", locale="pt-BR"))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": self._REPORTED},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        assert "error" not in [e for e, _ in events]
+        assert "proposal" not in [e for e, _ in events]
+        assert fake_llm.call_count == 0
+
+        message = next(data for e, data in events if e == "message")
+        assert "headline" in message["content"].lower()
+
+        with Session(test_db_engine) as session:
+            assert proposal_repo.get_pending(session, created["id"]) is None
+
+    async def test_approving_a_baseline_proposal_generates_a_resume(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        # The whole point of routing baselines through the existing pipeline: approve works
+        # unchanged, so the invariant "no Resume without an approved Proposal" still holds.
+        #
+        # This also exercises the v6 language gate inside the baseline flow. make_resume_payload()
+        # is English prose while the resolved locale is pt-BR (the Profile's), so the generation
+        # trips wrong_language_issue and a third LLM call runs to rewrite it -- asserted below.
+        write_profile(make_profile(headline="Desenvolvedor Full Stack", locale="pt-BR"))
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        fake_llm.queue(
+            _proposal_llm_response(),
+            json.dumps(make_resume_payload()),
+            json.dumps(make_resume_payload(locale="pt-BR")),
+        )
+
+        await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": self._REPORTED},
+        )
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Aprovar e gerar", "proposalAction": "approve"},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        assert "error" not in [e for e, _ in events], [d for e, d in events if e == "error"]
+        assert "resume" in [e for e, _ in events]
+
+        # The generation prompt was anchored on the brief, exactly where a posting would go.
+        generation_prompt = fake_llm.calls[1]["user"]
+        assert "TARGET BRIEF" in generation_prompt
+        assert "Target locale for labels and prose: pt-BR" in generation_prompt
+
+        # ...and the language gate caught the English output and asked for pt-BR, rather than
+        # letting a Portuguese-targeted baseline ship in English.
+        assert fake_llm.call_count == 3
+        correction_prompt = fake_llm.calls[2]["user"]
+        assert "written in en but this job requires pt-BR" in correction_prompt
+
+        with Session(test_db_engine) as session:
+            assert proposal_repo.get_pending(session, created["id"]) is None

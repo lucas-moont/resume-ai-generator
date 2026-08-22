@@ -42,6 +42,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from app.config import LLM_TIMEOUT_SECONDS, PROJECTS_DIR, PROMPTS_DIR
+from app.domain.baseline_brief import is_target_brief
 from app.domain.keywords import normalize_token
 from app.domain.locale import resolve_locale
 from app.domain.prompts_builder import build_generation_user_msg
@@ -280,7 +281,13 @@ async def generate_resume_events(
         pdf_block = format_profile_pdf_prompt_block(pdf_text, pdf_path.name)
 
     system = load_generate_system_prompt(PROMPTS_DIR)
-    resolved_locale = resolve_locale(locale, job_description, profile.locale)
+    # A Target Brief (v6, Baseline Resume) is ENGLISH prompt text, so sniffing ITS language would
+    # ship a Portuguese-targeted baseline resume in English -- the exact failure this release spent
+    # its time removing. Passing "" makes detect_locale abstain, so resolution falls through to the
+    # explicit request locale or the profile's, which is where a briefless request's language
+    # actually lives. A real posting is still detected from its own text, unchanged.
+    locale_signal = "" if is_target_brief(job_description) else job_description
+    resolved_locale = resolve_locale(locale, locale_signal, profile.locale)
     user_msg = build_generation_user_msg(
         job_description=job_description,
         profile=profile,

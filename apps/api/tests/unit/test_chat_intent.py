@@ -12,12 +12,15 @@ and ``TestSecondPostingRouting`` the v6 routing.
 
 from __future__ import annotations
 
+from app.domain.baseline_brief import build_baseline_brief, has_career_target, is_target_brief
 from app.domain.chat_intent import (
     classify_intent,
+    looks_like_baseline_resume_request,
     looks_like_job_description,
     looks_like_new_job_posting,
     looks_like_refine_instruction,
 )
+from app.domain.schemas import ResumeDocument
 
 GENERIC_JOB_DESCRIPTION = (
     "We are hiring a Senior Backend Engineer to join our platform team. You will design "
@@ -413,3 +416,122 @@ class TestRefineInstructionDetection:
     def test_an_accent_stripped_instruction_is_still_recognized(self) -> None:
         # Users type without accents; the detector folds them before matching.
         assert looks_like_refine_instruction("traduz o curriculo para ingles") is True
+
+
+class TestBaselineResumeRouting:
+    """v6 (Baseline Resume): a request for an OPEN resume — one not aimed at any posting.
+
+    The reported case, verbatim: "Preciso de um currículo um pouco mais generalista pra pôr no meu
+    indeed." 13 words, zero JD keywords, no imperative — so not a posting, not a refine
+    instruction, and the fallback reply could only say "paste a job description". The user was not
+    misunderstood: every generation path in the app was anchored to a posting, so the capability
+    did not exist.
+    """
+
+    _REPORTED = "Preciso de um currículo um pouco mais generalista pra pôr no meu indeed."
+
+    def test_the_reported_message_routes_to_a_baseline_resume(self) -> None:
+        assert classify_intent(message=self._REPORTED, has_active_resume=False) == "generate_baseline"
+
+    def test_it_routes_the_same_way_with_a_resume_already_open(self) -> None:
+        # Asking for "um currículo generalista" is a request for a NEW document, not an edit of
+        # the tailored one sitting there.
+        assert classify_intent(message=self._REPORTED, has_active_resume=True) == "generate_baseline"
+
+    def test_an_imperative_about_the_open_document_stays_a_refine(self) -> None:
+        # The distinction that makes the gate safe: "deixa o currículo mais generalista" points AT
+        # the document on screen, so it is an edit. Only the imperative separates the two.
+        assert classify_intent(message="deixa o currículo mais generalista", has_active_resume=True) == "refine"
+
+    def test_naming_a_job_board_is_itself_the_request(self) -> None:
+        assert classify_intent(message="me gera um CV pro Indeed", has_active_resume=False) == "generate_baseline"
+
+    def test_saying_there_is_no_posting_qualifies(self) -> None:
+        assert (
+            classify_intent(message="quero um curriculo base, sem vaga especifica", has_active_resume=False)
+            == "generate_baseline"
+        )
+
+    def test_a_breadth_word_alone_is_not_enough(self) -> None:
+        # A posting that happens to say "perfil generalista" must never become a baseline request:
+        # the message has to name the DOCUMENT too.
+        posting = (
+            "Estamos contratando uma pessoa desenvolvedora com perfil generalista. "
+            "Requisitos: Python, PostgreSQL, Docker e experiência com APIs REST. "
+            "Responsabilidades: manter serviços em produção e participar de code review. "
+            "Benefícios: plano de saúde e horário flexível."
+        )
+        assert looks_like_baseline_resume_request(posting) is False
+        assert classify_intent(message=posting, has_active_resume=True) == "generate"
+
+    def test_naming_the_document_alone_is_not_enough(self) -> None:
+        # No breadth word and no job board: an ordinary edit.
+        assert looks_like_baseline_resume_request("tira o Google Analytics do currículo") is False
+
+    def test_a_pending_proposal_still_wins(self) -> None:
+        assert (
+            classify_intent(message=self._REPORTED, has_active_resume=True, has_pending_proposal=True)
+            == "proposal_turn"
+        )
+
+
+class TestBaselineBrief:
+    def _profile(self, **overrides) -> ResumeDocument:
+        base = {
+            "fullName": "Lucas Monteiro",
+            "headline": "Desenvolvedor Full Stack",
+            "summary": "Base summary.",
+            "locale": "pt-BR",
+        }
+        base.update(overrides)
+        return ResumeDocument(**base)
+
+    def test_the_brief_states_there_is_no_posting(self) -> None:
+        brief = build_baseline_brief(self._profile(), "quero um currículo generalista")
+        assert "TARGET BRIEF" in brief
+        assert "no specific job posting" in brief
+
+    def test_the_career_target_comes_from_the_profile_headline(self) -> None:
+        brief = build_baseline_brief(self._profile(), "quero um currículo generalista")
+        assert "Career target: Desenvolvedor Full Stack" in brief
+
+    def test_the_users_own_words_are_carried_verbatim(self) -> None:
+        # Not parsed: a heuristic pulling "front-end" out of this would be exactly the kind of
+        # quiet wrong guess the routing gates exist to avoid. The model reads the note instead.
+        brief = build_baseline_brief(self._profile(), "quero um generalista de front-end")
+        assert "quero um generalista de front-end" in brief
+        assert "follow THEIR words" in brief
+
+    def test_a_blank_message_leaves_no_empty_note_block(self) -> None:
+        # And no dangling "follow their words" rule either: instructing the model to obey
+        # something absent from the prompt invites it to invent what that something said.
+        brief = build_baseline_brief(self._profile(), "   ")
+        assert "own words for this request" not in brief
+        assert "follow THEIR words" not in brief
+
+    def test_the_brief_asks_for_breadth_without_asking_for_vagueness(self) -> None:
+        brief = build_baseline_brief(self._profile(), "")
+        assert "favour BREADTH" in brief
+        assert "broad, not" in brief
+
+    def test_the_brief_never_licenses_invention(self) -> None:
+        brief = build_baseline_brief(self._profile(), "")
+        assert "never invent a fact" in brief
+
+    def test_a_brief_is_distinguishable_from_a_real_posting(self) -> None:
+        # Load-bearing, and found by a failing test rather than by review: the brief lives in the
+        # same job_description column a real posting does, and it is ENGLISH prompt text -- so any
+        # stage that sniffs that column for the output language ships a Portuguese-targeted
+        # baseline resume in English. Callers check this to skip detection on a brief.
+        brief = build_baseline_brief(self._profile(), "quero um currículo generalista")
+        assert is_target_brief(brief) is True
+        assert is_target_brief("Estamos contratando uma pessoa desenvolvedora...") is False
+        assert is_target_brief("") is False
+        assert is_target_brief(None) is False
+
+    def test_a_profile_with_no_headline_has_no_career_target(self) -> None:
+        # Broad is not unfocused: with nothing to be broad ABOUT, the caller must ask rather than
+        # invent a career direction for the candidate.
+        assert has_career_target(self._profile()) is True
+        assert has_career_target(self._profile(headline="")) is False
+        assert has_career_target(self._profile(headline="   ")) is False

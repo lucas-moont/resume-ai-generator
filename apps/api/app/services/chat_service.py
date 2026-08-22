@@ -94,6 +94,7 @@ from sqlmodel import Session
 
 from app.config import LLM_TIMEOUT_SECONDS, PROMPTS_DIR
 from app.db.tables import ChatMessage, ChatSession, ImprovementProposal, ResumeVersion, SourceDocument
+from app.domain.baseline_brief import build_baseline_brief, has_career_target, is_target_brief
 from app.domain.chat_intent import classify_intent
 from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, resolve_locale
 from app.domain.profile_patch import PatchOp, PatchValidationFailed, apply_patch
@@ -143,6 +144,24 @@ _REPLY_TEXT = {
     # resume I already have". Asking costs one turn; guessing wrong costs either a discarded
     # refine session or -- the bug this exists for -- a second posting silently treated as an
     # edit of the first one's resume.
+    # v6 (Baseline Resume): the one case the baseline flow cannot proceed from. Broad is not the
+    # same as unfocused -- an open resume still argues for ONE kind of role -- and the Profile's
+    # headline is where that target comes from. With no headline there is nothing to be broad
+    # about, and inventing a career direction for someone is not a guess worth making.
+    "baseline_needs_target": {
+        "en": (
+            "I can build you an open resume — one not aimed at a specific posting — but I need "
+            "to know what role to aim it at. Your profile has no headline yet, so tell me the "
+            "kind of position you're going for (e.g. \"Full Stack Developer\") and I'll analyze "
+            "your profile against that."
+        ),
+        "pt-BR": (
+            "Posso montar um currículo aberto — sem vaga específica — mas preciso saber pra que "
+            "tipo de posição. Seu perfil ainda não tem headline, então me diga o cargo que você "
+            "está buscando (ex.: \"Desenvolvedor Full Stack\") e eu analiso seu perfil com base "
+            "nisso."
+        ),
+    },
     "clarify_scope": {
         "en": (
             "Before I touch anything: is that a **new job posting** you want a fresh resume "
@@ -510,6 +529,7 @@ async def _handle_propose_turn(
     model: str | None,
     locale: str | None,
     backend_label: str,
+    baseline: bool = False,
 ) -> AsyncIterator[tuple[str, dict]]:
     """v4 ticket B3 ("Analysis"): a pasted job description in a session with neither an active
     resume nor a Pending Proposal no longer generates a resume directly (that was v1-v3's
@@ -524,9 +544,30 @@ async def _handle_propose_turn(
     written once a proposal is actually approved (B5), mirroring how ``active_resume_version_id``
     only ever points at a resume that was actually generated, never a merely-proposed one.
     """
-    jd_text = job_description or user_message
     resolved_profile = resolve_active_profile(session)
-    resolved_locale = resolve_locale(locale, jd_text, resolved_profile.profile.locale)
+
+    if baseline:
+        # v6 (Baseline Resume): a request with no posting behind it runs the SAME Analysis ->
+        # Proposal -> generate pipeline, on a synthetic Target Brief instead of a real posting
+        # (see app/domain/baseline_brief.py for why a brief rather than a parallel pipeline).
+        if not has_career_target(resolved_profile.profile):
+            async for event, data in _handle_question_turn(
+                session=session,
+                chat_session=chat_session,
+                locale=locale,
+                user_message=user_message,
+                intent="baseline_needs_target",
+            ):
+                yield event, data
+            return
+        jd_text = build_baseline_brief(resolved_profile.profile, user_message)
+        # The brief is English prompt text, so its language says nothing about the output. The
+        # locale comes from the user's own message, falling back to the Profile's -- NOT from
+        # jd_text, which would make every baseline resume come out in English.
+        resolved_locale = resolve_locale(locale, user_message, resolved_profile.profile.locale)
+    else:
+        jd_text = job_description or user_message
+        resolved_locale = resolve_locale(locale, jd_text, resolved_profile.profile.locale)
 
     system = load_propose_improvements_system_prompt(PROMPTS_DIR)
     user_msg = build_proposal_analysis_user_msg(
@@ -626,7 +667,12 @@ async def _handle_approve_branch(
     that point is ever reached) leaves the proposal `proposed` and reapprovable, exactly as spec
     SS6 requires, with no extra try/except needed here: ``mark_approved`` simply never runs.
     """
-    resolved_locale = _resolve_concrete_locale(locale, proposal.job_description, None)
+    # Same reason as generation_service's locale_signal: a Target Brief is English prompt text
+    # and must not decide the language of the reply the user reads.
+    confirmation_signal = "" if is_target_brief(proposal.job_description) else proposal.job_description
+    resolved_locale = _resolve_concrete_locale(
+        locale, confirmation_signal, resolve_active_profile(session).profile.locale
+    )
     confirmation = confirmation_text or _PROPOSAL_APPROVE_CONFIRMATION_TEXT[resolved_locale]
     chat_repo.append_message(
         session,
@@ -1154,7 +1200,7 @@ async def handle_chat_turn(
                 backend_label=backend_label,
             ):
                 yield event, data
-        elif intent == "generate":
+        elif intent in ("generate", "generate_baseline"):
             async for event, data in _handle_propose_turn(
                 session=session,
                 chat_session=chat_session,
@@ -1163,6 +1209,7 @@ async def handle_chat_turn(
                 model=model,
                 locale=locale,
                 backend_label=backend_label,
+                baseline=intent == "generate_baseline",
             ):
                 yield event, data
         elif intent == "refine":

@@ -37,6 +37,25 @@ Hard limits on subtraction:
 - `targets` must be the **literal labels as they appear in the Profile JSON** (`"Google Analytics"`, not `"analytics tools"`). They are matched exactly downstream — a paraphrase removes nothing.
 - Every drop/compress needs the same job-anchored `rationale` as any other item: say what the posting is about and why this item has no part in it.
 
+## When the input is a TARGET BRIEF instead of a posting
+
+Sometimes there is no posting: the input starts with `TARGET BRIEF` and describes a career target
+plus the fact that the candidate wants an **open resume** (for a job board profile) rather than one
+aimed at a single job. Everything below still applies, with two adjustments:
+
+- **Anchor rationales in the career target, not in a posting.** "The target is Full Stack
+  Developer and most postings for it name a relational database" is a valid anchor; "makes the
+  resume stronger" still is not. Where a normal rationale quotes a requirement, here it names what
+  the market for that target consistently asks for — or what the brief itself states.
+- **Relevance triage judges against the target, favouring breadth.** Bucket 1 ("asked for")
+  becomes "what this kind of role commonly asks for, across its common variations", and bucket 2
+  ("adjacent") widens accordingly. Only bucket 4 — genuinely another discipline or another career
+  direction — is still noise worth dropping. Do not prune a skill just because one particular
+  employer might not use it: this document goes to many.
+
+An open resume is broad, not unfocused. It still argues for ONE kind of role, and anything that
+argues for nothing at all is still worth removing.
+
 ## Truthfulness (non-negotiable)
 
 - NEVER invent employers, job titles, dates, degrees, certifications, metrics, or projects. Only reference facts already present in the Profile JSON.
@@ -65,6 +84,10 @@ Hard limits on subtraction:
 A short title (60 characters or fewer) naming the job from the job description, in the job
 description's own language (e.g. "Full Stack Engineer — Trading Platform"). This becomes the
 chat session's own title, replacing whatever excerpt-based title it had before.
+
+For a TARGET BRIEF there is no job to name, so title it by what the document IS, in the user's
+locale — e.g. "Currículo base — Desenvolvedor Full Stack" / "Baseline resume — Full Stack
+Developer" — so it is distinguishable at a glance from the job-specific conversations beside it.
 
 ## JSON shape (the ONLY thing in your response)
 
