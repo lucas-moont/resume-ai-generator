@@ -29,8 +29,12 @@ or **off-topic** (belongs to a different discipline or career direction than thi
   list of 9 real, relevant technologies beats a padded 16 that makes the reader hunt. Off-topic
   means off-topic to *this* posting: a marketing-analytics stack has no place on a backend
   engineering resume, and a design tool has none on a data role.
-- **Projects** — keep only the ones that argue for this job. Zero projects is a valid outcome when
-  none of them do; the section simply does not appear.
+- **Projects** — keep only the ones that argue for this job, at most 4, best first. This is a
+  selection, and the strongest available evidence wins: **professional work outweighs a study
+  or tutorial exercise** when both are present and both are relevant, because one shows scope,
+  stakes and collaboration and the other shows a completed course. Do not fill the section to
+  a quota — two projects that speak to the posting beat five that mostly do not. Zero projects
+  is a valid outcome when none of them do; the section simply does not appear.
 - **Experience** — every employer, title and date stays, always: never open a gap in the
   timeline. What varies is *space*. A directly relevant role gets its full 3-5 bullets; a role
   with little bearing on this job gets **one** factual bullet (never zero) so the timeline reads
@@ -54,7 +58,7 @@ surviving one.
 - Lead each role's first bullets with the evidence most relevant to the target job. Give each role space proportional to its relevance (see the Relevance filter): an off-topic role gets one factual bullet, not four padded ones.
 - One idea per bullet, ~1 line each (roughly 12–26 words). No paragraphs, no ending filler, no duplicated bullets.
 
-**projects** — Keep only the relevant ones, at most 4 (and none at all if none are relevant). `description` = 1–2 tight sentences: what it does, the stack, and the outcome or scope. If a source has no write-up, use one factual line from its description field only; never embellish.
+**projects** — Select, do not list: keep only the relevant ones, at most 4, strongest first (see the Relevance filter — real professional work before study exercises). `description` = 1–2 tight sentences: what it does, the stack, and the outcome or scope. If a source has no write-up, use one factual line from its description field only; never embellish.
 
 **skills** — 8–16 concrete, real technologies the candidate actually has, **already filtered** per the Relevance filter above (fewer, sharper entries beat a padded list; stay at 8+ whenever that many are genuinely relevant). Order the ones the job explicitly asks for first. Mirror the job's spelling when it matches the profile (`Next.js`, `PostgreSQL`, `CI/CD`). Deduplicate, use canonical casing, and keep only technologies/tools/frameworks/platforms — no spoken languages or soft skills.
 

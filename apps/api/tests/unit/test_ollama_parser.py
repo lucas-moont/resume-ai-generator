@@ -454,10 +454,13 @@ class AnchorAgreedImprovementsTests(unittest.TestCase):
         self.assertEqual([p.name for p in parsed.projects], ["Beta", "Alpha"])
         self.assertEqual(parsed.projects[0].description, "Rewritten beta description for the job.")
 
-        # Same patch, no approved "projects" item -- profile order is kept (pre-QA-04 behavior).
+        # CHANGED in v6: the approved "projects" item is no longer what unlocks the patch's
+        # order. Selection (and therefore ordering, its degenerate case) is now always the
+        # LLM's to make within the profile's own set, so the same patch reorders with or
+        # without an approved item -- the two branches this used to distinguish collapsed
+        # into one. See ProjectSelectionTests for the selection behavior itself.
         parsed_without_item = parse_resume_json(raw, fallback, refine=False)
-        self.assertEqual([p.name for p in parsed_without_item.projects], ["Alpha", "Beta"])
-        # The SET of projects never changes either way -- only the order.
+        self.assertEqual([p.name for p in parsed_without_item.projects], ["Beta", "Alpha"])
         self.assertEqual(
             {p.name for p in parsed.projects}, {p.name for p in parsed_without_item.projects}
         )
@@ -602,8 +605,26 @@ class AnchorRelevanceFilterTests(unittest.TestCase):
         parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
         self.assertEqual([p.name for p in parsed.projects], ["Trading API"])
 
-        parsed_without_plan = parse_resume_json(raw, fallback, refine=False)
-        self.assertIn("Marketing Dashboard", [p.name for p in parsed_without_plan.projects])
+        # This test originally also asserted that WITHOUT the plan the project survived. That
+        # stopped being the drop's doing once project selection was honored (v6): here the LLM
+        # simply did not select it, which is now enough on its own. What the approved drop still
+        # adds is a veto that outranks selection -- pinned by
+        # ProjectSelectionTests::test_an_approved_drop_still_removes_a_project_the_llm_selected,
+        # where the model DOES select the dropped project and it is removed anyway.
+        selected_it_back = json.dumps(
+            {
+                "projects": [
+                    {"name": "Marketing Dashboard", "description": "GA4 funnels."},
+                    {"name": "Trading API", "description": "Order routing."},
+                ]
+            }
+        )
+        without_plan = parse_resume_json(selected_it_back, fallback, refine=False)
+        self.assertIn("Marketing Dashboard", [p.name for p in without_plan.projects])
+        with_plan = parse_resume_json(
+            selected_it_back, fallback, refine=False, agreed_improvements=agreed
+        )
+        self.assertNotIn("Marketing Dashboard", [p.name for p in with_plan.projects])
 
     def test_dropping_every_project_never_promotes_a_fabricated_one(self) -> None:
         # The `else` branch of the projects block is the PDF/seed passthrough. A drop that empties
@@ -748,6 +769,126 @@ class LocaleAuthorityTests(unittest.TestCase):
         parsed = parse_resume_json(raw, self._profile(), refine=True)
         self.assertEqual(parsed.locale, "en")
 
+
+class ProjectSelectionTests(unittest.TestCase):
+    """v6: the LLM SELECTS which of the profile's projects appear; it still cannot add one.
+
+    Until v6 the anchor appended every project the model left out, so a resume carried the whole
+    inventory no matter how little of it spoke to the job -- "keep only the relevant ones, at most
+    4" in the prompt was overruled downstream. Projects are the showcase section: five entries,
+    three of them study exercises, bury the two that argue for the role.
+
+    Omitting a real project is curation; inventing one is a lie. These tests pin that the anchor
+    now distinguishes the two, and that the "model ignored the profile" floor still holds.
+    """
+
+    def _profile(self) -> ResumeDocument:
+        return ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            projects=[
+                {"name": "GymPass API Clone", "description": "Study project, Node.js."},
+                {"name": "Daily Diet", "description": "Study project, REST API."},
+                {"name": "Space Tourism Website", "description": "Study project, front-end."},
+                {"name": "AI Document Creation", "description": "Ports & Adapters, Next.js."},
+                {"name": "AI Video Editor", "description": "Remotion, Next.js 14, Zustand."},
+            ],
+            locale="en",
+        )
+
+    def test_the_llm_may_ship_a_subset_of_the_profile_projects(self) -> None:
+        raw = json.dumps(
+            {
+                "projects": [
+                    {"name": "AI Video Editor", "description": "Browser video editor in Remotion."},
+                    {"name": "AI Document Creation", "description": "Multi-source AI extraction."},
+                ]
+            }
+        )
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual(
+            [p.name for p in parsed.projects], ["AI Video Editor", "AI Document Creation"]
+        )
+        self.assertNotIn("Daily Diet", [p.name for p in parsed.projects])
+
+    def test_a_selected_project_keeps_its_identity_and_adopts_the_rewritten_description(self) -> None:
+        raw = json.dumps(
+            {"projects": [{"name": "AI Video Editor", "description": "Tailored write-up."}]}
+        )
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual([p.name for p in parsed.projects], ["AI Video Editor"])
+        self.assertEqual(parsed.projects[0].description, "Tailored write-up.")
+
+    def test_an_invented_project_is_still_discarded_while_selecting(self) -> None:
+        # The guarantee that must survive the new freedom: selection is from the profile only.
+        raw = json.dumps(
+            {
+                "projects": [
+                    {"name": "AI Video Editor", "description": "Real one."},
+                    {"name": "Kubernetes Platform Migration", "description": "Never happened."},
+                ]
+            }
+        )
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual([p.name for p in parsed.projects], ["AI Video Editor"])
+
+    def test_the_same_profile_project_named_twice_is_taken_once(self) -> None:
+        raw = json.dumps(
+            {
+                "projects": [
+                    {"name": "AI Video Editor", "description": "First."},
+                    {"name": "ai video editor", "description": "Duplicate, different casing."},
+                ]
+            }
+        )
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual([p.name for p in parsed.projects], ["AI Video Editor"])
+        self.assertEqual(parsed.projects[0].description, "First.")
+
+    def test_matching_nothing_keeps_the_profile_intact_rather_than_emptying_it(self) -> None:
+        # The floor. No match means the model ignored the candidate (the same signal the
+        # experience block reads as a generic template), not that it curated down to zero.
+        raw = json.dumps({"projects": [{"name": "Some Template Project", "description": "x"}]})
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual(len(parsed.projects), 5)
+
+    def test_an_omitted_projects_key_keeps_the_profile_intact(self) -> None:
+        # Distinct from "selected none": the model said nothing about projects at all.
+        raw = json.dumps({"headline": "Full Stack Developer"})
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual(len(parsed.projects), 5)
+
+    def test_an_approved_drop_still_removes_a_project_the_llm_selected(self) -> None:
+        # Drop outranks selection: the user vetoed it, so re-selecting it changes nothing.
+        raw = json.dumps(
+            {
+                "projects": [
+                    {"name": "Daily Diet", "description": "Study project."},
+                    {"name": "AI Video Editor", "description": "Real one."},
+                ]
+            }
+        )
+        agreed = [
+            ProposalItem(
+                id=1,
+                section="projects",
+                op="drop",
+                current="Daily Diet",
+                proposed="Remover o projeto Daily Diet.",
+                targets=["Daily Diet"],
+                rationale="A vaga é sênior e o projeto é um exercício de estudo.",
+            )
+        ]
+        parsed = parse_resume_json(raw, self._profile(), refine=False, agreed_improvements=agreed)
+
+        self.assertEqual([p.name for p in parsed.projects], ["AI Video Editor"])
 
 if __name__ == "__main__":
     unittest.main()

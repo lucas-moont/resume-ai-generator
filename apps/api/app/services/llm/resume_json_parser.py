@@ -8,7 +8,6 @@ from app.domain.entity_identity import (
     entity_key,
     match_education_entries,
     match_experience_entries,
-    match_projects_by_name,
     skill_token,
 )
 from app.domain.schemas import ProposalItem
@@ -295,12 +294,6 @@ def _agreed_skills_text(agreed_improvements: list[ProposalItem] | None) -> str:
     return skill_token(" ".join(texts))
 
 
-def _has_agreed_projects_item(agreed_improvements: list[ProposalItem] | None) -> bool:
-    return bool(agreed_improvements) and any(
-        getattr(item, "section", None) == "projects" for item in agreed_improvements
-    )
-
-
 # Absolute floor for the Relevance Filter's skill subtraction: however aggressively the approved
 # plan prunes, a resume that reaches the reader with fewer than this many skills is worse than one
 # carrying some noise (and would immediately trip quality.py's own "list the technologies" gate).
@@ -482,10 +475,23 @@ def _anchor_generate_to_profile(
         out["headline"] = fallback.headline
         out["summary"] = fallback.summary
 
-    # Projects: anchor to profile projects, adopting a rewritten description only on a match.
-    # With an agreed "projects" item, ALSO adopt the patch's order for matched projects
-    # (QA-04) -- the *set* is still always the profile's own, only the order and description
-    # can move; non-matched profile projects are appended at the end in their original order.
+    # Projects: the LLM SELECTS from the profile's projects; it can never add one.
+    #
+    # Until v6 the anchor iterated the profile's own list and appended every project the model
+    # left out, so a resume always carried the candidate's entire project inventory however
+    # little of it spoke to the job -- "at most 4, only the relevant ones" in the prompt was
+    # simply overruled downstream. Projects are the showcase section: shipping five, three of
+    # them study exercises, buries the two that argue for the role.
+    #
+    # Selection is now honored, and the anti-fabrication guarantee is unchanged -- a project not
+    # in the profile is still discarded, matched by ``entity_key``, and only the DESCRIPTION of a
+    # matched project may be rewritten. Omitting a real project is curation, not a lie; inventing
+    # one is. This also collapses what used to be two branches (with/without an approved
+    # "projects" item), since reordering is just a special case of selecting everything.
+    #
+    # The floor: if the model matched NOTHING in the profile, that is not curation, it is the
+    # model ignoring the candidate (the same signal the experience block treats as a generic
+    # template above) -- so the profile's own list is kept intact rather than emptied.
     base_proj = out.get("projects") or []
     patch_proj = patch.get("projects") if isinstance(patch.get("projects"), list) else []
     # An approved "projects" drop (v6) prunes the *set* before either branch runs -- the only
@@ -512,38 +518,26 @@ def _anchor_generate_to_profile(
         # Projects section, and the patch's own list is discarded rather than promoted.
         out["projects"] = []
     elif base_proj:
-        if _has_agreed_projects_item(agreed_improvements):
-            base_by_key: dict[str, dict] = {}
-            for b in base_proj:
-                base_by_key.setdefault(entity_key(b.get("name")), b)
-            anchored_proj = []
-            used_keys: set[str] = set()
-            for p in patch_proj:
-                if not isinstance(p, dict):
-                    continue
-                key = entity_key(p.get("name"))
-                base = base_by_key.get(key)
-                if not key or base is None or key in used_keys:
-                    continue
-                desc = p.get("description")
-                merged = dict(base)
-                if isinstance(desc, str) and desc.strip():
-                    merged["description"] = desc.strip()
-                anchored_proj.append(merged)
-                used_keys.add(key)
-            for b in base_proj:
-                if entity_key(b.get("name")) not in used_keys:
-                    anchored_proj.append(b)
-            out["projects"] = anchored_proj
-        else:
-            by_name = match_projects_by_name(patch_proj)
-            anchored_proj = []
-            for base in base_proj:
-                match = by_name.get(entity_key(base.get("name")))
-                if match and isinstance(match.get("description"), str) and match["description"].strip():
-                    base = {**base, "description": match["description"].strip()}
-                anchored_proj.append(base)
-            out["projects"] = anchored_proj
+        base_by_key: dict[str, dict] = {}
+        for b in base_proj:
+            base_by_key.setdefault(entity_key(b.get("name")), b)
+        selected_proj: list[dict] = []
+        used_keys: set[str] = set()
+        for p in patch_proj:
+            if not isinstance(p, dict):
+                continue
+            key = entity_key(p.get("name"))
+            base = base_by_key.get(key)
+            if not key or base is None or key in used_keys:
+                continue  # invented, unnamed, or already taken -- never promoted
+            merged = dict(base)
+            desc = p.get("description")
+            if isinstance(desc, str) and desc.strip():
+                merged["description"] = desc.strip()
+            selected_proj.append(merged)
+            used_keys.add(key)
+        # No match at all means the model ignored the profile, not that it chose nothing.
+        out["projects"] = selected_proj if selected_proj else base_proj
     else:
         out["projects"] = patch_proj
 
