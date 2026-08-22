@@ -341,6 +341,7 @@ def _anchor_generate_to_profile(
     patch: dict,
     *,
     agreed_improvements: list[ProposalItem] | None = None,
+    expected_locale: str | None = None,
 ) -> dict:
     """Build a tailored resume that cannot fabricate facts.
 
@@ -402,9 +403,16 @@ def _anchor_generate_to_profile(
         out["headline"] = llm_headline.strip()
     if llm_summary and llm_summary.strip():
         out["summary"] = llm_summary.strip()
-    locale = patch.get("locale")
-    if isinstance(locale, str) and locale.strip():
-        out["locale"] = locale.strip()
+    # Locale: the server's resolved value is the authority when it has one (v6), exactly like
+    # company and dates above. Before v6 the LLM's own claim was adopted unconditionally, so a
+    # model that decided to answer in the wrong language also got to relabel the document as
+    # that language -- leaving nothing downstream able to tell the mistake from a choice.
+    if expected_locale:
+        out["locale"] = expected_locale
+    else:
+        locale = patch.get("locale")
+        if isinstance(locale, str) and locale.strip():
+            out["locale"] = locale.strip()
 
     if not str(out.get("fullName") or "").strip():
         pv = patch.get("fullName")
@@ -623,6 +631,7 @@ def _merge_llm_patch_into_profile(
     patch: dict,
     *,
     refine: bool,
+    expected_locale: str | None = None,
 ) -> dict:
     out = fallback.model_dump()
     out.pop("githubUsername", None)
@@ -636,6 +645,14 @@ def _merge_llm_patch_into_profile(
         for key in list_keys:
             if key in patch and isinstance(patch[key], list):
                 out[key] = patch[key]
+        # A refine may legitimately change the document's language -- but only when the user
+        # ASKED. ``expected_locale`` is how the caller says "this instruction was not about
+        # language, so keep the one the document already had" (refine_service decides, since it
+        # is the only layer holding the user's message). 13 of the 14 locale drifts measured in
+        # the local DB happened here: the model quietly answered in English and relabeled the
+        # document to match, off the back of an instruction that never mentioned language.
+        if expected_locale:
+            out["locale"] = expected_locale
         return out
 
     for key in scalar_keys:
@@ -695,7 +712,12 @@ def parse_resume_json(
     *,
     refine: bool = False,
     agreed_improvements: list[ProposalItem] | None = None,
+    expected_locale: str | None = None,
 ) -> ResumeDocument:
+    """``expected_locale`` (v6, optional/additive): the locale the CALLER has authority over --
+    the value resolved from the job description for a generation, or the document's current
+    language for a refine that was not about language. Supplied, it overrides whatever the LLM
+    claimed; omitted, behavior is byte-identical to pre-v6."""
     raw = raw.strip()
     m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
     if m:
@@ -706,9 +728,16 @@ def parse_resume_json(
     patch = _normalize_resume_dict(_unwrap_resume_dict(data))
     if fallback is not None:
         if refine:
-            merged = _merge_llm_patch_into_profile(fallback, patch, refine=True)
+            merged = _merge_llm_patch_into_profile(
+                fallback, patch, refine=True, expected_locale=expected_locale
+            )
         else:
-            merged = _anchor_generate_to_profile(fallback, patch, agreed_improvements=agreed_improvements)
+            merged = _anchor_generate_to_profile(
+                fallback,
+                patch,
+                agreed_improvements=agreed_improvements,
+                expected_locale=expected_locale,
+            )
         _fill_missing_scalars_from_fallback(merged, fallback, refine=refine)
     else:
         merged = patch

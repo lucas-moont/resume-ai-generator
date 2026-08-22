@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, normalize_locale
+
 TemplateId = Literal[
     "modern",
     "classic",
@@ -56,6 +58,27 @@ class ResumeDocument(BaseModel):
     skills: list[str] = Field(default_factory=list)
     education: list[EducationItem] = Field(default_factory=list)
     locale: str = "pt-BR"
+
+    @field_validator("locale", mode="before")
+    @classmethod
+    def _fold_locale_onto_a_supported_one(cls, value: object) -> object:
+        """Coerce, never reject: an unsupported locale label becomes a supported one.
+
+        ``locale`` is typed ``str`` rather than a ``Literal`` on purpose. 8 resume versions
+        already persisted carry ``en-US`` (an LLM's own invention -- nothing validated this
+        field before v6), and a ``Literal`` would make every one of them unloadable, breaking
+        rehydration of real chat sessions to fix a cosmetic drift. Folding on the way IN
+        normalizes those rows the next time they are read, and keeps the invariant every
+        consumer wants: the value is always exactly ``"pt-BR"`` or ``"en"``.
+
+        A value that is not a recognizable variant of either language falls back to the default
+        rather than raising -- the document itself is still fine, and refusing to load it over
+        its language tag would lose real work.
+        """
+        folded = normalize_locale(value)
+        if folded is not None:
+            return folded
+        return value if value in SUPPORTED_LOCALES else DEFAULT_LOCALE
 
 
 class ProfileMaster(ResumeDocument):

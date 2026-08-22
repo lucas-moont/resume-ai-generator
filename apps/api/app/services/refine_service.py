@@ -13,6 +13,7 @@ import re
 from collections.abc import AsyncIterator
 
 from app.config import LLM_TIMEOUT_SECONDS, PROJECTS_DIR, PROMPTS_DIR
+from app.domain.locale import mentions_language_change, normalize_locale
 from app.domain.prompts_builder import build_refine_user_msg
 from app.domain.schemas import GitHubRepoInfo, ProfileMaster, ResumeDocument
 from app.prompt_loader import load_refine_system_prompt
@@ -77,12 +78,19 @@ async def refine_resume_events(
     else:
         project_sources_block = ""
 
+    # v6: a refine changes the document's language ONLY when the instruction was about
+    # language. Otherwise the current language is pinned, both in the prompt (so the model is
+    # told) and in the parse below (so it holds even if the model ignores being told).
+    language_requested = mentions_language_change(message)
+    pinned_locale = None if language_requested else (normalize_locale(resume.locale) or resume.locale)
+
     system = load_refine_system_prompt(PROMPTS_DIR)
     user_msg = build_refine_user_msg(
         resume=resume,
         pdf_block=pdf_block,
         message=message,
         project_sources_block=project_sources_block,
+        pinned_locale=pinned_locale,
     )
 
     yield "stage", {
@@ -114,5 +122,5 @@ async def refine_resume_events(
     if question:
         yield "done", {"progress": 100, "resume": None, "question": question}
         return
-    refined = parse_resume_json(raw, resume, refine=True)
+    refined = parse_resume_json(raw, resume, refine=True, expected_locale=pinned_locale)
     yield "done", {"progress": 100, "resume": refined, "question": None}

@@ -463,9 +463,6 @@ class AnchorAgreedImprovementsTests(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class AnchorRelevanceFilterTests(unittest.TestCase):
     """v6 (Relevance Filter): an approved ``op="drop"`` item is the ONLY thing that lets the
@@ -699,3 +696,58 @@ class AnchorRelevanceFilterTests(unittest.TestCase):
 
         parsed = parse_resume_json(raw, fallback, refine=False, agreed_improvements=agreed)
         self.assertIn("Google Analytics", parsed.skills)
+
+
+class LocaleAuthorityTests(unittest.TestCase):
+    """v6: when the caller has authority over the language, the LLM's own claim never wins.
+
+    Before v6 ``patch["locale"]`` was adopted unconditionally in BOTH directions — so a model
+    that decided to answer in the wrong language also got to relabel the document as that
+    language, leaving nothing downstream able to tell a mistake from a choice. 8 resume versions
+    in the local DB ended up labelled ``en-US``, which is not even a locale this app writes.
+    """
+
+    def _profile(self) -> ResumeDocument:
+        return ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=["Python", "FastAPI"],
+            locale="pt-BR",
+        )
+
+    def test_generate_pins_the_locale_the_server_resolved(self) -> None:
+        raw = json.dumps({"headline": "Full Stack Developer", "locale": "en"})
+        parsed = parse_resume_json(raw, self._profile(), refine=False, expected_locale="pt-BR")
+        self.assertEqual(parsed.locale, "pt-BR")
+
+    def test_generate_without_an_expected_locale_still_follows_the_llm(self) -> None:
+        # Additive: omitting the argument reproduces pre-v6 behavior exactly.
+        raw = json.dumps({"headline": "Full Stack Developer", "locale": "en"})
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+        self.assertEqual(parsed.locale, "en")
+
+    def test_refine_pins_the_document_language_when_the_caller_says_so(self) -> None:
+        # The 13-of-14 case measured in the local DB: an instruction that never mentioned
+        # language, and the model quietly switched it.
+        current = self._profile()
+        raw = json.dumps({"headline": "Full Stack Developer", "locale": "en-US"})
+        parsed = parse_resume_json(raw, current, refine=True, expected_locale="pt-BR")
+        self.assertEqual(parsed.locale, "pt-BR")
+
+    def test_refine_can_still_translate_when_no_locale_is_pinned(self) -> None:
+        # refine_service passes None when the instruction WAS about language, so "traduz para
+        # inglês" must keep working — the pin is a licence check, not a freeze.
+        raw = json.dumps({"headline": "Full Stack Developer", "locale": "en"})
+        parsed = parse_resume_json(raw, self._profile(), refine=True, expected_locale=None)
+        self.assertEqual(parsed.locale, "en")
+
+    def test_an_invented_locale_label_never_survives_the_parse(self) -> None:
+        # Even with no authority asserted, the schema folds it: en-US is not a locale here.
+        raw = json.dumps({"headline": "Full Stack Developer", "locale": "en-US"})
+        parsed = parse_resume_json(raw, self._profile(), refine=True)
+        self.assertEqual(parsed.locale, "en")
+
+
+if __name__ == "__main__":
+    unittest.main()

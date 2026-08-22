@@ -53,6 +53,62 @@ def detect_locale(text: str) -> str | None:
     return "pt-BR" if pt_score > en_score else "en"
 
 
+# Words that mean the user's instruction is ABOUT language. Nothing else may change a
+# document's language (see ``mentions_language_change``), so this vocabulary is the entire
+# licence for a refine to switch it.
+_LANGUAGE_CHANGE_WORDS = frozenset(
+    {
+        # pt-BR
+        "traduz", "traduza", "traduzir", "traducao", "tradução", "idioma", "lingua", "língua",
+        "ingles", "inglês", "portugues", "português", "bilingue", "bilíngue",
+        # en
+        "translate", "translated", "translation", "language", "english", "portuguese",
+        "brazilian",
+    }
+)
+
+
+def mentions_language_change(message: str) -> bool:
+    """Whether a refine instruction is about the document's LANGUAGE.
+
+    Used as a licence, not a command: when it is False the caller pins the document to the
+    language it already had, so the model cannot switch it as a side effect of an unrelated
+    edit. When True the caller stands back and lets the LLM answer the actual request -- a user
+    asking "traduz para inglês" must still get English.
+    """
+    if not message:
+        return False
+    tokens = set(re.findall(r"[a-zà-ÿ]+", message.lower()))
+    return not tokens.isdisjoint(_LANGUAGE_CHANGE_WORDS)
+
+
+def normalize_locale(value: object) -> str | None:
+    """Fold a locale-ish string onto one of ``SUPPORTED_LOCALES``, or ``None`` if it is not one.
+
+    The app writes resumes in exactly two languages, but nothing stopped an LLM from returning
+    a third label for one of them: ``en-US`` reached ``ResumeDocument.locale`` (a bare ``str``,
+    validated by nothing) and was persisted as-is -- 8 stored resume versions carry it. Every
+    consumer then has to guess: the preview's ``startsWith('pt')`` happens to survive it, an
+    equality check against ``"en"`` does not.
+
+    Region subtags are dropped (``en-US`` -> ``en``, ``pt_BR`` -> ``pt-BR``) and any Portuguese
+    variant folds onto ``pt-BR``, since that is the only Portuguese this app writes. Anything
+    genuinely unsupported returns ``None`` so the caller decides -- this function never invents
+    a language for a document.
+    """
+    if not isinstance(value, str):
+        return None
+    tag = value.strip().replace("_", "-").lower()
+    if not tag:
+        return None
+    primary = tag.split("-")[0]
+    if primary == "pt":
+        return "pt-BR"
+    if primary == "en":
+        return "en"
+    return None
+
+
 def resolve_locale(requested: str | None, job_description: str, profile_locale: str | None) -> str:
     """Resolve the output locale.
 

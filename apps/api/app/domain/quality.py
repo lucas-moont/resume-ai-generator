@@ -3,6 +3,7 @@
 import re
 
 from app.domain.keywords import extract_jd_keywords, normalize_token
+from app.domain.locale import detect_locale
 from app.domain.schemas import ProposalItem, ResumeDocument
 
 # Weak bullet openers that signal generic, low-impact writing (checked case-insensitively).
@@ -66,13 +67,73 @@ def allows_lean_skills(agreed_improvements: list[ProposalItem] | None) -> bool:
     )
 
 
+def resume_prose_text(resume: ResumeDocument) -> str:
+    """The reader-visible PROSE of a resume, for language detection (v6).
+
+    Only fields whose wording is the LLM's own: summary, bullets, job titles, degrees, project
+    write-ups. Deliberately excludes ``skills`` (technology names look identical in both
+    languages and would dilute the signal toward English) and the contact fields (proper nouns
+    and addresses, no language content at all).
+    """
+    parts: list[str] = [resume.summary or "", resume.headline or ""]
+    for e in resume.experience:
+        parts.append(e.title or "")
+        parts.extend(e.highlights or [])
+    for p in resume.projects:
+        parts.append(p.description or "")
+    for e in resume.education:
+        parts.append(e.degree or "")
+        parts.append(e.details or "")
+    return " ".join(part for part in parts if part)
+
+
+# A document shorter than this has too little prose for detect_locale to be trusted; below it
+# a language mismatch is not reported rather than reported wrongly.
+_LOCALE_CHECK_MIN_WORDS = 40
+
+
+def wrong_language_issue(resume: ResumeDocument, expected_locale: str | None) -> str | None:
+    """The issue text when the resume's PROSE is not in ``expected_locale`` -- otherwise None.
+
+    This is the one place a quality issue is allowed to ask for a rewrite of everything, and the
+    one case where doing so cannot fabricate anything: translating a stated fact leaves the fact
+    identical (``prompts/system/generate.md`` already declares translating a title or degree
+    required, and explicitly not invention). Contrast the contact gaps handled on the client --
+    those the model genuinely cannot fill, so they are never issues.
+
+    Detection runs on the generated prose, NOT on the ``locale`` field: since v6 that field is
+    pinned by the server, so it always says the right thing and can no longer reveal the drift.
+    """
+    if not expected_locale:
+        return None
+    prose = resume_prose_text(resume)
+    if len(prose.split()) < _LOCALE_CHECK_MIN_WORDS:
+        return None
+    detected = detect_locale(prose)
+    if detected is None or detected == expected_locale:
+        return None
+    return (
+        f"The resume is written in {detected} but this job requires {expected_locale}. Rewrite "
+        f"EVERY reader-visible field in {expected_locale} -- summary, all bullets, job titles, "
+        "degrees and project descriptions -- keeping every fact identical. Company, institution, "
+        "product and technology names stay as they are."
+    )
+
+
 def quality_issues(
     resume: ResumeDocument,
     job_description: str,
     *,
     allow_lean_skills: bool = False,
+    expected_locale: str | None = None,
 ) -> list[str]:
     issues: list[str] = []
+
+    # First, because it is the only issue that invalidates the whole document: a resume in the
+    # wrong language fails the reader no matter how good its bullets are.
+    language_issue = wrong_language_issue(resume, expected_locale)
+    if language_issue:
+        issues.append(language_issue)
 
     summary_words = len((resume.summary or "").split())
     if summary_words < 25:

@@ -211,6 +211,7 @@ def build_refine_user_msg(
     pdf_block: str,
     message: str,
     project_sources_block: str = "",
+    pinned_locale: str | None = None,
 ) -> str:
     """Compose the refine user prompt (shared by /api/refine and /api/refine/stream).
 
@@ -226,10 +227,22 @@ def build_refine_user_msg(
             "never introduce employers, roles, projects, or numbers that are not in the profile):\n"
             + project_sources_block.strip()
         )
+    # v6: stated in the prompt AND enforced in the parser. Telling the model is what keeps the
+    # PROSE in the right language (the parser can only fix the label, never the words), and
+    # pinning it in the parser is what makes the outcome true even when the model ignores this.
+    locale_line = ""
+    if pinned_locale:
+        locale_line = (
+            "\n\n"
+            f"This document's language is {pinned_locale} and the instruction above is NOT "
+            f"about language: keep EVERY reader-visible field in {pinned_locale} (including job "
+            f'titles and degrees) and return "locale": "{pinned_locale}". Do not translate any '
+            "part of the document."
+        )
     return f"""Current resume JSON:
 {resume.model_dump_json(indent=2)}
 
 {pdf_block}User instruction:
-{message.strip()}{sources_block}
+{message.strip()}{sources_block}{locale_line}
 
 Return the full updated resume JSON only."""
