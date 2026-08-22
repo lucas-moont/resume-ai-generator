@@ -1,16 +1,23 @@
 """Unit tests for app/domain/chat_intent.py (v2 ticket 05 -- "Chat: intencao profile_update").
 
-``TestV1PinnedRouting`` characterizes the v1 3-way routing (generate/refine/question) exactly
-as it lived inline in ``chat_service.handle_chat_turn`` before this module existed (see that
-function's pre-v2 module docstring) -- these pass against the freshly-extracted
-``classify_intent`` with NO behavior change, proving the extraction is a pure move, not a
-rewrite. ``TestProfileUpdateVsRefineBoundary`` documents the 4th intent added on top in the
-same module.
+``TestV1PinnedRouting`` characterizes the v1 3-way routing (generate/refine/question) as it
+lived inline in ``chat_service.handle_chat_turn`` before this module existed -- originally
+proving the extraction was a pure move rather than a rewrite. ONE of its assertions was
+deliberately flipped by v6 (see
+``test_a_job_description_pasted_with_an_active_resume_is_now_generate``, which documents why in
+place of the old expectation); every other line still pins v1 behavior unchanged.
+``TestProfileUpdateVsRefineBoundary`` documents the 4th intent added on top in the same module,
+and ``TestSecondPostingRouting`` the v6 routing.
 """
 
 from __future__ import annotations
 
-from app.domain.chat_intent import classify_intent, looks_like_job_description
+from app.domain.chat_intent import (
+    classify_intent,
+    looks_like_job_description,
+    looks_like_new_job_posting,
+    looks_like_refine_instruction,
+)
 
 GENERIC_JOB_DESCRIPTION = (
     "We are hiring a Senior Backend Engineer to join our platform team. You will design "
@@ -51,11 +58,18 @@ class TestV1PinnedRouting:
     def test_any_message_with_an_active_resume_is_refine(self) -> None:
         assert classify_intent(message="Make the summary punchier.", has_active_resume=True) == "refine"
 
-    def test_a_job_description_pasted_with_an_active_resume_is_still_refine(self) -> None:
-        # The riskiest line in the original code (chat_service.py:127, per ticket 02/04 notes):
-        # `elif active_resume_row is not None` catches this BEFORE any JD check runs -- an
-        # active resume always wins, even over text that reads exactly like a job posting.
-        assert classify_intent(message=GENERIC_JOB_DESCRIPTION, has_active_resume=True) == "refine"
+    def test_a_job_description_pasted_with_an_active_resume_is_now_generate(self) -> None:
+        # DELIBERATELY CHANGED in v6 (Second Posting). This used to assert "refine", pinning what
+        # ticket 02/04's notes already called the riskiest line in the original code: `elif
+        # active_resume_row is not None` caught a pasted posting BEFORE any JD check ran, so an
+        # active resume won even over text that reads exactly like a job posting.
+        #
+        # That is the bug: the second posting in a session was never treated as a posting. It
+        # became an edit of the first posting's resume, which is why the resume for job #2 came
+        # out in job #1's language. This message carries a section marker ("we are hiring") and
+        # 60+ words, so it clears looks_like_new_job_posting and routes to generate. See
+        # TestSecondPostingRouting for the gray zone, and for the false positives still avoided.
+        assert classify_intent(message=GENERIC_JOB_DESCRIPTION, has_active_resume=True) == "generate"
 
     def test_translate_instruction_with_active_resume_is_refine(self) -> None:
         assert classify_intent(message="Translate the resume to English.", has_active_resume=True) == "refine"
@@ -273,3 +287,129 @@ class TestProfileUpdateVsProposalTurnBoundary:
             )
             == "proposal_turn"
         )
+
+
+_FULL_PT_POSTING = (
+    "Vaga para Desenvolvedor Back-end Sênior. Sobre a empresa: somos uma fintech em "
+    "crescimento acelerado no setor de meios de pagamento. Responsabilidades: projetar e "
+    "manter APIs em Python e FastAPI, cuidar da camada de dados em PostgreSQL, participar do "
+    "processo de code review e apoiar a evolução da arquitetura de microsserviços. "
+    "Requisitos: sólidos conhecimentos em Python, experiência com bancos relacionais, "
+    "familiaridade com Docker e pipelines de CI/CD. Diferenciais: Kubernetes, AWS, "
+    "observabilidade. Benefícios: plano de saúde, vale-refeição e horário flexível."
+)
+
+_FULL_EN_POSTING = (
+    "About the role: we are hiring a Senior Frontend Engineer for our platform team. "
+    "Responsibilities: build and maintain our React and Next.js application, own the design "
+    "system, and collaborate with backend engineers on GraphQL contracts. Requirements: "
+    "strong TypeScript, deep React experience, and a track record shipping accessible "
+    "interfaces. Nice to have: Remotion, WebGL, or video tooling experience. What we offer: "
+    "remote-first work, equity, and a learning budget."
+)
+
+_LONG_REFINE_INSTRUCTION = (
+    "Reescreve os bullets da minha experiência mais recente destacando React, Node.js, "
+    "PostgreSQL, Docker, AWS, GraphQL e Kubernetes, e deixa o resumo mais curto para caber "
+    "em uma página só, mantendo o tom que já está lá."
+)
+
+
+class TestSecondPostingRouting:
+    """v6 (Second Posting): a genuinely new posting can now beat an active resume.
+
+    Before v6 the router asked "is there an active resume?" and stopped, so the SECOND job
+    description pasted into a session became a refine instruction against the resume built for
+    the FIRST one — inheriting its language (how the bug surfaced) and, worse, producing a patch
+    of the previous document instead of a resume for the new job, with no Analysis and no
+    Improvement Proposal. The tests below pin the three-gate replacement AND the false positives
+    it has to keep avoiding, since a misroute the other way discards a refine session.
+    """
+
+    def test_a_full_pt_posting_beats_an_active_resume(self) -> None:
+        assert classify_intent(message=_FULL_PT_POSTING, has_active_resume=True) == "generate"
+
+    def test_a_full_en_posting_beats_an_active_resume(self) -> None:
+        assert classify_intent(message=_FULL_EN_POSTING, has_active_resume=True) == "generate"
+
+    def test_a_long_keyword_dense_refine_instruction_stays_refine(self) -> None:
+        # The false positive that makes "just let looks_like_job_description win" unsafe: this
+        # clears that heuristic easily (30+ words, many tech keywords) and is plainly an edit.
+        assert looks_like_job_description(_LONG_REFINE_INSTRUCTION) is True
+        assert classify_intent(message=_LONG_REFINE_INSTRUCTION, has_active_resume=True) == "refine"
+
+    def test_a_jd_shaped_message_with_no_posting_structure_asks_instead_of_guessing(self) -> None:
+        # Reads like a job blurb but carries no section headings and no imperative — exactly the
+        # case where either guess is a real loss, so the agent asks.
+        blurb = (
+            "Uma startup de logística está montando um time de dados para trabalhar com "
+            "Python, dbt, Airflow e BigQuery em um ambiente de alto volume de eventos."
+        )
+        assert looks_like_job_description(blurb) is True
+        assert classify_intent(message=blurb, has_active_resume=True) == "clarify_scope"
+
+    def test_the_clarify_valve_never_fires_without_an_active_resume(self) -> None:
+        # With nothing to lose, generate is the right guess — clarify only exists to protect an
+        # existing document.
+        blurb = (
+            "Uma startup de logística está montando um time de dados para trabalhar com "
+            "Python, dbt, Airflow e BigQuery em um ambiente de alto volume de eventos."
+        )
+        assert classify_intent(message=blurb, has_active_resume=False) == "generate"
+
+    def test_a_short_message_with_an_active_resume_is_still_refine(self) -> None:
+        # Unchanged from v1: nothing JD-shaped, so the active resume still wins.
+        assert classify_intent(message="ok", has_active_resume=True) == "refine"
+        assert classify_intent(message="deixa mais curto", has_active_resume=True) == "refine"
+
+    def test_a_pending_proposal_still_wins_over_a_pasted_posting(self) -> None:
+        # The v4 rule is unconditional and v6 must not have punched a hole in it: mid-negotiation
+        # every message is a proposal turn, posting-shaped or not.
+        assert (
+            classify_intent(
+                message=_FULL_PT_POSTING, has_active_resume=True, has_pending_proposal=True
+            )
+            == "proposal_turn"
+        )
+
+    def test_a_profile_update_still_wins_over_the_new_posting_gate(self) -> None:
+        assert (
+            classify_intent(message="mudei meu telefone para 11 91234-5678", has_active_resume=True)
+            == "profile_update"
+        )
+
+
+class TestPostingStructureDetection:
+    def test_a_posting_needs_structure_not_just_vocabulary(self) -> None:
+        # Two section markers, or one plus real length — deliberately stricter than
+        # looks_like_job_description, which is all that guards the no-active-resume case.
+        assert looks_like_new_job_posting(_FULL_PT_POSTING) is True
+        assert looks_like_new_job_posting(_FULL_EN_POSTING) is True
+
+    def test_a_short_message_is_never_a_new_posting_however_structured(self) -> None:
+        assert looks_like_new_job_posting("Requisitos: Python. Benefícios: vale.") is False
+
+    def test_a_refine_instruction_is_never_a_new_posting(self) -> None:
+        assert looks_like_new_job_posting(_LONG_REFINE_INSTRUCTION) is False
+
+
+class TestRefineInstructionDetection:
+    def test_an_imperative_opener_marks_an_instruction(self) -> None:
+        assert looks_like_refine_instruction("tira o Google Analytics das skills") is True
+        assert looks_like_refine_instruction("Rewrite the summary to be shorter") is True
+
+    def test_a_politeness_preamble_does_not_hide_the_imperative(self) -> None:
+        assert looks_like_refine_instruction("por favor, tira o Power BI") is True
+        assert looks_like_refine_instruction("can you rewrite the first bullet") is True
+
+    def test_naming_the_document_with_a_change_verb_marks_an_instruction(self) -> None:
+        # No imperative opener, but unmistakably about the document in front of the agent.
+        assert looks_like_refine_instruction("quero o currículo mais curto, remove um projeto") is True
+
+    def test_a_posting_is_not_an_instruction(self) -> None:
+        assert looks_like_refine_instruction(_FULL_PT_POSTING) is False
+        assert looks_like_refine_instruction(_FULL_EN_POSTING) is False
+
+    def test_an_accent_stripped_instruction_is_still_recognized(self) -> None:
+        # Users type without accents; the detector folds them before matching.
+        assert looks_like_refine_instruction("traduz o curriculo para ingles") is True

@@ -139,6 +139,23 @@ _REPLY_TEXT = {
             "quer mudar em um currículo já existente."
         ),
     },
+    # v6 (Second Posting): the gray zone between "this is a new job" and "this is an edit to the
+    # resume I already have". Asking costs one turn; guessing wrong costs either a discarded
+    # refine session or -- the bug this exists for -- a second posting silently treated as an
+    # edit of the first one's resume.
+    "clarify_scope": {
+        "en": (
+            "Before I touch anything: is that a **new job posting** you want a fresh resume "
+            "for, or a **change to the resume** already open here? Say \"new job\" and I'll "
+            "analyze it from scratch, or tell me the change and I'll apply it to this one."
+        ),
+        "pt-BR": (
+            "Antes de eu mexer em qualquer coisa: isso é uma **vaga nova** para eu gerar um "
+            "currículo do zero, ou é uma **mudança no currículo** que já está aberto aqui? "
+            "Diga \"vaga nova\" e eu analiso desde o começo, ou me diga a mudança e eu "
+            "aplico neste aqui."
+        ),
+    },
 }
 
 # v2 ticket 05: the profile_update turn has its own reply copy -- it is never a resume
@@ -400,13 +417,24 @@ def _finalize_resume_turn(
 
 
 async def _handle_question_turn(
-    *, session: Session, chat_session: ChatSession, locale: str | None, user_message: str
+    *,
+    session: Session,
+    chat_session: ChatSession,
+    locale: str | None,
+    user_message: str,
+    intent: str = "question",
 ) -> AsyncIterator[tuple[str, dict]]:
+    """A canned, locale-aware reply that touches nothing: no LLM call, no resume, no profile.
+
+    ``intent`` (v6, default ``"question"`` so every pre-v6 call site is unchanged) also serves
+    ``clarify_scope`` -- the two turns are mechanically identical (one deterministic message,
+    nothing written) and differ only in the copy and the intent stamped on the message row.
+    """
     # No resume is involved in this turn, so the session/request locale (falling back to
     # auto-detection from the user's own message) is the only signal available.
-    content = _reply_text_for_locale("question", resolve_locale(locale, user_message, None))
+    content = _reply_text_for_locale(intent, resolve_locale(locale, user_message, None))
     assistant_msg = chat_repo.append_message(
-        session, session_id=chat_session.id, role="assistant", content=content, intent="question"
+        session, session_id=chat_session.id, role="assistant", content=content, intent=intent
     )
     chat_repo.touch_session(session, chat_session.id)
     session.commit()
@@ -1097,9 +1125,13 @@ async def handle_chat_turn(
         has_pending_proposal=pending_proposal is not None,
     )
 
-    if intent == "question":
+    if intent in ("question", "clarify_scope"):
         async for event, data in _handle_question_turn(
-            session=session, chat_session=chat_session, locale=locale, user_message=user_message
+            session=session,
+            chat_session=chat_session,
+            locale=locale,
+            user_message=user_message,
+            intent=intent,
         ):
             yield event, data
         return

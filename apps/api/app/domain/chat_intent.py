@@ -23,11 +23,19 @@ tested decisions on every ambiguous case this was tuned against.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Literal
 
 from app.domain.keywords import extract_jd_keywords
 
-Intent = Literal["generate", "refine", "profile_update", "proposal_turn", "question"]
+Intent = Literal[
+    "generate",
+    "refine",
+    "profile_update",
+    "proposal_turn",
+    "clarify_scope",
+    "question",
+]
 
 # A message needs to be substantial to be treated as a pasted job description outright; a
 # shorter message can still count if it is dense with recognizable tech/role keywords (e.g.
@@ -108,6 +116,158 @@ _PROFILE_FACT_NOUNS = frozenset(
 )
 
 
+# --- new-posting vs refine-instruction discrimination (v6, Second Posting) -----------------
+#
+# Until v6 the router answered "is there an active resume?" and stopped there, so the SECOND
+# job description pasted into a session was never a job description -- it became a refine
+# instruction against the resume built for the FIRST one. The resume for posting #2 was a patch
+# on posting #1's document (inheriting its language, which is how the bug was noticed), no new
+# Analysis ran, and no Improvement Proposal was ever offered for the new job.
+#
+# Simply letting ``looks_like_job_description`` win would trade a silent failure for a noisy
+# one: that heuristic fires on 30+ words, or 12+ words with 3 tech keywords, which a real refine
+# instruction ("reescreve os bullets destacando React, Node, PostgreSQL, Docker e AWS") clears
+# easily -- and a misroute the other way discards a refine session and opens a proposal the user
+# never asked for. So three gates run in order instead, and the middle one demands a much
+# stronger signal than ``looks_like_job_description`` ever did:
+#
+#   1. Does it read as an instruction aimed at the agent? -> refine (checked FIRST, so an
+#      imperative wins even when it happens to name posting-ish nouns).
+#   2. Does it carry the STRUCTURE of a posting -- the section headings a posting has and an
+#      instruction never does? -> generate.
+#   3. Neither, but it still looks JD-shaped? -> clarify_scope: ask, do not guess. Same valve
+#      the refine prompt and the Analysis Turn already use (CONTEXT.md: Clarifying Question).
+
+def _strip_accents(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+def _normalized(message: str) -> str:
+    """Lowercased, accent-folded, whitespace-collapsed -- so the phrase markers below match
+    "Requisitos", "requisitos" and "REQUISITOS:" alike, and survive a posting pasted without
+    its accents."""
+    return re.sub(r"\s+", " ", _strip_accents(message).lower())
+
+
+# Phrases that appear in a JOB POSTING and essentially never in an instruction to the agent.
+# Matched as substrings of the accent-folded text, so each entry is written unaccented.
+_POSTING_SECTION_MARKERS = (
+    # pt-BR
+    "requisitos",
+    "responsabilidades",
+    "atividades",
+    "qualificacoes",
+    "diferenciais",
+    "sobre a empresa",
+    "sobre a vaga",
+    "sobre nos",
+    "o que oferecemos",
+    "o que buscamos",
+    "beneficios",
+    "desejavel",
+    "estamos contratando",
+    "buscamos",
+    "procuramos",
+    "faixa salarial",
+    "regime de contratacao",
+    "senioridade",
+    "vaga para",
+    # en
+    "requirements",
+    "responsibilities",
+    "qualifications",
+    "about the role",
+    "about the company",
+    "about us",
+    "what you will do",
+    "what you'll do",
+    "what we offer",
+    "benefits",
+    "nice to have",
+    "must have",
+    "who you are",
+    "job description",
+    "we are looking for",
+    "we are hiring",
+    "you will be responsible",
+)
+
+# A posting long enough that a single section heading is already conclusive.
+_POSTING_SINGLE_MARKER_MIN_WORDS = 60
+
+# Verbs that open an order given TO THE AGENT about the document in front of it. Matched only
+# among the first few words: "traduz o curriculo" is an instruction, while a posting that
+# happens to contain "traduzir" in a requirements list is not.
+_REFINE_IMPERATIVE_OPENERS = frozenset(
+    {
+        # pt-BR
+        "tira", "tire", "tirar", "remove", "remova", "remover", "muda", "mude", "mudar",
+        "troca", "troque", "trocar", "altera", "altere", "alterar", "adiciona", "adicione",
+        "adicionar", "acrescenta", "acrescente", "inclui", "inclua", "incluir", "reescreve",
+        "reescreva", "reescrever", "deixa", "deixe", "deixar", "coloca", "coloque", "colocar",
+        "poe", "ponha", "ajusta", "ajuste", "ajustar", "melhora", "melhore", "melhorar",
+        "encurta", "encurte", "encurtar", "resume", "resuma", "resumir", "traduz", "traduza",
+        "traduzir", "corrige", "corrija", "corrigir", "destaca", "destaque", "destacar",
+        "reordena", "reordene", "reordenar", "foca", "foque", "focar", "usa", "use", "usar",
+        "faz", "faca", "fazer", "gera", "gere", "gerar", "refaz", "refaca", "refazer",
+        "prioriza", "priorize", "priorizar", "enfatiza", "enfatize", "apaga", "apague",
+        "aumenta", "aumente", "diminui", "diminua", "inverte", "inverta", "mantem", "mantenha",
+        # en
+        "remove", "drop", "delete", "change", "swap", "add", "include", "rewrite", "make",
+        "put", "adjust", "improve", "shorten", "summarize", "summarise", "translate", "fix",
+        "highlight", "reorder", "focus", "use", "regenerate", "redo", "prioritize",
+        "prioritise", "emphasize", "emphasise", "keep", "trim", "expand", "tweak", "polish",
+        "reword", "replace", "move", "sort", "shrink", "lengthen",
+    }
+)
+
+# How many leading words are scanned for an imperative opener. Enough to clear a politeness
+# preamble ("por favor, tira ...", "can you rewrite ...") without reaching into the body of a
+# pasted posting.
+_IMPERATIVE_OPENER_WINDOW = 4
+
+
+def _posting_marker_count(message: str) -> int:
+    normalized = _normalized(message)
+    return sum(1 for marker in _POSTING_SECTION_MARKERS if marker in normalized)
+
+
+def looks_like_new_job_posting(message: str) -> bool:
+    """Whether ``message`` carries the STRUCTURE of a job posting, not merely its vocabulary.
+
+    Deliberately stricter than ``looks_like_job_description``: this is the signal allowed to
+    override an active resume and start a whole new Analysis, so it requires either two distinct
+    section markers, or one plus real length. ``looks_like_job_description`` stays the (looser)
+    gate for the no-active-resume case, where there is nothing to lose by guessing generate.
+    """
+    if not looks_like_job_description(message):
+        return False
+    markers = _posting_marker_count(message)
+    if markers >= 2:
+        return True
+    return markers >= 1 and len(message.split()) >= _POSTING_SINGLE_MARKER_MIN_WORDS
+
+
+def looks_like_refine_instruction(message: str) -> bool:
+    """Whether ``message`` reads as an order to the agent about the document it just produced.
+
+    Two independent signals, either of which is enough: an imperative verb among the opening
+    words, or an explicit mention of the document itself (``_RESUME_SCOPE_WORDS``) together with
+    a change verb anywhere in the message ("quero o curriculo mais curto").
+    """
+    words = _normalized(message).split()
+    if any(w.strip(".,;:!?") in _REFINE_IMPERATIVE_OPENERS for w in words[:_IMPERATIVE_OPENER_WINDOW]):
+        return True
+    tokens = _tokenize(message)
+    if _mentions_any(tokens, _RESUME_SCOPE_WORDS) and (
+        _mentions_any(tokens, _ACTION_VERBS)
+        or not frozenset(w.strip(".,;:!?") for w in words).isdisjoint(_REFINE_IMPERATIVE_OPENERS)
+    ):
+        return True
+    return False
+
+
 def _looks_like_profile_update(message: str) -> bool:
     if looks_like_job_description(message):
         return False  # a genuine JD paste always wins -- see classify_intent's docstring
@@ -153,8 +313,14 @@ def classify_intent(
         return "proposal_turn"
     if _looks_like_profile_update(message):
         return "profile_update"
-    if not has_active_resume and looks_like_job_description(message):
-        return "generate"
-    if has_active_resume:
+    if not has_active_resume:
+        return "generate" if looks_like_job_description(message) else "question"
+    # An active resume no longer wins unconditionally (v6, Second Posting). Order matters and is
+    # the whole safety argument -- see the block comment above ``looks_like_new_job_posting``.
+    if looks_like_refine_instruction(message):
         return "refine"
-    return "question"
+    if looks_like_new_job_posting(message):
+        return "generate"
+    if looks_like_job_description(message):
+        return "clarify_scope"
+    return "refine"
