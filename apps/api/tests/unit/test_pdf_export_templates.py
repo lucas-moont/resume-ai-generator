@@ -1,11 +1,17 @@
 import json
+import re
 import unittest
 from typing import get_args
 
 import pytest
 
 from app.domain.schemas import ResumeDocument, TemplateId
-from app.services.pdf_export import _ALLOWED_TEMPLATES, RESUME_TEMPLATES_PACKAGE_DIR, render_resume_pdf
+from app.services.pdf_export import (
+    _ALLOWED_TEMPLATES,
+    RESUME_TEMPLATES_PACKAGE_DIR,
+    render_resume_html,
+    render_resume_pdf,
+)
 from tests.factories import make_resume_payload
 
 # The manifest (packages/resume-templates/templates.json) is the single
@@ -77,3 +83,96 @@ async def test_new_manifest_templates_render_a_real_pdf(template_id: str) -> Non
     resume = ResumeDocument(**make_resume_payload())
     pdf_bytes = await render_resume_pdf(resume, template_id)
     assert pdf_bytes.startswith(b"%PDF")
+
+
+class ContactFieldsReachEveryTemplateTests(unittest.TestCase):
+    """Every template must have somewhere for the contact fields — phone especially — to land.
+
+    Written after a real report that "the templates have no room for a phone number". They did:
+    resume_print.html emits it in both the single-column contact bar and the two-column sidebar,
+    and every template shows one of the two. But NOTHING guarded that, and the guard is not
+    obvious to add — resume.css hides `.contact-bar` by DEFAULT (line ~102) and each template
+    opts back into exactly one of the two surfaces. A template that opted into neither, or a
+    `display: none` added to the wrong selector, would silently drop the candidate's phone,
+    email and location from the PDF with no test going red and nothing visible in review.
+    """
+
+    _CONTACT_SURFACES = ("contact-bar", "sidebar")
+
+    def _css(self) -> str:
+        return (RESUME_TEMPLATES_PACKAGE_DIR / "resume.css").read_text(encoding="utf-8")
+
+    def _rule_bodies(self, css: str, template_id: str, surface: str) -> list[str]:
+        """Bodies of the rules whose selector ends in ``.tpl-<id> ... .<surface>``.
+
+        Anchored with ``\\s*$`` on the selector so a descendant rule (e.g.
+        ``.tpl-modern .sidebar .side-title``) is not mistaken for a rule about the surface
+        itself — that distinction is the whole point of the assertion below.
+        """
+        pattern = re.compile(
+            rf"([^{{}}]*\.tpl-{re.escape(template_id)}\b[^,{{}}]*\.{re.escape(surface)}\s*)\{{([^{{}}]*)\}}"
+        )
+        return [m.group(2) for m in pattern.finditer(css)]
+
+    def _is_visible(self, css: str, template_id: str, surface: str) -> bool:
+        bodies = self._rule_bodies(css, template_id, surface)
+        declared = [
+            m.group(1)
+            for body in bodies
+            for m in [re.search(r"display:\s*([a-z-]+)", body)]
+            if m
+        ]
+        if declared:
+            # The template states a display for this surface; the last one wins in CSS order.
+            return declared[-1] != "none"
+        # No display of its own: it inherits the base rule for that surface. `.contact-bar` is
+        # hidden there and `.sidebar` is not, so a template must opt IN to the contact bar but
+        # only has to refrain from hiding the sidebar.
+        if surface == "contact-bar":
+            return False
+        return not any("display: none" in b for b in bodies)
+
+    def test_the_print_template_emits_phone_email_and_location(self) -> None:
+        resume = ResumeDocument(**make_resume_payload(phone="+55 11 91234-5678"))
+        html = render_resume_html(resume, "modern")
+
+        self.assertIn("+55 11 91234-5678", html)
+        self.assertIn(resume.email, html)
+        self.assertIn(resume.location, html)
+
+    def test_phone_is_emitted_in_both_contact_surfaces(self) -> None:
+        # Both surfaces carry it, because which one is visible is a CSS decision per template.
+        # If a refactor ever leaves the phone in only one, half the templates lose it.
+        resume = ResumeDocument(**make_resume_payload(phone="+55 11 91234-5678"))
+        html = render_resume_html(resume, "modern")
+        self.assertEqual(html.count("+55 11 91234-5678"), 2, "expected the phone in the contact bar AND the sidebar")
+
+    def test_a_missing_phone_leaves_no_empty_contact_slot(self) -> None:
+        # The flip side: the field is conditional, so an absent phone must not render a stray
+        # bullet/label. Guards against someone "fixing" the report by making it unconditional.
+        resume = ResumeDocument(**make_resume_payload(phone=None))
+        html = render_resume_html(resume, "modern")
+        self.assertNotIn("Telefone", html)
+        self.assertNotIn(">Phone<", html)
+
+    def test_every_template_shows_at_least_one_contact_surface(self) -> None:
+        css = self._css()
+        for template_id in sorted(_EXPECTED_TEMPLATE_IDS):
+            visible = [s for s in self._CONTACT_SURFACES if self._is_visible(css, template_id, s)]
+            self.assertTrue(
+                visible,
+                f"template '{template_id}' hides both the contact bar and the sidebar, so the "
+                "phone/email/location never reach the page",
+            )
+
+    def test_the_detector_would_catch_a_template_hiding_both_surfaces(self) -> None:
+        # A guard is worthless if it cannot fail. Feeds the checker a CSS variant that hides
+        # both surfaces for one template and asserts it reports that template as broken.
+        broken = self._css() + (
+            "\n.resume-doc .page.tpl-modern .contact-bar { display: none; }"
+            "\n.resume-doc .page.tpl-modern .sidebar { display: none; }\n"
+        )
+        self.assertFalse(self._is_visible(broken, "modern", "contact-bar"))
+        self.assertFalse(self._is_visible(broken, "modern", "sidebar"))
+        # ...and that it still passes the templates it should.
+        self.assertTrue(self._is_visible(broken, "classic", "contact-bar"))

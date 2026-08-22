@@ -67,10 +67,21 @@ def _render_html_to_pdf_in_thread(html: str) -> bytes:
         return runner.run(_render_html_to_pdf(html))
 
 
-async def render_resume_pdf(resume: ResumeDocument, template: str | None = None) -> bytes:
+def render_resume_html(resume: ResumeDocument, template: str | None = None) -> str:
+    """The print HTML exactly as ``render_resume_pdf`` hands it to the browser.
+
+    Extracted as its own seam so a test can assert on what the print template actually emits
+    (e.g. that a contact field reaches the page) without paying for a headless-Chromium render
+    and then having to read the field back out of PDF bytes. ``render_resume_pdf`` is now a thin
+    wrapper over it, so the two can never drift.
+    """
     data = resume.model_dump()
     sanitize_resume_for_display(data)
     filter_skills_non_tech_inplace(data)
     tpl = _env.get_template("resume_print.html")
-    html = tpl.render(resume=data, template=_safe_template(template))
+    return tpl.render(resume=data, template=_safe_template(template))
+
+
+async def render_resume_pdf(resume: ResumeDocument, template: str | None = None) -> bytes:
+    html = render_resume_html(resume, template)
     return await asyncio.to_thread(_render_html_to_pdf_in_thread, html)
