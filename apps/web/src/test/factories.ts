@@ -27,6 +27,7 @@ export function makeResume(overrides: Partial<ResumeDocument> = {}): ResumeDocum
           'Led the design of a distributed computation engine.',
           'Mentored a team of five engineers.',
         ],
+        keyTechnologies: ['TypeScript', 'PostgreSQL'],
       },
     ],
     projects: [{ name: 'Note G', description: 'A pioneering computational algorithm.' }],

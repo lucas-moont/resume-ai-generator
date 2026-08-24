@@ -282,6 +282,49 @@
   margin-bottom: 2px;
 }
 
+/* Key Technologies (v7): the per-role keyword line, borrowed from the
+   ats-friendly-latex-cv `\keytech` macro. Rendered by EVERY template (the DOM
+   is template-independent by design) but only when the role actually carries
+   technologies — an empty keyTechnologies array renders no element at all, so
+   every resume written before the field existed looks exactly as it did.
+   Deliberately understated in the shared base: it is a parser-facing keyword
+   run, not a heading, so it must not compete with the bullets above it. Each
+   template may restyle it; tpl-latex-ats is the one that makes it prominent. */
+.resume-doc .exp-tech {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 5px;
+  margin: 4px 0 0;
+  font-size: 9pt;
+  color: var(--c-muted);
+}
+
+.resume-doc .exp-tech-label {
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+/* A <ul> rather than one joined string so each technology stays an
+   individually inline-editable node (features/resume/editing) — the commas are
+   painted by CSS, exactly as the ats-plain skill run does, and never end up in
+   the text a user edits. */
+.resume-doc .exp-tech-list {
+  display: inline;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.resume-doc .exp-tech-list li {
+  display: inline;
+}
+
+.resume-doc .exp-tech-list li:not(:last-child)::after {
+  content: ",";
+  margin-right: 3px;
+}
+
 .resume-doc .proj {
   margin-bottom: 9px;
 }
@@ -907,4 +950,155 @@
   border-color: rgba(22, 163, 74, 0.35);
   background: rgba(22, 163, 74, 0.08);
   color: var(--c-accent-text);
+}
+
+/* =============================================================================
+   TEMPLATE: LATEX-ATS — a CSS port of danielteles/ats-friendly-latex-cv (MIT),
+   the LaTeX resume whose whole design premise is that an ATS parser reads it
+   correctly: one column, no tables, no multi-column blocks, visible link text.
+
+   What carries over from the .tex: letter-ish sans body at ~11pt, the navy
+   accent (#1F4E79), a centered header block, `\titleformat` section headings
+   (left-aligned, large, bold, accent-colored, with a 0.8pt accent rule
+   underneath), `\cventry`'s two plain lines (bold role + bold dates right,
+   italic accent company + italic location right), `\skillrow`'s comma-run
+   instead of chips, and `\keytech`'s Key Technologies line — the reason the
+   field exists at all.
+
+   What cannot: LaTeX's own layout primitives. The sidebar is hidden and the
+   contact bar shown instead (that IS the .tex header), and the vertical rhythm
+   is expressed in px rather than \cventrysep/\cvblocksep. Skill CATEGORIES
+   (`\skillrow{Cloud & DevOps}{...}`) and the Certifications section have no
+   field in ResumeDocument, so they are genuinely absent, not approximated.
+============================================================================= */
+.resume-doc .page.tpl-latex-ats {
+  /* #1F4E79 is the .tex's own \definecolor{accent}. Everything else here is
+     derived from it or from the document's black-on-white body. */
+  --c-accent: #1f4e79;
+  --c-name: #111111;
+  --c-text: #1a1a1a;
+  --c-muted: #3f3f46;
+  --c-rule: #1f4e79;
+  --section-gap: 13px;
+  --label-transform: none;
+  --label-spacing: 0;
+  --base-size: 10.5pt;
+}
+
+/* The .tex header is a \begin{center} block: huge bold name, accent-colored
+   role line, then contact details on their own lines separated by "|". */
+.resume-doc .page.tpl-latex-ats .doc-header {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.resume-doc .page.tpl-latex-ats .name {
+  font-size: 22pt;
+  letter-spacing: 0;
+}
+
+.resume-doc .page.tpl-latex-ats .headline {
+  margin-top: 3px;
+  font-size: 11pt;
+  font-weight: 400;
+  color: var(--c-accent);
+}
+
+.resume-doc .page.tpl-latex-ats .contact-bar {
+  display: flex;
+  justify-content: center;
+  gap: 2px 0;
+  margin-top: 5px;
+  font-size: 9pt;
+  color: var(--c-text);
+}
+
+/* "|" instead of the shared "•" — the .tex separates contact fields with
+   \quad|\quad. */
+.resume-doc .page.tpl-latex-ats .contact-item:not(:last-child)::after {
+  content: "|";
+  margin: 0 7px;
+  opacity: 0.5;
+}
+
+/* Single column, no tables: the ATS claim this template is named for. */
+.resume-doc .page.tpl-latex-ats .layout {
+  display: block;
+}
+
+.resume-doc .page.tpl-latex-ats .sidebar {
+  display: none;
+}
+
+/* \titleformat{\section}{\raggedright\large\bfseries\color{accent}}...
+   [{\color{accent}\titlerule[0.8pt]}] — heading, then a full-width rule. */
+.resume-doc .page.tpl-latex-ats .section-label {
+  font-size: 12pt;
+  font-weight: 700;
+  color: var(--c-accent);
+  border-bottom: 1px solid var(--c-accent);
+  padding-bottom: 2px;
+  margin-bottom: 5px;
+}
+
+/* The shared templates paint a small accent bar before each heading; the .tex
+   has no such ornament (the rule underneath is the whole device). */
+.resume-doc .page.tpl-latex-ats .section-accent {
+  display: none;
+}
+
+/* \cventry line 2: italic accent-colored company, italic muted location. */
+.resume-doc .page.tpl-latex-ats .exp-company,
+.resume-doc .page.tpl-latex-ats .edu-inst {
+  font-style: italic;
+  font-weight: 400;
+  color: var(--c-accent);
+}
+
+/* \cventry line 1 puts the dates hard right of the role, in bold small. The
+   shared .exp-head already flexes them to the right edge (margin-left: auto);
+   this only matches the .tex's weight and color. */
+.resume-doc .page.tpl-latex-ats .exp-dates,
+.resume-doc .page.tpl-latex-ats .edu-end {
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.resume-doc .page.tpl-latex-ats .exp-loc {
+  font-style: italic;
+}
+
+/* \setlist[itemize]{leftmargin=0.18in, itemsep=2pt} */
+.resume-doc .page.tpl-latex-ats .exp-list {
+  padding-left: 15px;
+  font-size: 9.75pt;
+}
+
+/* \keytech: the one place this template is louder than the shared base — it is
+   the template's reason for existing, so it reads as a real line, in body
+   color rather than muted. */
+.resume-doc .page.tpl-latex-ats .exp-tech {
+  font-size: 9.25pt;
+  color: var(--c-text);
+}
+
+/* \skillrow renders plain comma-separated text, never boxed chips. */
+.resume-doc .page.tpl-latex-ats .skill-chips {
+  display: block;
+  font-size: 9.75pt;
+}
+
+.resume-doc .page.tpl-latex-ats .skill-chips li {
+  display: inline;
+  border: none;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: var(--c-text);
+}
+
+.resume-doc .page.tpl-latex-ats .skill-chips li:not(:last-child)::after {
+  content: ",";
+  margin-right: 3px;
 }

@@ -13,6 +13,7 @@ TemplateId = Literal[
     "two-column-ats",
     "executive",
     "tech",
+    "latex-ats",
 ]
 DEFAULT_TEMPLATE: TemplateId = "modern"
 
@@ -29,6 +30,13 @@ class ExperienceItem(BaseModel):
     start: str = ""
     end: str | None = None
     highlights: list[str] = Field(default_factory=list)
+    # Key Technologies (v7): the technologies this role actually used, rendered as one
+    # keyword line under the bullets. Plain technology names only -- same content rule as
+    # ``skills`` (no HTML, no prose), enforced by ``sanitize_resume_for_display`` and by
+    # ``_clean_technology_chip`` in the resume JSON parser. Optional and empty by default:
+    # every resume/profile persisted before this field existed keeps loading unchanged, and
+    # an empty list simply renders no line (CONTEXT.md: Key Technologies).
+    keyTechnologies: list[str] = Field(default_factory=list)
 
 
 class ProjectItem(BaseModel):

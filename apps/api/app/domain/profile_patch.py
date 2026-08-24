@@ -54,6 +54,11 @@ _ENTITY_LIST_FIELDS: dict[str, tuple[str, ...]] = {
     "projects": ("name", "description"),
     "links": ("label", "url"),
 }
+# The per-experience string lists a patch may address element-wise (``/experience/2/
+# highlights/1``). ``keyTechnologies`` joins ``highlights`` here (v7) so a chat request or a
+# manual edit can fix one technology on one role -- an upload still cannot remove any of them
+# (Upload-never-removes is enforced by source_kind, above this list).
+_EXPERIENCE_NESTED_LIST_FIELDS = ("highlights", "keyTechnologies")
 _INDEX = r"(?:-|\d+)"
 
 
@@ -64,7 +69,8 @@ def _build_whitelist() -> list[re.Pattern[str]]:
         patterns.append(re.compile(rf"^/{entity}/{_INDEX}$"))
         field_alt = "|".join(re.escape(f) for f in fields)
         patterns.append(re.compile(rf"^/{entity}/{_INDEX}/(?:{field_alt})$"))
-    patterns.append(re.compile(rf"^/experience/{_INDEX}/highlights/{_INDEX}$"))
+    for nested in _EXPERIENCE_NESTED_LIST_FIELDS:
+        patterns.append(re.compile(rf"^/experience/{_INDEX}/{nested}/{_INDEX}$"))
     return patterns
 
 
@@ -190,10 +196,11 @@ def _apply_one(doc: dict, op: PatchOp) -> None:
         idx = int(idx_token)
         if idx >= len(lst):
             raise PatchTargetError(f"{field}[{idx}] does not exist ({len(lst)} item(s))")
-        if len(rest) == 3 and field == "experience" and rest[1] == "highlights":
+        if len(rest) == 3 and field == "experience" and rest[1] in _EXPERIENCE_NESTED_LIST_FIELDS:
             entry = lst[idx]
-            highlights = entry.setdefault("highlights", [])
-            _apply_to_list(highlights, rest[2], op, context=f"experience[{idx}].highlights")
+            nested_field = rest[1]
+            nested = entry.setdefault(nested_field, [])
+            _apply_to_list(nested, rest[2], op, context=f"experience[{idx}].{nested_field}")
             return
         if len(rest) == 2:
             subfield = rest[1]

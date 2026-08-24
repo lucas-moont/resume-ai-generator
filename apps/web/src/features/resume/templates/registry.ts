@@ -18,6 +18,7 @@ export type TemplateId =
   | 'two-column-ats'
   | 'executive'
   | 'tech'
+  | 'latex-ats'
 
 export interface TemplateDefinition {
   id: TemplateId

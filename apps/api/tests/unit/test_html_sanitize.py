@@ -58,3 +58,55 @@ class HtmlSanitizeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeyTechnologiesSanitizationTests(unittest.TestCase):
+    """``keyTechnologies`` (v7) is a keyword line, so it takes the PLAIN treatment ``skills``
+    gets, not the rich-HTML subset ``highlights`` gets. Emphasis inside a comma-separated
+    technology run has nothing to mark up, and letting tags through would put markup into the
+    text an ATS parser reads.
+    """
+
+    def test_tags_are_stripped_not_kept_as_emphasis(self) -> None:
+        data = {
+            "experience": [
+                {
+                    "company": "Acme",
+                    "title": "Dev",
+                    "highlights": ["Shipped <strong>the thing</strong>"],
+                    "keyTechnologies": ["<strong>React</strong>", "Docker"],
+                }
+            ]
+        }
+        sanitize_resume_for_display(data)
+        # highlights keep the allowed emphasis...
+        self.assertIn("<strong>", data["experience"][0]["highlights"][0])
+        # ...keyTechnologies does not.
+        self.assertEqual(["React", "Docker"], data["experience"][0]["keyTechnologies"])
+
+    def test_a_script_tag_cannot_survive(self) -> None:
+        data = {
+            "experience": [
+                {
+                    "company": "Acme",
+                    "title": "Dev",
+                    "keyTechnologies": ["<script>alert(1)</script>React"],
+                }
+            ]
+        }
+        sanitize_resume_for_display(data)
+        joined = " ".join(data["experience"][0]["keyTechnologies"])
+        self.assertNotIn("script", joined.lower())
+
+    def test_entries_that_sanitize_to_nothing_are_dropped(self) -> None:
+        data = {
+            "experience": [
+                {
+                    "company": "Acme",
+                    "title": "Dev",
+                    "keyTechnologies": ["<br>", "React", 42, None],
+                }
+            ]
+        }
+        sanitize_resume_for_display(data)
+        self.assertEqual(["React"], data["experience"][0]["keyTechnologies"])

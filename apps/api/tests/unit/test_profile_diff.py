@@ -141,6 +141,10 @@ class TestExperienceDiff:
             "start": "2020-01",
             "end": "2024-12",
             "highlights": ["Did things"],
+            # Present-and-empty, not absent: the diff compares model_dump() output, so every
+            # ExperienceItem field appears -- including keyTechnologies (v7), which an upload
+            # never populates today.
+            "keyTechnologies": [],
         }
         extracted = _doc(experience=[*profile.model_dump()["experience"], new_role])
         diff = deterministic_diff(profile, extracted)

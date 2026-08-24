@@ -21,6 +21,11 @@ const experienceItemSchema = z.object({
   start: z.string().min(1, 'Start date is required'),
   end: z.string().nullish(),
   highlights: z.array(z.string()),
+  // `.optional()`, not a plain array — see the ExperienceItem doc comment in
+  // types/resume.ts. A resume rehydrated from localStorage predates the field,
+  // and reporting "keyTechnologies: Required" on every one of those would turn
+  // this advisory list into noise for data that is perfectly valid.
+  keyTechnologies: z.array(z.string()).optional(),
 })
 
 const projectItemSchema = z.object({

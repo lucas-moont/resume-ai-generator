@@ -892,3 +892,229 @@ class ProjectSelectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeyTechnologiesAnchorTests(unittest.TestCase):
+    """The Key Technologies line (v7) gets the same anti-fabrication guarantee as ``skills``.
+
+    A technology named under a real employer is a claim a recruiter can interview against, so the
+    anchor admits one only if the candidate already claims it somewhere: the Profile's global
+    ``skills`` list, or that role's own stored ``keyTechnologies``.
+    """
+
+    def _profile(self, **overrides: object) -> ResumeDocument:
+        base: dict = {
+            "fullName": "Lucas Monteiro",
+            "headline": "Full Stack Developer",
+            "summary": "Base summary",
+            "skills": ["JavaScript", "React", "PostgreSQL", "Docker", "TypeScript"],
+            "experience": [
+                {
+                    "company": "SmartHow",
+                    "title": "Front-End Developer",
+                    "start": "2025",
+                    "end": None,
+                    "highlights": ["Original bullet"],
+                }
+            ],
+            "locale": "en",
+        }
+        base.update(overrides)
+        return ResumeDocument(**base)
+
+    def _generated(self, key_technologies: object, profile: ResumeDocument | None = None) -> ResumeDocument:
+        fallback = profile if profile is not None else self._profile()
+        raw = json.dumps(
+            {
+                "headline": "Senior Full Stack Developer",
+                "summary": "Tailored summary.",
+                "experience": [
+                    {
+                        "company": "SmartHow",
+                        "title": "Front-End Developer",
+                        "start": "2025",
+                        "highlights": ["Rewritten bullet"],
+                        "keyTechnologies": key_technologies,
+                    }
+                ],
+                "skills": ["React"],
+            }
+        )
+        return parse_resume_json(raw, fallback, refine=False)
+
+    def test_technologies_the_profile_claims_survive_in_the_models_order(self) -> None:
+        parsed = self._generated(["PostgreSQL", "React"])
+        self.assertEqual(["PostgreSQL", "React"], parsed.experience[0].keyTechnologies)
+
+    def test_a_technology_absent_from_the_profile_is_discarded(self) -> None:
+        # "Kubernetes" appears nowhere in the profile — admitting it would put a credential on
+        # the resume that the candidate never claimed.
+        parsed = self._generated(["React", "Kubernetes"])
+        self.assertEqual(["React"], parsed.experience[0].keyTechnologies)
+
+    def test_matching_is_case_and_punctuation_aware_and_returns_the_profiles_casing(self) -> None:
+        # skill_token matching, same as the skills anchor: the model's "postgresql" is the
+        # profile's "PostgreSQL", and that canonical casing is what reaches the page.
+        parsed = self._generated(["postgresql", "typescript"])
+        self.assertEqual(["PostgreSQL", "TypeScript"], parsed.experience[0].keyTechnologies)
+
+    def test_duplicates_collapse(self) -> None:
+        parsed = self._generated(["React", "react", "REACT"])
+        self.assertEqual(["React"], parsed.experience[0].keyTechnologies)
+
+    def test_a_role_may_claim_its_own_stored_technology_even_if_it_is_not_a_global_skill(self) -> None:
+        profile = self._profile(
+            experience=[
+                {
+                    "company": "SmartHow",
+                    "title": "Front-End Developer",
+                    "start": "2025",
+                    "highlights": ["Original bullet"],
+                    "keyTechnologies": ["Terraform"],
+                }
+            ]
+        )
+        parsed = self._generated(["Terraform", "React"], profile=profile)
+        self.assertEqual(["Terraform", "React"], parsed.experience[0].keyTechnologies)
+
+    def test_all_fabricated_leaves_the_profiles_own_technologies_intact(self) -> None:
+        # Mirrors the highlights rule: only a NON-EMPTY anchored result is adopted, so a model
+        # that emitted nothing usable cannot wipe real stored data.
+        profile = self._profile(
+            experience=[
+                {
+                    "company": "SmartHow",
+                    "title": "Front-End Developer",
+                    "start": "2025",
+                    "highlights": ["Original bullet"],
+                    "keyTechnologies": ["Terraform"],
+                }
+            ]
+        )
+        parsed = self._generated(["Kubernetes", "Rust"], profile=profile)
+        self.assertEqual(["Terraform"], parsed.experience[0].keyTechnologies)
+
+    def test_an_omitted_field_leaves_the_profiles_own_technologies_intact(self) -> None:
+        profile = self._profile(
+            experience=[
+                {
+                    "company": "SmartHow",
+                    "title": "Front-End Developer",
+                    "start": "2025",
+                    "highlights": ["Original bullet"],
+                    "keyTechnologies": ["Terraform"],
+                }
+            ]
+        )
+        raw = json.dumps(
+            {
+                "headline": "Senior Full Stack Developer",
+                "summary": "Tailored summary.",
+                "experience": [
+                    {
+                        "company": "SmartHow",
+                        "title": "Front-End Developer",
+                        "start": "2025",
+                        "highlights": ["Rewritten bullet"],
+                    }
+                ],
+                "skills": ["React"],
+            }
+        )
+        parsed = parse_resume_json(raw, profile, refine=False)
+        self.assertEqual(["Terraform"], parsed.experience[0].keyTechnologies)
+
+    def test_a_comma_separated_string_is_accepted_as_the_line_it_describes(self) -> None:
+        # The prompt calls this a "line" and the template renders it as one, so models emit a
+        # single string often enough that losing it wholesale would be the wrong failure.
+        parsed = self._generated("React, PostgreSQL; Docker")
+        self.assertEqual(["React", "PostgreSQL", "Docker"], parsed.experience[0].keyTechnologies)
+
+    def test_a_slash_inside_a_real_name_is_not_a_separator(self) -> None:
+        profile = self._profile(skills=["CI/CD", "React", "Docker", "TypeScript"])
+        parsed = self._generated("CI/CD, React", profile=profile)
+        self.assertEqual(["CI/CD", "React"], parsed.experience[0].keyTechnologies)
+
+    def test_objects_and_alias_keys_are_folded_in(self) -> None:
+        raw = json.dumps(
+            {
+                "headline": "Senior Full Stack Developer",
+                "summary": "Tailored summary.",
+                "experience": [
+                    {
+                        "company": "SmartHow",
+                        "title": "Front-End Developer",
+                        "start": "2025",
+                        "highlights": ["Rewritten bullet"],
+                        "key_technologies": [{"name": "React"}, "Docker"],
+                    }
+                ],
+                "skills": ["React"],
+            }
+        )
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+        self.assertEqual(["React", "Docker"], parsed.experience[0].keyTechnologies)
+
+    def test_spoken_languages_and_soft_skills_never_reach_the_line(self) -> None:
+        profile = self._profile(skills=["React", "Docker", "TypeScript", "PostgreSQL"])
+        parsed = self._generated(["React", "English", "Leadership"], profile=profile)
+        self.assertEqual(["React"], parsed.experience[0].keyTechnologies)
+
+    def test_an_approved_skill_drop_also_prunes_the_line(self) -> None:
+        # A technology the user just approved removing from the resume must not survive by
+        # reappearing under a job. The floor (MIN_SKILLS_AFTER_DROPS) is respected via the same
+        # single decision the skills list uses — 5 profile skills minus 1 leaves 4, so the drop
+        # applies rather than being abandoned.
+        profile = self._profile()
+        raw = json.dumps(
+            {
+                "headline": "Senior Full Stack Developer",
+                "summary": "Tailored summary.",
+                "experience": [
+                    {
+                        "company": "SmartHow",
+                        "title": "Front-End Developer",
+                        "start": "2025",
+                        "highlights": ["Rewritten bullet"],
+                        "keyTechnologies": ["Docker", "React"],
+                    }
+                ],
+                "skills": ["React"],
+            }
+        )
+        agreed = [
+            ProposalItem(
+                id=1,
+                section="skills",
+                op="drop",
+                targets=["Docker"],
+                proposed="Remove Docker — the posting is front-end only",
+                rationale="Not asked for by this posting",
+            )
+        ]
+        parsed = parse_resume_json(raw, profile, refine=False, agreed_improvements=agreed)
+        self.assertNotIn("Docker", parsed.skills)
+        self.assertEqual(["React"], parsed.experience[0].keyTechnologies)
+
+    def test_a_seed_extraction_passes_technologies_through(self) -> None:
+        # A nameless profile means we are extracting from a PDF: the LLM output IS the real data,
+        # so there is no canonical profile to anchor against and the lookup gate is skipped.
+        seed = ResumeDocument(fullName="", headline="", summary="", locale="en")
+        raw = json.dumps(
+            {
+                "fullName": "Ana Costa",
+                "headline": "Backend Developer",
+                "summary": "From the PDF.",
+                "experience": [
+                    {
+                        "company": "Acme",
+                        "title": "Backend Developer",
+                        "start": "2021",
+                        "highlights": ["Built the API"],
+                        "keyTechnologies": ["Go", "Kafka"],
+                    }
+                ],
+            }
+        )
+        parsed = parse_resume_json(raw, seed, refine=False)
+        self.assertEqual(["Go", "Kafka"], parsed.experience[0].keyTechnologies)

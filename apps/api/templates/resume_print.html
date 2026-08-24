@@ -49,6 +49,9 @@
       .resume-doc .side-title {
         break-after: avoid;
       }
+      .resume-doc .exp-tech {
+        break-inside: avoid;
+      }
       /* tpl-tech turns .main into a flex column purely to hoist skills via
          `order: -1` — Chromium refuses to fragment children once `order`
          reshuffles them, which strands the header alone on page 1. The PDF
@@ -66,6 +69,7 @@
   {% set t_experience = 'Experiência' if is_pt else 'Experience' %}
   {% set t_projects = 'Projetos' if is_pt else 'Projects' %}
   {% set t_technologies = 'Tecnologias' if is_pt else 'Technologies' %}
+  {% set t_key_technologies = 'Tecnologias-chave' if is_pt else 'Key Technologies' %}
   {% set t_education = 'Formação' if is_pt else 'Education' %}
   {% set t_location = 'Localização' if is_pt else 'Location' %}
   {% set t_email = 'E-mail' if is_pt else 'Email' %}
@@ -128,6 +132,16 @@
               <li>{{ h | safe }}</li>
               {% endfor %}
             </ul>
+            {% endif %}
+            {% if job.keyTechnologies %}
+            <div class="exp-tech">
+              <span class="exp-tech-label">{{ t_key_technologies }}:</span>
+              <ul class="exp-tech-list">
+                {% for t in job.keyTechnologies %}
+                <li>{{ t }}</li>
+                {% endfor %}
+              </ul>
+            </div>
             {% endif %}
           </article>
           {% endfor %}

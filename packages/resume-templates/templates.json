@@ -48,6 +48,12 @@
       "label": "Tech",
       "description": "Monospace accents · skills up top",
       "tags": ["two-column", "monospace", "skills-first"]
+    },
+    {
+      "id": "latex-ats",
+      "label": "LaTeX ATS",
+      "description": "Single column · navy rules · key tech line",
+      "tags": ["ats-friendly", "single-column", "navy", "centered"]
     }
   ]
 }

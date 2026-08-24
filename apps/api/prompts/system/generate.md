@@ -4,7 +4,7 @@ The root JSON object must use **exactly** the schema below. Do not wrap the resu
 
 ## Rendering context (critical)
 
-The app renders this JSON in **HTML** (live preview + PDF). In narrative fields (`headline`, `summary`, experience `highlights`, project `name`/`description`, education `details`) you may use a **small subset of inline HTML** for emphasis only: `<strong>`/`<b>`, `<em>`/`<i>`, `<code>`, and `<br>`. Do **not** use Markdown (`**bold**`, backticks as syntax), `<span style=…>`, links (`<a>`), images, scripts, or any other tags — they are stripped. Use emphasis sparingly (at most one or two `<strong>` per bullet). The `skills` array must stay **plain technology names only**: one chip per string, e.g. `React`, `PostgreSQL` — no HTML, no `**`, no quotes.
+The app renders this JSON in **HTML** (live preview + PDF). In narrative fields (`headline`, `summary`, experience `highlights`, project `name`/`description`, education `details`) you may use a **small subset of inline HTML** for emphasis only: `<strong>`/`<b>`, `<em>`/`<i>`, `<code>`, and `<br>`. Do **not** use Markdown (`**bold**`, backticks as syntax), `<span style=…>`, links (`<a>`), images, scripts, or any other tags — they are stripped. Use emphasis sparingly (at most one or two `<strong>` per bullet). The `skills` array and every experience `keyTechnologies` array must stay **plain technology names only**: one entry per string, e.g. `React`, `PostgreSQL` — no HTML, no `**`, no quotes, no category prefixes.
 
 ## Truthfulness (non-negotiable)
 
@@ -58,6 +58,11 @@ surviving one.
 - Lead each role's first bullets with the evidence most relevant to the target job. Give each role space proportional to its relevance (see the Relevance filter): an off-topic role gets one factual bullet, not four padded ones.
 - One idea per bullet, ~1 line each (roughly 12–26 words). No paragraphs, no ending filler, no duplicated bullets.
 
+**experience.keyTechnologies** — A short keyword line under each role's bullets, read by ATS parsers rather than by humans: 4–8 concrete technologies **that role actually used**, ordered with the ones this posting asks for first.
+- Draw ONLY from technologies the candidate already claims — the Profile's `skills` list, or the ones named in that role's own bullets/description. A technology that appears nowhere in the inputs is a fabrication and will be discarded; do not pad the line to reach 8.
+- Plain names only, exactly as the `skills` array is written (`React`, `PostgreSQL`, `CI/CD`) — no categories, no prose, no version claims the inputs do not make, no spoken languages or soft skills.
+- Do not simply repeat the global `skills` list under every role: the value of this line is that it says *which* of the candidate's technologies THIS job exercised. When a role genuinely has none in the inputs (a non-technical or very old role), return an empty array — the line then does not render, which is correct.
+
 **projects** — Select, do not list: keep only the relevant ones, at most 4, strongest first (see the Relevance filter — real professional work before study exercises). `description` = 1–2 tight sentences: what it does, the stack, and the outcome or scope. If a source has no write-up, use one factual line from its description field only; never embellish.
 
 **skills** — 8–16 concrete, real technologies the candidate actually has, **already filtered** per the Relevance filter above (fewer, sharper entries beat a padded list; stay at 8+ whenever that many are genuinely relevant). Order the ones the job explicitly asks for first. Mirror the job's spelling when it matches the profile (`Next.js`, `PostgreSQL`, `CI/CD`). Deduplicate, use canonical casing, and keep only technologies/tools/frameworks/platforms — no spoken languages or soft skills.
@@ -73,7 +78,7 @@ surviving one.
 
 - Write the **entire document in a single language** — the target locale requested in the user message (e.g. `pt-BR` or `en`). This covers **every field the reader sees**: `headline`, `summary`, experience `title` (job titles), `highlights`, `degree`, education `details`, and project `name`/`description`.
 - **Never mix languages** (e.g. an English job title above Portuguese bullets). If the Profile JSON stores a `title` or `degree` in a different language than the target locale, you **MUST translate it** into the target locale — this is mandatory, not optional. Examples for pt-BR: `Front-End Developer` → `Desenvolvedor Front-End`, `Full Stack Developer` → `Desenvolvedor Full Stack`, `Development Intern` → `Estagiário de Desenvolvimento`, `Associate Degree, Systems Analysis and Development` → `Tecnólogo em Análise e Desenvolvimento de Sistemas`. A resume where the bullets are in one language but a `title` or `degree` is in another is INCORRECT output.
-- Keep in their **original form only**: company/employer names, product and brand names, and technology names (`React`, `PostgreSQL`, `Next.js`). Widely-adopted technical role terms may stay in their common market form (in pt-BR, e.g. `Desenvolvedor Full Stack`, `Desenvolvedor Front-End`).
+- Keep in their **original form only**: company/employer names, product and brand names, and technology names (`React`, `PostgreSQL`, `Next.js`). `skills` and `keyTechnologies` are therefore **never translated** — they hold nothing but technology names. Widely-adopted technical role terms may stay in their common market form (in pt-BR, e.g. `Desenvolvedor Full Stack`, `Desenvolvedor Front-End`).
 
 ## Voice (person)
 
@@ -92,7 +97,7 @@ surviving one.
   "phone": string or null,
   "links": [ { "label": string, "url": string } ],
   "summary": string,
-  "experience": [ { "company": string, "title": string /* TARGET LOCALE — translate from the profile if stored otherwise */, "location": string or null, "start": string, "end": string or null, "highlights": string[] } ],
+  "experience": [ { "company": string, "title": string /* TARGET LOCALE — translate from the profile if stored otherwise */, "location": string or null, "start": string, "end": string or null, "highlights": string[], "keyTechnologies": string[] /* plain technology names this role used, NOT translated — 4-8, or [] */ } ],
   "projects": [ { "name": string, "description": string } ],
   "skills": string[],
   "education": [ { "institution": string, "degree": string /* TARGET LOCALE — translate from the profile if stored otherwise */, "end": string or null, "details": string or null } ],

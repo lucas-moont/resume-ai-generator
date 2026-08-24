@@ -113,6 +113,69 @@ def filter_skills_non_tech_inplace(data: dict) -> None:
     ]
 
 
+# The key names models reach for instead of ``keyTechnologies`` (v7). ``technologies``/``stack``
+# /``tools`` are included because the prompt's own section heading is prose ("Key Technologies"),
+# and a model that paraphrases the key should not silently lose the whole line.
+_KEY_TECH_ALIASES = (
+    "keyTechnologies",
+    "key_technologies",
+    "keyTech",
+    "key_tech",
+    "technologies",
+    "techStack",
+    "tech_stack",
+    "stack",
+    "tools",
+)
+
+
+def _normalize_key_technologies_inplace(entry: dict) -> None:
+    """Fold whatever key the model used into ``keyTechnologies: list[str]``.
+
+    Accepts a list (of strings or ``{name: ...}`` objects) or the single comma/slash-separated
+    STRING models frequently emit for this field ("React, TypeScript, Docker"), since the
+    template renders it as one line and the prompt describes it as one. Entries are cleaned with
+    the same ``_clean_technology_chip``/``_NON_TECH_SKILLS`` rules as ``skills`` -- this is a
+    technology keyword line, so a spoken language or a soft skill does not belong on it.
+    """
+    raw: object = None
+    for alias in _KEY_TECH_ALIASES:
+        value = entry.get(alias)
+        if isinstance(value, (list, str)) and value:
+            raw = value
+            break
+    if raw is None:
+        entry["keyTechnologies"] = []
+        return
+
+    candidates: list[str] = []
+    if isinstance(raw, str):
+        # One string, many technologies: split on the separators a model actually uses. "/" is
+        # deliberately NOT a separator -- it is internal to real names (CI/CD, TCP/IP).
+        candidates = [part for part in re.split(r"[,;•|]+|\s+[-–—]\s+", raw)]
+    else:
+        for item in raw:
+            if isinstance(item, str):
+                candidates.append(item)
+            elif isinstance(item, dict):
+                picked = _pick_str(item, "name", "technology", "skill", "title", "label")
+                if picked:
+                    candidates.append(picked)
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        chip = _clean_technology_chip(candidate)
+        if not chip or chip.lower() in _NON_TECH_SKILLS:
+            continue
+        token = skill_token(chip)
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        cleaned.append(chip)
+    entry["keyTechnologies"] = cleaned
+
+
 def _normalize_resume_dict(d: dict) -> dict:
     if "fullName" not in d:
         name = _pick_str(d, "fullName", "name", "full_name", "candidateName")
@@ -200,6 +263,7 @@ def _normalize_resume_dict(d: dict) -> dict:
                 e["highlights"] = [summary] if summary else []
             else:
                 e["highlights"] = [h.strip() for h in highlights if isinstance(h, str) and h.strip()]
+            _normalize_key_technologies_inplace(e)
             if not isinstance(e.get("company"), str):
                 e["company"] = ""
             if not isinstance(e.get("title"), str):
@@ -329,6 +393,60 @@ def _dropped_targets(
     return keys
 
 
+def _anchor_key_technologies(
+    base_role: dict,
+    patch_role: dict,
+    *,
+    skill_lookup: dict[str, str],
+    dropped: set[str],
+    is_seed: bool,
+) -> list[str] | None:
+    """The technologies a role may claim, restricted to ones the candidate actually claims (v7).
+
+    Same shape of guarantee as the ``skills`` anchor, applied per role: a technology reaches the
+    Key Technologies line only if it matches (by ``skill_token``) either the profile's own skills
+    list or that role's own stored ``keyTechnologies``. Everything else the model emitted is
+    discarded -- a plausible-looking technology under a real employer is exactly the kind of
+    fabrication a recruiter would ask about in an interview.
+
+    The profile's GLOBAL skills are admissible per role, not just the role's own stored list,
+    because until a role carries its own technologies there is nothing else to draw on. The
+    tradeoff is deliberate: the model may attribute a real skill to the wrong role (a curation
+    mistake the user can see and edit inline), but it can never introduce a technology the
+    candidate never claimed anywhere (a lie the user cannot see).
+
+    An approved skills ``drop`` prunes this line too: a technology the user just removed from the
+    resume must not survive by reappearing under a job.
+
+    Returns ``None`` when the model emitted no list at all, and an empty list when everything it
+    emitted was discarded -- callers adopt only a non-empty result, so in both cases the role
+    keeps the profile's own technologies (the same rule ``highlights`` follows). ``is_seed`` (a
+    PDF/GitHub extraction, where the LLM output IS the real data) skips the lookup gate; there is
+    no canonical profile to anchor against yet.
+    """
+    raw = patch_role.get("keyTechnologies")
+    if not isinstance(raw, list):
+        return None
+    own = [t for t in (base_role.get("keyTechnologies") or []) if isinstance(t, str) and t.strip()]
+    own_lookup = build_skill_lookup(own)
+    anchored: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        token = skill_token(item)
+        if not token or token in seen or token in dropped:
+            continue
+        canonical = own_lookup.get(token) or skill_lookup.get(token)
+        if canonical is None:
+            if not is_seed:
+                continue
+            canonical = item.strip()
+        seen.add(token)
+        anchored.append(canonical)
+    return anchored
+
+
 def _anchor_generate_to_profile(
     fallback: ResumeDocument,
     patch: dict,
@@ -428,6 +546,25 @@ def _anchor_generate_to_profile(
                     if isinstance(l, dict) and str(l.get("label") or "").strip() and str(l.get("url") or "").strip()
                 ]
 
+    # Approved skill drops (v6) are resolved HERE, above the experience block, because two
+    # sections consume them now: the ``skills`` list itself (further down) and each role's
+    # ``keyTechnologies`` line (v7). A technology the user approved dropping must not survive by
+    # reappearing under a job -- and the all-or-nothing floor decision below has to be the SAME
+    # decision in both places, which two independent computations could not guarantee.
+    profile_skills = [s for s in (out.get("skills") or []) if isinstance(s, str) and s.strip()]
+    dropped_skills = _dropped_targets(agreed_improvements, section="skills", normalizer=skill_token)
+    # Guard the floor BEFORE pruning anything, so the decision is all-or-nothing (see
+    # MIN_SKILLS_AFTER_DROPS): count what would survive, and abandon the whole drop set if that
+    # leaves the resume too thin.
+    if dropped_skills:
+        surviving = [s for s in profile_skills if skill_token(s) not in dropped_skills]
+        if len(surviving) < MIN_SKILLS_AFTER_DROPS:
+            dropped_skills = set()
+    # Skills are matched by app.domain.entity_identity.skill_token, NOT entity_key --
+    # skill_token preserves ".+#-" (e.g. "C++" != "C"), a deliberate distinction from the
+    # entity-name matching below (see that module's docstring).
+    profile_skill_lookup = build_skill_lookup(profile_skills)
+
     # Experience: anchor to profile roles, adopting the rewritten (possibly translated) title
     # and highlights only on a match. Matching is done by normalized company + start date --
     # NOT title -- for two reasons: (1) the LLM legitimately translates the title (e.g. pt-BR),
@@ -462,6 +599,18 @@ def _anchor_generate_to_profile(
                     if cleaned:
                         new_role["highlights"] = cleaned
                         matched_any = True
+                # Key Technologies (v7): adopted only when at least one entry survived the
+                # anti-fabrication gate; otherwise the role keeps whatever the profile stored,
+                # exactly as ``highlights`` does above.
+                anchored_tech = _anchor_key_technologies(
+                    base,
+                    match,
+                    skill_lookup=profile_skill_lookup,
+                    dropped=dropped_skills,
+                    is_seed=is_seed,
+                )
+                if anchored_tech:
+                    new_role["keyTechnologies"] = anchored_tech
                 base = new_role
             anchored_exp.append(base)
         out["experience"] = anchored_exp
@@ -573,22 +722,14 @@ def _anchor_generate_to_profile(
     # With an agreed "skills" item, ALSO admit a patch skill outside the profile when its own
     # token is literally named in that item's approved text (QA-04) -- a skill the user never
     # approved (anywhere in the plan) is still a fabrication and stays discarded.
-    base_skills = [s for s in (out.get("skills") or []) if isinstance(s, str) and s.strip()]
+    # ``profile_skills``/``profile_skill_lookup``/``dropped_skills`` were resolved above the
+    # experience block so each role's Key Technologies line honors the identical drop decision.
+    base_skills = profile_skills
     patch_skills = [s for s in (patch.get("skills") or []) if isinstance(s, str) and s.strip()]
     if base_skills:
-        # Skills are matched by app.domain.entity_identity.skill_token, NOT entity_key --
-        # skill_token preserves ".+#-" (e.g. "C++" != "C"), a deliberate distinction from the
-        # entity-name matching above (see that module's docstring).
-        lookup = build_skill_lookup(base_skills)
+        lookup = profile_skill_lookup
         agreed_skills_text = _agreed_skills_text(agreed_improvements)
-        dropped = _dropped_targets(agreed_improvements, section="skills", normalizer=skill_token)
-        # Guard the floor BEFORE pruning anything, so the decision is all-or-nothing (see
-        # MIN_SKILLS_AFTER_DROPS): count what would survive, and abandon the whole drop set if
-        # that leaves the resume too thin.
-        if dropped:
-            surviving = [s for s in base_skills if skill_token(s) not in dropped]
-            if len(surviving) < MIN_SKILLS_AFTER_DROPS:
-                dropped = set()
+        dropped = dropped_skills
         ordered: list[str] = []
         admitted_tokens: set[str] = set()
         for s in patch_skills:

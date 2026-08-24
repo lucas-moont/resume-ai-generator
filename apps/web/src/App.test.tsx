@@ -8,6 +8,7 @@ import { renderApp } from './test/render'
 import { sseResponse } from './test/msw/sse'
 import { makeChatTurnEvents, makeResume, makeStageEvents } from './test/factories'
 import { STORAGE_KEY, useResumeStore } from './features/resume/store/resumeStore'
+import { TEMPLATE_REGISTRY } from './features/resume/templates/registry'
 import { ACTIVE_SESSION_STORAGE_KEY, useChatStore } from './features/chat/store/chatStore'
 import { __resetChatBackendAvailability } from './features/chat/hooks/useChatStream'
 
@@ -94,7 +95,7 @@ describe('App', () => {
     expect(screen.getByRole('combobox', { name: /template/i })).toHaveValue('classic')
   })
 
-  it('offers all 8 templates and switches instantly, with no network request', async () => {
+  it('offers every registered template and switches instantly, with no network request', async () => {
     const resume = makeResume({ fullName: 'Ada Lovelace' })
     localStorage.setItem(
       STORAGE_KEY,
@@ -107,7 +108,7 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeInTheDocument())
 
     const picker = screen.getByRole('combobox', { name: /template/i })
-    expect(within(picker).getAllByRole('option')).toHaveLength(8)
+    expect(within(picker).getAllByRole('option')).toHaveLength(TEMPLATE_REGISTRY.length)
 
     // onUnhandledRequest: 'error' (src/test/setup.ts) means this would throw
     // if switching templates ever triggered a request.

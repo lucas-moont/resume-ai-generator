@@ -24,9 +24,14 @@ _MANIFEST = json.loads(
 )
 _EXPECTED_TEMPLATE_IDS = {t["id"] for t in _MANIFEST["templates"]}
 
+# The rendered label element, not the bare words — see
+# KeyTechnologiesReachThePrintTemplateTests' docstring for why that distinction matters here.
+_KEY_TECH_LABEL_EN = '<span class="exp-tech-label">Key Technologies:</span>'
+_KEY_TECH_LABEL_PT = '<span class="exp-tech-label">Tecnologias-chave:</span>'
+
 
 class PdfExportTemplatesContractTests(unittest.TestCase):
-    def test_manifest_has_all_eight_templates(self) -> None:
+    def test_manifest_has_every_known_template(self) -> None:
         # Guards against a truncated/empty templates.json making every other
         # assertion in this file vacuously true.
         self.assertEqual(
@@ -40,6 +45,7 @@ class PdfExportTemplatesContractTests(unittest.TestCase):
                 "two-column-ats",
                 "executive",
                 "tech",
+                "latex-ats",
             },
         )
 
@@ -70,6 +76,23 @@ async def test_new_ats_templates_render_a_real_pdf(template_id: str) -> None:
     # `.resume-doc` wrapper added to resume_print.html actually render for them too.
     resume = ResumeDocument(**make_resume_payload())
     pdf_bytes = await render_resume_pdf(resume, template_id)
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+@pytest.mark.e2e
+async def test_latex_ats_template_renders_a_real_pdf_with_the_key_tech_line() -> None:
+    # v7: latex-ats is the first template added together with a new DOM element
+    # (.exp-tech), so the smoke test asserts more than "%PDF" — it proves the Key
+    # Technologies line actually reaches the print HTML the browser is handed.
+    payload = make_resume_payload()
+    payload["experience"][0]["keyTechnologies"] = ["React", "PostgreSQL"]
+    resume = ResumeDocument(**payload)
+
+    html = render_resume_html(resume, "latex-ats")
+    assert _KEY_TECH_LABEL_EN in html or _KEY_TECH_LABEL_PT in html
+    assert "PostgreSQL" in html
+
+    pdf_bytes = await render_resume_pdf(resume, "latex-ats")
     assert pdf_bytes.startswith(b"%PDF")
 
 
@@ -176,3 +199,59 @@ class ContactFieldsReachEveryTemplateTests(unittest.TestCase):
         self.assertFalse(self._is_visible(broken, "modern", "sidebar"))
         # ...and that it still passes the templates it should.
         self.assertTrue(self._is_visible(broken, "classic", "contact-bar"))
+
+
+class KeyTechnologiesReachThePrintTemplateTests(unittest.TestCase):
+    """The Key Technologies line (v7) is emitted by the ONE shared print template, so it must
+    behave the same for every template id — and, crucially, must be absent when the field is
+    empty. Every resume persisted before the field existed has it empty, so a line that rendered
+    unconditionally would put a dangling "Key Technologies:" label on all of them.
+
+    Assertions anchor on the rendered ``<span class="exp-tech-label">`` rather than on the bare
+    words: ``resume_print.html`` inlines the whole of ``resume.css``, whose comments discuss
+    ``.exp-tech`` and "Key Technologies" by name, so a substring check against the full document
+    is always true and would make every test here vacuous.
+    """
+
+    def test_an_empty_key_technologies_list_renders_no_line(self) -> None:
+        resume = ResumeDocument(**make_resume_payload())
+        self.assertEqual([], resume.experience[0].keyTechnologies)
+        html = render_resume_html(resume, "latex-ats")
+        self.assertNotIn('<div class="exp-tech">', html)
+        self.assertNotIn(_KEY_TECH_LABEL_EN, html)
+        self.assertNotIn(_KEY_TECH_LABEL_PT, html)
+
+    def test_the_label_follows_the_document_locale(self) -> None:
+        payload = make_resume_payload()
+        payload["experience"][0]["keyTechnologies"] = ["React"]
+
+        payload["locale"] = "pt-BR"
+        html = render_resume_html(ResumeDocument(**payload), "latex-ats")
+        self.assertIn(_KEY_TECH_LABEL_PT, html)
+        self.assertNotIn(_KEY_TECH_LABEL_EN, html)
+
+        payload["locale"] = "en"
+        html = render_resume_html(ResumeDocument(**payload), "latex-ats")
+        self.assertIn(_KEY_TECH_LABEL_EN, html)
+        self.assertNotIn(_KEY_TECH_LABEL_PT, html)
+
+    def test_each_technology_is_its_own_node_with_no_literal_commas(self) -> None:
+        # The separators are painted by CSS (.exp-tech-list li::after) so the comma never
+        # becomes part of the text a user edits inline, and an ATS reads clean tokens.
+        payload = make_resume_payload()
+        payload["experience"][0]["keyTechnologies"] = ["React", "PostgreSQL"]
+        html = render_resume_html(ResumeDocument(**payload), "latex-ats")
+        self.assertIn("<li>React</li>", html)
+        self.assertIn("<li>PostgreSQL</li>", html)
+        self.assertNotIn("React,", html)
+
+    def test_the_line_reaches_every_template_not_just_latex_ats(self) -> None:
+        # The DOM is template-independent by design (CONTEXT.md: Template) — the element is
+        # emitted for all of them and CSS decides how it looks. A future change that scoped the
+        # markup to one template would break that invariant silently.
+        payload = make_resume_payload()
+        payload["experience"][0]["keyTechnologies"] = ["React"]
+        resume = ResumeDocument(**payload)
+        for template_id in sorted(_EXPECTED_TEMPLATE_IDS):
+            with self.subTest(template=template_id):
+                self.assertIn(_KEY_TECH_LABEL_EN, render_resume_html(resume, template_id))

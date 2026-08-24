@@ -2,9 +2,10 @@ import type { EducationItem, ExperienceItem, ProjectItem, ResumeDocument } from 
 
 /**
  * Dot-path field editing over a ResumeDocument (`applyFieldEdit(doc,
- * "experience.2.highlights.1", value)`), plus add/remove for the five lists
+ * "experience.2.highlights.1", value)`), plus add/remove for the six lists
  * the preview exposes +/- buttons for (skills, education, experience,
- * projects, per-experience highlights). Pure and immutable: every function
+ * projects, per-experience highlights and keyTechnologies). Pure and
+ * immutable: every function
  * returns either the SAME
  * document reference (path didn't resolve — a no-op, never a throw, since
  * these run from a contenteditable's onBlur where crashing the edit
@@ -25,6 +26,15 @@ const TOP_LEVEL_STRING_FIELDS = new Set<TopLevelStringField>([
 ])
 
 const EXPERIENCE_STRING_FIELDS = new Set<keyof ExperienceItem>(['company', 'title', 'location', 'start', 'end'])
+
+/** The per-role string lists addressable element-wise, mirroring the API's
+ * `_EXPERIENCE_NESTED_LIST_FIELDS` patch whitelist (app/domain/profile_patch.py). */
+const EXPERIENCE_NESTED_LIST_KEYS = ['highlights', 'keyTechnologies'] as const
+type ExperienceNestedListKey = (typeof EXPERIENCE_NESTED_LIST_KEYS)[number]
+
+function isExperienceNestedListKey(key: string | undefined): key is ExperienceNestedListKey {
+  return (EXPERIENCE_NESTED_LIST_KEYS as readonly string[]).includes(key ?? '')
+}
 const PROJECT_STRING_FIELDS = new Set(['name', 'description'] as const)
 const EDUCATION_STRING_FIELDS = new Set<keyof EducationItem>(['institution', 'degree', 'end', 'details'])
 
@@ -84,15 +94,18 @@ export function applyFieldEdit(doc: ResumeDocument, path: string, value: string)
   }
 
   if (segments.length === 4) {
-    // Only "experience.<index>.highlights.<index>" exists at this depth today.
+    // "experience.<index>.highlights.<index>" and, since v7,
+    // "experience.<index>.keyTechnologies.<index>" — the only two per-role
+    // string lists at this depth.
     const [key, idxSeg, nestedKey, nestedIdxSeg] = segments
-    if (key !== 'experience' || nestedKey !== 'highlights') return doc
+    if (key !== 'experience' || !isExperienceNestedListKey(nestedKey)) return doc
     const idx = parseIndex(idxSeg)
     if (idx === null || idx < 0 || idx >= doc.experience.length) return doc
     const item = doc.experience[idx]
+    const nestedList = item[nestedKey] ?? []
     const nestedIdx = parseIndex(nestedIdxSeg)
-    if (nestedIdx === null || nestedIdx < 0 || nestedIdx >= item.highlights.length) return doc
-    const nextItem: ExperienceItem = { ...item, highlights: setAt(item.highlights, nestedIdx, value) }
+    if (nestedIdx === null || nestedIdx < 0 || nestedIdx >= nestedList.length) return doc
+    const nextItem: ExperienceItem = { ...item, [nestedKey]: setAt(nestedList, nestedIdx, value) }
     return { ...doc, experience: setAt(doc.experience, idx, nextItem) }
   }
 
@@ -106,7 +119,7 @@ function blankEducationItem(): EducationItem {
 }
 
 function blankExperienceItem(): ExperienceItem {
-  return { company: '', title: '', location: null, start: '', end: null, highlights: [] }
+  return { company: '', title: '', location: null, start: '', end: null, highlights: [], keyTechnologies: [] }
 }
 
 function blankProjectItem(): ProjectItem {
@@ -126,7 +139,22 @@ function isTopLevelListKey(key: string): key is TopLevelListKey {
   return key in TOP_LEVEL_LIST_FACTORIES
 }
 
-const HIGHLIGHTS_PATH = /^experience\.(\d+)\.highlights$/
+const EXPERIENCE_NESTED_LIST_PATH = /^experience\.(\d+)\.(highlights|keyTechnologies)$/
+
+/** Resolves `experience.<index>.<highlights|keyTechnologies>` to the role and its
+ * list, or null when the path doesn't address one. `keyTechnologies` may be
+ * absent on a rehydrated document, so it reads as `[]` rather than throwing. */
+function resolveNestedList(
+  doc: ResumeDocument,
+  path: string,
+): { idx: number; key: ExperienceNestedListKey; list: readonly string[] } | null {
+  const match = EXPERIENCE_NESTED_LIST_PATH.exec(path)
+  if (!match) return null
+  const idx = Number(match[1])
+  if (idx < 0 || idx >= doc.experience.length) return null
+  const key = match[2] as ExperienceNestedListKey
+  return { idx, key, list: doc.experience[idx][key] ?? [] }
+}
 
 export function addListItem(doc: ResumeDocument, path: string): ResumeDocument {
   if (isTopLevelListKey(path)) {
@@ -135,13 +163,11 @@ export function addListItem(doc: ResumeDocument, path: string): ResumeDocument {
     return { ...doc, [path]: [...current, TOP_LEVEL_LIST_FACTORIES[path]()] }
   }
 
-  const match = HIGHLIGHTS_PATH.exec(path)
-  if (match) {
-    const idx = Number(match[1])
-    if (idx < 0 || idx >= doc.experience.length) return doc
-    const item = doc.experience[idx]
-    const nextItem: ExperienceItem = { ...item, highlights: [...item.highlights, ''] }
-    return { ...doc, experience: setAt(doc.experience, idx, nextItem) }
+  const nested = resolveNestedList(doc, path)
+  if (nested) {
+    const item = doc.experience[nested.idx]
+    const nextItem: ExperienceItem = { ...item, [nested.key]: [...nested.list, ''] }
+    return { ...doc, experience: setAt(doc.experience, nested.idx, nextItem) }
   }
 
   return doc
@@ -154,14 +180,15 @@ export function removeListItem(doc: ResumeDocument, path: string, index: number)
     return { ...doc, [path]: current.filter((_, i) => i !== index) }
   }
 
-  const match = HIGHLIGHTS_PATH.exec(path)
-  if (match) {
-    const idx = Number(match[1])
-    if (idx < 0 || idx >= doc.experience.length) return doc
-    const item = doc.experience[idx]
-    if (index < 0 || index >= item.highlights.length) return doc
-    const nextItem: ExperienceItem = { ...item, highlights: item.highlights.filter((_, i) => i !== index) }
-    return { ...doc, experience: setAt(doc.experience, idx, nextItem) }
+  const nested = resolveNestedList(doc, path)
+  if (nested) {
+    if (index < 0 || index >= nested.list.length) return doc
+    const item = doc.experience[nested.idx]
+    const nextItem: ExperienceItem = {
+      ...item,
+      [nested.key]: nested.list.filter((_, i) => i !== index),
+    }
+    return { ...doc, experience: setAt(doc.experience, nested.idx, nextItem) }
   }
 
   return doc

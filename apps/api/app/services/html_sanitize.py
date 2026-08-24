@@ -97,6 +97,19 @@ def sanitize_resume_for_display(data: dict) -> None:
                     if x:
                         rich_hs.append(x)
                 item["highlights"] = rich_hs
+            # keyTechnologies is a keyword line, not prose: plain text like ``skills``, never
+            # the rich subset ``highlights`` gets. Emphasis inside a comma-separated technology
+            # run has nothing to mark up, and an ATS parser reads the raw text either way.
+            kt = item.get("keyTechnologies")
+            if isinstance(kt, list):
+                plain_kt: list[str] = []
+                for t in kt:
+                    if not isinstance(t, str):
+                        continue
+                    x = sanitize_plain_text(t)
+                    if x:
+                        plain_kt.append(x)
+                item["keyTechnologies"] = plain_kt
     projs = data.get("projects")
     if isinstance(projs, list):
         for p in projs:

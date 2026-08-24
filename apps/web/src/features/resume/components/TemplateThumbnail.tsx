@@ -17,7 +17,11 @@ export function TemplateThumbnail({
   const twoColumn = tags.includes('two-column')
   const dense = tags.includes('dense')
   const skillsFirst = tags.includes('skills-first')
-  const centered = serif
+  const navy = tags.includes('navy')
+  // `serif` implies a centered header in the templates that use one; `centered`
+  // is the explicit tag for a template that centers without being serif
+  // (latex-ats).
+  const centered = serif || tags.includes('centered')
 
   const accent = monochrome
     ? '#9ca3af'
@@ -25,9 +29,11 @@ export function TemplateThumbnail({
       ? '#16a34a'
       : serif
         ? '#92703f'
-        : dense
-          ? '#0d9488'
-          : '#6366f1'
+        : navy
+          ? '#1f4e79'
+          : dense
+            ? '#0d9488'
+            : '#6366f1'
 
   const lineIndexes = skillsFirst ? [0, 1, 2] : [0, 1, 2, 3, 4]
 

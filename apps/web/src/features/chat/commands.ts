@@ -42,6 +42,14 @@ export const TEMPLATE_ALIASES: Record<TemplateId, string[]> = {
   ],
   executive: ['executive', 'executivo', 'executiva'],
   tech: ['tech', 'tecnico', 'tecnologico'],
+  'latex-ats': [
+    'latex ats',
+    'latex-ats',
+    'ats latex',
+    'latex',
+    'ats latex friendly',
+    'latex ats friendly',
+  ],
 }
 
 const EN_SWITCH_VERBS = ['use', 'switch to', 'change to']

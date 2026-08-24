@@ -35,6 +35,7 @@ export function ResumePreview({
         experience: 'Experiência',
         projects: 'Projetos',
         technologies: 'Tecnologias',
+        keyTechnologies: 'Tecnologias-chave',
         education: 'Formação',
         location: 'Localização',
         email: 'E-mail',
@@ -46,6 +47,8 @@ export function ResumePreview({
         removeHighlight: 'Remover destaque',
         addSkill: 'Adicionar habilidade',
         removeSkill: 'Remover habilidade',
+        addKeyTechnology: 'Adicionar tecnologia-chave',
+        removeKeyTechnology: 'Remover tecnologia-chave',
         addEducation: 'Adicionar formação',
         removeEducation: 'Remover formação',
         addExperience: 'Adicionar experiência',
@@ -58,6 +61,7 @@ export function ResumePreview({
         experience: 'Experience',
         projects: 'Projects',
         technologies: 'Technologies',
+        keyTechnologies: 'Key Technologies',
         education: 'Education',
         location: 'Location',
         email: 'Email',
@@ -69,6 +73,8 @@ export function ResumePreview({
         removeHighlight: 'Remove highlight',
         addSkill: 'Add skill',
         removeSkill: 'Remove skill',
+        addKeyTechnology: 'Add key technology',
+        removeKeyTechnology: 'Remove key technology',
         addEducation: 'Add education entry',
         removeEducation: 'Remove education entry',
         addExperience: 'Add experience entry',
@@ -213,6 +219,44 @@ export function ResumePreview({
                           className="mt-1"
                         />
                       </>
+                    )}
+                    {/* Key Technologies (v7) — the per-role keyword line ported from
+                        danielteles/ats-friendly-latex-cv's `\keytech` macro. Emitted for
+                        EVERY template (the DOM stays template-independent; `.tpl-*` CSS
+                        decides how it looks), and only when the role carries technologies,
+                        so a resume written before the field existed renders unchanged.
+                        Each technology is its own node, with the commas painted by CSS —
+                        that keeps every entry individually inline-editable and keeps the
+                        separator out of the text a user commits. */}
+                    {(job.keyTechnologies?.length ?? 0) > 0 && (
+                      <div className="exp-tech">
+                        <span className="exp-tech-label">{labels.keyTechnologies}:</span>
+                        <ul className="exp-tech-list">
+                          {job.keyTechnologies?.map((tech, j) => (
+                            <li key={j}>
+                              <EditableText
+                                as="span"
+                                mode="plain"
+                                path={`experience.${i}.keyTechnologies.${j}`}
+                                value={tech}
+                                editable={editable}
+                              />
+                              <ListRemoveButton
+                                path={`experience.${i}.keyTechnologies`}
+                                index={j}
+                                label={labels.removeKeyTechnology}
+                                editable={editable}
+                                className="ml-1 align-middle"
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                        <ListAddButton
+                          path={`experience.${i}.keyTechnologies`}
+                          label={labels.addKeyTechnology}
+                          editable={editable}
+                        />
+                      </div>
                     )}
                   </article>
                 ))}

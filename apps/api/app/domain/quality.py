@@ -33,6 +33,9 @@ def resume_keyword_blob(resume: ResumeDocument) -> set[str]:
     parts: list[str] = [resume.headline or "", resume.summary or "", *resume.skills]
     for e in resume.experience:
         parts.extend(e.highlights or [])
+        # Key Technologies is a keyword line by design (v7) -- it exists precisely so an ATS
+        # matches the posting's technology names, so it counts toward coverage here.
+        parts.extend(e.keyTechnologies or [])
     for p in resume.projects:
         parts.append(p.description or "")
         parts.append(p.name or "")
@@ -71,9 +74,9 @@ def resume_prose_text(resume: ResumeDocument) -> str:
     """The reader-visible PROSE of a resume, for language detection (v6).
 
     Only fields whose wording is the LLM's own: summary, bullets, job titles, degrees, project
-    write-ups. Deliberately excludes ``skills`` (technology names look identical in both
-    languages and would dilute the signal toward English) and the contact fields (proper nouns
-    and addresses, no language content at all).
+    write-ups. Deliberately excludes ``skills`` and ``keyTechnologies`` (technology names look
+    identical in both languages and would dilute the signal toward English) and the contact
+    fields (proper nouns and addresses, no language content at all).
     """
     parts: list[str] = [resume.summary or "", resume.headline or ""]
     for e in resume.experience:

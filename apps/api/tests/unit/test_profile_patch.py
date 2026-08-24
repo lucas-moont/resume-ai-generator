@@ -294,3 +294,126 @@ class TestFinalSchemaValidationIsMandatory:
         ops = [_op(path="/summary", value={"not": "a string"})]
         with pytest.raises(PatchValidationFailed):
             apply_patch(profile, ops, source_kind="chat")
+
+
+class TestKeyTechnologiesPath:
+    """``/experience/N/keyTechnologies/M`` (v7) joins ``highlights`` as an element-addressable
+    per-role list, so a chat request or manual edit can fix one technology on one role without
+    resending the whole array.
+    """
+
+    def _profile_with_tech(self) -> ProfileMaster:
+        return _profile(
+            experience=[
+                {
+                    "company": "SmartHow",
+                    "title": "Front-End Developer",
+                    "start": "2025-01",
+                    "end": None,
+                    "highlights": ["Shipped the v1 chat experience"],
+                    "keyTechnologies": ["React", "Docker"],
+                }
+            ]
+        )
+
+    def test_replace_one_technology(self) -> None:
+        result = apply_patch(
+            self._profile_with_tech(),
+            [
+                PatchOp(
+                    op="replace",
+                    path="/experience/0/keyTechnologies/1",
+                    value="PostgreSQL",
+                    reason="The role used PostgreSQL, not Docker",
+                    confidence=0.9,
+                    sourceExcerpt="…migrated the reporting queries to PostgreSQL…",
+                )
+            ],
+            source_kind="chat",
+        )
+        assert result.profile.experience[0].keyTechnologies == ["React", "PostgreSQL"]
+
+    def test_append_a_technology(self) -> None:
+        result = apply_patch(
+            self._profile_with_tech(),
+            [
+                PatchOp(
+                    op="add",
+                    path="/experience/0/keyTechnologies/-",
+                    value="TypeScript",
+                    reason="TypeScript is named in the role's own bullets",
+                    confidence=0.9,
+                    sourceExcerpt="…TypeScript across the component library…",
+                )
+            ],
+            source_kind="chat",
+        )
+        assert result.profile.experience[0].keyTechnologies == ["React", "Docker", "TypeScript"]
+
+    def test_appends_onto_a_role_that_has_no_technologies_yet(self) -> None:
+        # Every role persisted before v7 has the field absent/empty; a patch must be able to
+        # populate it rather than failing on a missing key.
+        result = apply_patch(
+            _profile(),
+            [
+                PatchOp(
+                    op="add",
+                    path="/experience/0/keyTechnologies/-",
+                    value="React",
+                    reason="React is named in the role's own bullets",
+                    confidence=0.9,
+                    sourceExcerpt="…built the chat UI in React…",
+                )
+            ],
+            source_kind="chat",
+        )
+        assert result.profile.experience[0].keyTechnologies == ["React"]
+
+    def test_an_upload_may_not_remove_a_technology(self) -> None:
+        # Upload-never-removes covers the new list too — the op is skipped, not fatal.
+        result = apply_patch(
+            self._profile_with_tech(),
+            [
+                PatchOp(
+                    op="remove",
+                    path="/experience/0/keyTechnologies/0",
+                    value=None,
+                    reason="Absent from the uploaded CV",
+                    confidence=0.9,
+                    sourceExcerpt="…no mention of React…",
+                )
+            ],
+            source_kind="upload",
+        )
+        assert result.profile.experience[0].keyTechnologies == ["React", "Docker"]
+        assert result.skipped
+
+    def test_a_chat_request_may_remove_a_technology(self) -> None:
+        result = apply_patch(
+            self._profile_with_tech(),
+            [
+                PatchOp(
+                    op="remove",
+                    path="/experience/0/keyTechnologies/1",
+                    value=None,
+                    reason="The user says that role never used Docker",
+                    confidence=0.95,
+                    sourceExcerpt="tira o Docker daquele cargo",
+                )
+            ],
+            source_kind="chat",
+        )
+        assert result.profile.experience[0].keyTechnologies == ["React"]
+
+    def test_the_whole_list_is_still_not_addressable(self) -> None:
+        # Same shape as highlights: only elements, never the array itself — so a patch can never
+        # wholesale-replace a role's technologies in one unreviewable op.
+        with pytest.raises(ValidationError):
+            PatchOp(
+                op="replace",
+                path="/experience/0/keyTechnologies",
+                value=["React"],
+                reason="r",
+                confidence=0.5,
+                sourceExcerpt="e",
+            )

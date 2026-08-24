@@ -230,3 +230,91 @@ describe('removeListItem', () => {
     expect(removeListItem(doc, 'bogus', 0)).toBe(doc)
   })
 })
+
+
+describe('keyTechnologies paths (v7)', () => {
+  // The per-role Key Technologies line is the second element-addressable nested
+  // list, alongside highlights — and unlike highlights it can legitimately be
+  // ABSENT (a resume rehydrated from localStorage predates the field), so every
+  // case below also has to hold with no key at all.
+  const roleWithoutTech = {
+    company: 'Acme',
+    title: 'Dev',
+    location: null,
+    start: '2020',
+    end: null,
+    highlights: ['Did the thing.'],
+  }
+
+  it('edits one technology in place', () => {
+    const doc = makeResume()
+    const next = applyFieldEdit(doc, 'experience.0.keyTechnologies.1', 'MySQL')
+    expect(next.experience[0].keyTechnologies).toEqual(['TypeScript', 'MySQL'])
+  })
+
+  it('leaves highlights untouched when editing a technology', () => {
+    const doc = makeResume()
+    const next = applyFieldEdit(doc, 'experience.0.keyTechnologies.0', 'Go')
+    expect(next.experience[0].highlights).toEqual(doc.experience[0].highlights)
+  })
+
+  it('does not mutate the original document', () => {
+    const doc = makeResume()
+    const frozen = JSON.parse(JSON.stringify(doc))
+    applyFieldEdit(doc, 'experience.0.keyTechnologies.0', 'Go')
+    expect(doc).toEqual(frozen)
+  })
+
+  it('is a no-op for an out-of-range index', () => {
+    const doc = makeResume()
+    expect(applyFieldEdit(doc, 'experience.0.keyTechnologies.9', 'Go')).toBe(doc)
+  })
+
+  it('is a no-op on a role that has no technologies at all', () => {
+    const doc = makeResume({ experience: [roleWithoutTech] })
+    expect(applyFieldEdit(doc, 'experience.0.keyTechnologies.0', 'Go')).toBe(doc)
+  })
+
+  it('rejects a nested list name that is not addressable', () => {
+    const doc = makeResume()
+    expect(applyFieldEdit(doc, 'experience.0.bogusList.0', 'Go')).toBe(doc)
+  })
+
+  it('appends an empty technology', () => {
+    const doc = makeResume()
+    const next = addListItem(doc, 'experience.0.keyTechnologies')
+    expect(next.experience[0].keyTechnologies).toEqual(['TypeScript', 'PostgreSQL', ''])
+  })
+
+  it('bootstraps the list on a role that has none yet', () => {
+    const doc = makeResume({ experience: [roleWithoutTech] })
+    const next = addListItem(doc, 'experience.0.keyTechnologies')
+    expect(next.experience[0].keyTechnologies).toEqual([''])
+  })
+
+  it('removes one technology by index', () => {
+    const doc = makeResume()
+    const next = removeListItem(doc, 'experience.0.keyTechnologies', 0)
+    expect(next.experience[0].keyTechnologies).toEqual(['PostgreSQL'])
+  })
+
+  it('is a no-op removing from a role that has none', () => {
+    const doc = makeResume({ experience: [roleWithoutTech] })
+    expect(removeListItem(doc, 'experience.0.keyTechnologies', 0)).toBe(doc)
+  })
+
+  it('still handles highlights identically after the generalization', () => {
+    const doc = makeResume()
+    expect(applyFieldEdit(doc, 'experience.0.highlights.0', 'Rewritten.').experience[0].highlights[0]).toBe(
+      'Rewritten.',
+    )
+    expect(addListItem(doc, 'experience.0.highlights').experience[0].highlights).toHaveLength(3)
+    expect(removeListItem(doc, 'experience.0.highlights', 0).experience[0].highlights).toHaveLength(1)
+  })
+
+  it('gives a newly added experience entry an empty technologies list', () => {
+    const doc = makeResume()
+    const next = addListItem(doc, 'experience')
+    expect(next.experience[next.experience.length - 1].keyTechnologies).toEqual([])
+  })
+})
