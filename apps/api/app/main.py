@@ -26,6 +26,7 @@ from app.routers import (
     settings,
 )
 from app.services.ingestion.reaper import reconcile
+from app.services.jobs import scheduler as scan_scheduler
 
 
 @asynccontextmanager
@@ -43,7 +44,15 @@ async def lifespan(app: FastAPI):
     # behind from a PREVIOUS run before this boot ever serves a request -- see
     # services/ingestion/reaper.py's module docstring for the two crash-window shapes.
     reconcile(engine)
+    # v7 ticket 07: the Job Monitor's scheduled Scan loop -- an asyncio task on the same seam
+    # as the reaper above, but a LIVE one rather than a one-shot: it re-reads the Search
+    # Profile's interval every turn, so "off" and a changed interval both take effect without
+    # a restart. Started only when SCAN_SCHEDULER_ENABLED allows it (tests turn it off; see
+    # config.scan_scheduler_enabled), and always awaited on the way out so shutdown never
+    # races a half-written Scan transaction.
+    scan_scheduler.start(app)
     yield
+    await scan_scheduler.stop(app)
     config_module.set_settings_engine(None)
 
 

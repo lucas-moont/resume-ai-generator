@@ -174,6 +174,34 @@ def get_latest_scan(session: Session) -> JobScan | None:
     ).first()
 
 
+def get_scan(session: Session, scan_id: int) -> JobScan | None:
+    """One Scan by id. Added in ticket 07: the engine opens a SECOND Session to write the
+    results (the first one only opened the ``running`` row and committed it, so the UI can poll
+    it while the boards are being called), and it needs the same row back in that Session to
+    close it."""
+    return session.exec(select(JobScan).where(JobScan.id == scan_id)).first()
+
+
+def list_recent_scans(session: Session, *, limit: int = 100) -> list[JobScan]:
+    """The most recently started Scans, newest first (ticket 07).
+
+    Reads history so the engine can answer "when did this board last actually answer us?" --
+    the fact that decides ``skipped``. That answer is DERIVED from ``board_statuses`` rather
+    than kept in a column of its own: a per-board "last contacted" table would be a second
+    source of truth for something the Scan history already records exactly, and one that could
+    drift from it after a crash between the two writes.
+
+    ``limit`` bounds the walk: only the newest scan in which a given board reported ``ok``
+    matters, so the loop stops at the first hit per board and the cap only guards against
+    reading years of history on a board that has never answered.
+    """
+    return list(
+        session.exec(
+            select(JobScan).order_by(JobScan.started_at.desc(), JobScan.id.desc()).limit(limit)
+        ).all()
+    )
+
+
 def finish_scan(
     session: Session,
     row: JobScan,

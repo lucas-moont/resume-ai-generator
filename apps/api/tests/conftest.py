@@ -118,6 +118,20 @@ def _isolated_ai_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_scan_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """v7 ticket 07: keep the Job Monitor's background scheduler out of every test.
+
+    ``httpx.ASGITransport`` does not run the ASGI lifespan, so the ``client`` fixture never
+    started it -- but ``tests/integration/test_db_lifespan.py`` and
+    ``test_reaper_startup.py`` call ``app.main.lifespan(app)`` directly, and there the task
+    would be created for real, build the real Job Board registry and start calling LinkedIn.
+    CLAUDE.md: tests never reach a real board. The scheduler's own tests construct
+    ``ScanScheduler`` directly, which has no env gate.
+    """
+    monkeypatch.setenv("SCAN_SCHEDULER_ENABLED", "0")
+
+
 def _blackhole_transport_handler(request: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError(
         "network access is disabled in tests by default (see "

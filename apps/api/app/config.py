@@ -337,6 +337,53 @@ def max_upload_bytes() -> int:
     return _env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024, minimum=1024, maximum=100 * 1024 * 1024)
 
 
+# --- Job Monitor / Scan engine (v7 ticket 07) -------------------------------------------------
+#
+# Call-time accessors, not import-time constants -- the same discipline as ``max_upload_bytes``
+# and ``resolve_uploads_dir`` above, so a test can set the env var with ``monkeypatch.setenv``
+# and have it take effect without reloading this module. Everything the USER chooses (interval,
+# boards, applicant cap) lives in the Search Profile instead; only knobs nobody should have to
+# think about are here.
+
+
+def scan_check_interval_seconds() -> int:
+    """How long the scheduler sleeps between two reads of the Search Profile's interval.
+
+    It is NOT the scan interval: it is the granularity at which a change to that interval (or
+    switching it off) takes effect, and the poll that decides whether the next scheduled Scan
+    is due. Same philosophy as the Runtime Config -- a setting written in the UI applies on the
+    next loop, with no restart.
+    """
+    return _env_int("SCAN_CHECK_INTERVAL_SECONDS", 60, minimum=1, maximum=3600)
+
+
+def scan_results_wanted() -> int:
+    """``BoardQuery.results_wanted``: the cap on postings ONE board should return for one Scan.
+
+    Per board, not per Scan (the frozen contract says so), and the JobSpy adapter divides it
+    further across the role x location grid it fans out into -- it is that board's whole budget
+    for the query, which is what keeps a five-role Search Profile from turning into a burst.
+    """
+    return _env_int("SCAN_RESULTS_WANTED", 50, minimum=1, maximum=200)
+
+
+def scan_scheduler_enabled() -> bool:
+    """Whether ``main.py``'s lifespan starts the background Scan scheduler.
+
+    On by default -- an interval of ``None`` ("off") in the Search Profile is how a USER stops
+    scheduled Scans, and it is the state a fresh install is in, so the switch here is not the
+    product's off button. It exists for the test suite: two integration tests drive
+    ``app.main.lifespan`` directly (``test_db_lifespan``, ``test_reaper_startup``), and a real
+    scheduler task reaching real Job Boards from those is exactly what CLAUDE.md forbids.
+    ``tests/conftest.py`` sets it to ``0`` for every test; the scheduler's own tests build a
+    ``ScanScheduler`` directly instead of going through the lifespan.
+    """
+    raw = os.getenv("SCAN_SCHEDULER_ENABLED", "").strip().lower()
+    if not raw:
+        return True
+    return raw not in {"0", "false", "no", "off"}
+
+
 def profile_json_candidates_message() -> str:
     lines: list[str] = []
     o = os.getenv("PROFILE_JSON_PATH", "").strip()
