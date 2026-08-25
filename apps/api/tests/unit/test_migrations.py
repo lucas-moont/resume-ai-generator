@@ -22,6 +22,8 @@ def test_migrations_list_is_ordered_drop_then_add() -> None:
         "_add_missing_source_documents_diff_summary_column",
         "_note_improvement_proposals_table_added",
         "_add_missing_chat_sessions_kind_column",
+        "_note_job_monitor_tables_added",
+        "_rebuild_job_monitor_ephemeral_tables_without_rowid_reuse",
     ]
 
 
