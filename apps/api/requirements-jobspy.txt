@@ -1,0 +1,16 @@
+# The Job Monitor's JobSpy-backed boards (LinkedIn, Indeed, Glassdoor, Google Jobs), v7.
+#
+# INSTALL WITH --no-deps:
+#     pip install --no-deps -r requirements-jobspy.txt
+#
+# Its dependencies are declared in requirements.txt instead (pandas, beautifulsoup4,
+# markdownify, regex, tls-client, requests via anthropic/httpx). The reason is in that file:
+# python-jobspy's own metadata hard-pins `NUMPY==1.26.3` and `regex<2025.0.0`, which have no
+# wheel for CPython 3.14 and do not build against it. The pins are stale, not real -- the
+# library works on the modern versions requirements.txt installs -- but pip has no way to
+# override a dependency's pin from a requirements file, so the resolver has to be skipped for
+# this one package.
+#
+# Revisit on every upgrade: if a future release drops the NUMPY pin, this file collapses back
+# into a plain line in requirements.txt.
+python-jobspy==1.1.82
