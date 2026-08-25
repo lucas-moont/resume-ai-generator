@@ -585,6 +585,12 @@ class BoardOut(BaseModel):
     # ``skipped`` when it has not elapsed -- which the form shows so a 1h interval does not
     # silently mean 1h for every board.
     minIntervalHours: int = 1
+    # Attribution some boards' terms REQUIRE of anyone republishing their listings (Remotive,
+    # Remote OK), shown verbatim wherever their results are. ``None`` for a board that asks for
+    # nothing. Additive to the ticket-01 contract (ticket 06): it travels with the catalog so a
+    # legal obligation lives beside the id it belongs to, instead of as a string the web app
+    # would have to remember to keep in sync with the board list.
+    attributionNote: str | None = None
 
 
 class BoardListOut(BaseModel):

@@ -12,7 +12,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import config as config_module
 from app.db.engine import create_db_engine, init_db
 from app.db.seed import seed_profile_from_disk_if_empty
-from app.routers import catalog, chat, documents, export, generate, github, health, profile, refine, settings
+from app.routers import (
+    catalog,
+    chat,
+    documents,
+    export,
+    generate,
+    github,
+    health,
+    jobs,
+    profile,
+    refine,
+    settings,
+)
 from app.services.ingestion.reaper import reconcile
 
 
@@ -54,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(export.router)
     app.include_router(chat.router)
     app.include_router(settings.router)
+    app.include_router(jobs.router)
     return app
 
 
