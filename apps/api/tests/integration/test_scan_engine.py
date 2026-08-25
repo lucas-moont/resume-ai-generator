@@ -186,6 +186,81 @@ class TestPartialScan:
         assert outcome.listings_replaced is True
         assert len(read_listings(test_db_engine)) == 1
 
+    async def test_a_partly_refused_board_keeps_its_items_and_still_reports_blocked(
+        self, test_db_engine, make_fake_board
+    ):
+        # Ticket 04 decision 3: one BoardQuery becomes several calls, so a board can be refused
+        # partway through and still return what the earlier calls found. Both facts must
+        # survive the engine -- the postings reach the list AND the Board Status stays
+        # ``blocked``, because reporting ``ok`` would present half a list as the whole truth.
+        save_profile(test_db_engine, boards=["linkedin", "indeed"])
+        partly_refused = make_fake_board("linkedin")
+        partly_refused.queue(
+            BoardResult(
+                items=[
+                    job(title="Backend Engineer", url="https://linkedin.test/1"),
+                    job(title="Platform Engineer", url="https://linkedin.test/2"),
+                ],
+                status="blocked",
+                message="429 — parte da busca foi recusada.",
+            )
+        )
+        registry = BoardProviderRegistry(
+            [partly_refused, make_fake_board("indeed").queue_ok(job(url="https://indeed.test/3"))]
+        )
+
+        outcome = await scan(test_db_engine, registry)
+
+        status = outcome.board_statuses["linkedin"]
+        assert status["status"] == "blocked"
+        assert status["message"] == "429 — parte da busca foi recusada."
+        # ``count`` reports what the board contributed, not what its status suggests.
+        assert status["count"] == 2
+        titles = {listing.title for listing in read_listings(test_db_engine)}
+        assert titles == {"Backend Engineer", "Platform Engineer"}
+        sources = {
+            source.board
+            for listing in read_listings(test_db_engine)
+            for source in read_sources(test_db_engine, listing.id)
+        }
+        assert "linkedin" in sources
+
+    async def test_a_partly_refused_board_is_the_only_board_and_its_items_still_land(
+        self, test_db_engine, make_fake_board
+    ):
+        save_profile(test_db_engine, boards=["linkedin"])
+        board = make_fake_board("linkedin")
+        board.queue(
+            BoardResult(
+                items=[
+                    job(title="Backend Engineer", url="https://linkedin.test/1"),
+                    job(title="Platform Engineer", url="https://linkedin.test/2"),
+                ],
+                status="blocked",
+                message="429",
+            )
+        )
+
+        outcome = await scan(test_db_engine, BoardProviderRegistry([board]))
+
+        assert outcome.board_statuses["linkedin"]["status"] == "blocked"
+        assert outcome.listings_found == 2
+        assert len(read_listings(test_db_engine)) == 2
+
+    async def test_an_errored_board_that_returned_items_also_keeps_them(
+        self, test_db_engine, make_fake_board
+    ):
+        save_profile(test_db_engine, boards=["linkedin"])
+        board = make_fake_board("linkedin")
+        board.queue(
+            BoardResult(items=[job(url="https://linkedin.test/1")], status="error", message="parcial")
+        )
+
+        outcome = await scan(test_db_engine, BoardProviderRegistry([board]))
+
+        assert outcome.board_statuses["linkedin"]["status"] == "error"
+        assert len(read_listings(test_db_engine)) == 1
+
     async def test_an_ok_board_with_nothing_new_does_empty_the_list(
         self, test_db_engine, make_fake_board
     ):
