@@ -5,6 +5,7 @@ import type { ListingFilters } from '../../../lib/api/jobs'
 import { useJobScanMonitor } from '../hooks/useJobScan'
 import { BOARD_LABEL, formatScanMoment } from '../listingFormat'
 import { BoardStatusBar } from './BoardStatusBar'
+import { ListingDetail } from './ListingDetail'
 import { ListingList } from './ListingList'
 import { SearchProfileForm } from './SearchProfileForm'
 
@@ -58,8 +59,9 @@ export function JobsShell() {
   const [board, setBoard] = useState<BoardId | ''>('')
   const [maxBand, setMaxBand] = useState<MaxApplicantBand | ''>('')
   const [status, setStatus] = useState<ListingStatus | ''>('')
-  // Ticket 13 mounts <ListingDetail listingId={selectedListingId} /> in the slot below; this
-  // shell only owns which listing is selected and highlights that card.
+  // Ticket 13: the third column below renders <ListingDetail> for this id. It only EXISTS while
+  // a listing is selected — an empty third of the screen next to the list would be worse than
+  // the two-column layout it replaces — which is also why the panel owns a close button.
   const [selectedListingId, setSelectedListingId] = useState<number | null>(null)
 
   const { runningScan, latestScan, isLoadingLatest, isStarting, startError, start } =
@@ -218,6 +220,22 @@ export function JobsShell() {
           onSelect={setSelectedListingId}
         />
       </section>
+
+      {selectedListingId !== null && (
+        <section
+          aria-label="Detalhe da vaga"
+          // Third column on desktop; on mobile it stacks under the list inside the "vagas" tab,
+          // so selecting a card never navigates the user away from the list they came from.
+          className={`min-h-0 flex-col overflow-y-auto border-stone-200 bg-white/60 p-4 dark:border-zinc-800 dark:bg-zinc-950/40 lg:flex lg:w-[38%] lg:max-w-[560px] lg:border-l ${
+            tab === 'vagas' ? 'flex' : 'hidden'
+          }`}
+        >
+          <ListingDetail
+            listingId={selectedListingId}
+            onClose={() => setSelectedListingId(null)}
+          />
+        </section>
+      )}
     </main>
   )
 }
