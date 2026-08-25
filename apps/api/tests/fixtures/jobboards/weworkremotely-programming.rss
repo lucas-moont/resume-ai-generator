@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>We Work Remotely: Remote Programming Jobs</title>
+    <link>https://weworkremotely.com/categories/remote-programming-jobs</link>
+    <description>Remote Programming Jobs from We Work Remotely.</description>
+    <language>en-us</language>
+    <pubDate>Tue, 25 Aug 2026 12:00:00 +0000</pubDate>
+    <item>
+      <title>Hyperloop Labs: Senior Backend Engineer (Go)</title>
+      <region>Anywhere in the World</region>
+      <category>Back-End Programming</category>
+      <type>Full-Time</type>
+      <link>https://weworkremotely.com/remote-jobs/hyperloop-labs-senior-backend-engineer-go</link>
+      <guid>https://weworkremotely.com/remote-jobs/hyperloop-labs-senior-backend-engineer-go</guid>
+      <pubDate>Tue, 25 Aug 2026 10:41:07 +0000</pubDate>
+      <description><![CDATA[<p><strong>Headquarters:</strong> Lisbon, Portugal</p><p>We are looking for a Senior Backend Engineer to work on our event pipeline.</p><ul><li>Go, PostgreSQL, Kafka</li><li>Design &amp; ship services end to end</li></ul><p>Salary&nbsp;range: &euro;70k-&euro;95k.</p><br/>Remote, forever.]]></description>
+    </item>
+    <item>
+      <title>Bright Pixel: Front-End Developer</title>
+      <region>Europe Only</region>
+      <category>Front-End Programming</category>
+      <type>Full-Time</type>
+      <link>https://weworkremotely.com/remote-jobs/bright-pixel-front-end-developer</link>
+      <guid>https://weworkremotely.com/remote-jobs/bright-pixel-front-end-developer</guid>
+      <pubDate>Mon, 24 Aug 2026 16:05:00 +0000</pubDate>
+      <description><![CDATA[<p>Ship a design system in React and TypeScript.</p>]]></description>
+    </item>
+    <item>
+      <title>Old Guard Software: Backend Engineer</title>
+      <region>USA Only</region>
+      <category>Back-End Programming</category>
+      <type>Contract</type>
+      <link>https://weworkremotely.com/remote-jobs/old-guard-software-backend-engineer</link>
+      <guid>https://weworkremotely.com/remote-jobs/old-guard-software-backend-engineer</guid>
+      <pubDate>Tue, 18 Aug 2026 09:00:00 +0000</pubDate>
+      <description><![CDATA[<p>An older posting, still in the feed.</p>]]></description>
+    </item>
+    <item>
+      <title>A title with no company separator</title>
+      <region>Anywhere in the World</region>
+      <category>Back-End Programming</category>
+      <type>Full-Time</type>
+      <link>https://weworkremotely.com/remote-jobs/mystery-posting</link>
+      <guid>https://weworkremotely.com/remote-jobs/mystery-posting</guid>
+      <pubDate>Tue, 25 Aug 2026 11:00:00 +0000</pubDate>
+      <description><![CDATA[<p>No company can be recovered from this item.</p>]]></description>
+    </item>
+  </channel>
+</rss>

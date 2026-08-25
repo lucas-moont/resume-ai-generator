@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>We Work Remotely: Remote Back-End Programming Jobs</title>
+    <link>https://weworkremotely.com/categories/remote-back-end-programming-jobs</link>
+    <description>Remote Back-End Programming Jobs from We Work Remotely.</description>
+    <language>en-us</language>
+    <pubDate>Tue, 25 Aug 2026 12:00:00 +0000</pubDate>
+    <item>
+      <title>Hyperloop Labs: Senior Backend Engineer (Go)</title>
+      <region>Anywhere in the World</region>
+      <category>Back-End Programming</category>
+      <type>Full-Time</type>
+      <link>https://weworkremotely.com/remote-jobs/hyperloop-labs-senior-backend-engineer-go</link>
+      <guid>https://weworkremotely.com/remote-jobs/hyperloop-labs-senior-backend-engineer-go</guid>
+      <pubDate>Tue, 25 Aug 2026 10:41:07 +0000</pubDate>
+      <description><![CDATA[<p>The very same job, cross-listed in the specialised category feed.</p>]]></description>
+    </item>
+    <item>
+      <title>Quiet Ledger: Backend Engineer, Payments</title>
+      <company>Quiet Ledger</company>
+      <region>Latin America Only</region>
+      <category>Back-End Programming</category>
+      <type>Full-Time</type>
+      <link>https://weworkremotely.com/remote-jobs/quiet-ledger-backend-engineer-payments</link>
+      <guid>https://weworkremotely.com/remote-jobs/quiet-ledger-backend-engineer-payments</guid>
+      <pubDate>Tue, 25 Aug 2026 07:20:00 +0000</pubDate>
+      <description><![CDATA[<p>Payments, ledgers and reconciliation. Python and PostgreSQL.</p>]]></description>
+    </item>
+  </channel>
+</rss>

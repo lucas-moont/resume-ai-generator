@@ -1,0 +1,82 @@
+[
+  {
+    "legal": "Remote OK API - Attribution is required: you must link back to the job page on remoteok.com. Commercial use requires a licence."
+  },
+  {
+    "slug": "meridian-data-senior-backend-engineer",
+    "id": "1088421",
+    "epoch": 1787657400,
+    "date": "2026-08-25T11:30:00+00:00",
+    "company": "Meridian Data",
+    "company_logo": "https://remoteok.com/assets/logo-meridian.png",
+    "position": "Senior Backend Engineer",
+    "tags": ["python", "postgres", "backend", "aws"],
+    "logo": "https://remoteok.com/assets/logo-meridian.png",
+    "description": "<p>Meridian Data runs a petabyte-scale warehouse.</p><ul><li>Python, FastAPI, PostgreSQL</li><li>Own services from design to on-call</li></ul><p>Bonus: experience with R&amp;D tooling.</p>",
+    "location": "Worldwide",
+    "salary_min": 110000,
+    "salary_max": 150000,
+    "apply_url": "https://remoteok.com/remote-jobs/1088421-apply",
+    "url": "https://remoteok.com/remote-jobs/1088421-senior-backend-engineer-meridian-data"
+  },
+  {
+    "slug": "pastel-studio-senior-product-designer",
+    "id": "1088422",
+    "epoch": 1787653800,
+    "date": "2026-08-25T10:30:00+00:00",
+    "company": "Pastel Studio",
+    "position": "Senior Product Designer",
+    "tags": ["design", "figma", "ux"],
+    "description": "<p>Design flows and prototypes for our mobile app.</p>",
+    "location": "Europe",
+    "apply_url": "https://remoteok.com/remote-jobs/1088422-apply",
+    "url": "https://remoteok.com/remote-jobs/1088422-senior-product-designer-pastel-studio"
+  },
+  {
+    "slug": "untagged-works-backend-engineer",
+    "id": "1088423",
+    "epoch": 1787650200,
+    "date": "2026-08-25T09:30:00+00:00",
+    "company": "Untagged Works",
+    "position": "Backend Engineer",
+    "tags": [],
+    "description": "<p>A posting that carries no tags at all.</p>",
+    "location": "Brazil",
+    "url": "https://remoteok.com/remote-jobs/1088423-backend-engineer-untagged-works"
+  },
+  {
+    "slug": "epoch-only-labs-frontend-developer",
+    "id": "1088424",
+    "epoch": 1787566800,
+    "company": "Epoch Only Labs",
+    "position": "Frontend Developer",
+    "tags": ["react", "typescript"],
+    "description": "<p>Only an epoch timestamp on this one, no ISO date field.</p>",
+    "location": "Worldwide",
+    "apply_url": "https://remoteok.com/remote-jobs/1088424-apply"
+  },
+  {
+    "slug": "stale-corp-backend-engineer",
+    "id": "1088425",
+    "epoch": 1787050200,
+    "date": "2026-08-18T10:50:00+00:00",
+    "company": "Stale Corp",
+    "position": "Backend Engineer",
+    "tags": ["java", "backend"],
+    "description": "<p>Posted almost a week ago.</p>",
+    "location": "Worldwide",
+    "url": "https://remoteok.com/remote-jobs/1088425-backend-engineer-stale-corp"
+  },
+  {
+    "slug": "nameless-inc-mystery",
+    "id": "1088426",
+    "epoch": 1787657000,
+    "date": "2026-08-25T10:03:20+00:00",
+    "company": "Nameless Inc",
+    "position": "",
+    "tags": ["backend"],
+    "description": "<p>No position title, so nothing can be identified.</p>",
+    "location": "Worldwide",
+    "url": "https://remoteok.com/remote-jobs/1088426-mystery"
+  }
+]

@@ -1,0 +1,77 @@
+{
+  "0-legal-notice": "Remotive API - free to use for non-commercial purposes, attribution required. Please link back to the job page on remotive.com.",
+  "job-count": 5,
+  "total_job_count": 1284,
+  "jobs": [
+    {
+      "id": 1912345,
+      "url": "https://remotive.com/remote-jobs/software-dev/senior-backend-engineer-1912345",
+      "title": "Senior Backend Engineer",
+      "company_name": "Acme Cloud",
+      "company_logo": "https://remotive.com/job/1912345/logo",
+      "category": "Software Development",
+      "tags": ["python", "postgresql", "aws"],
+      "job_type": "full_time",
+      "publication_date": "2026-08-25T09:12:14",
+      "candidate_required_location": "Worldwide",
+      "salary": "$120,000 - $160,000",
+      "description": "<p>Acme Cloud is hiring a <strong>Senior Backend Engineer</strong> to own our billing platform.</p><p><strong>What you will do</strong></p><ul><li>Design and ship HTTP APIs in Python (FastAPI)</li><li>Own PostgreSQL schema design &amp; migrations</li><li>Partner with our R&amp;D group on new products</li></ul><p><strong>Requirements</strong></p><ul><li>5+ years building production backends</li><li>Strong SQL</li><li>Comfortable with AWS</li></ul>Apply by&nbsp;September 30.<br />No agencies, please."
+    },
+    {
+      "id": 1912346,
+      "url": "https://remotive.com/remote-jobs/software-dev/frontend-developer-react-1912346",
+      "title": "Frontend Developer (React)",
+      "company_name": "Nimbus Labs",
+      "company_logo": "https://remotive.com/job/1912346/logo",
+      "category": "Software Development",
+      "tags": ["react", "typescript"],
+      "job_type": "contract",
+      "publication_date": "2026-08-24T18:30:00",
+      "candidate_required_location": "Brazil",
+      "salary": "",
+      "description": "<p>Build the Nimbus dashboard with React and TypeScript.</p><p>You will work with a small product team and ship weekly.</p>"
+    },
+    {
+      "id": 1912347,
+      "url": "https://remotive.com/remote-jobs/software-dev/devops-engineer-1912347",
+      "title": "DevOps Engineer",
+      "company_name": "Orbital Systems",
+      "company_logo": "https://remotive.com/job/1912347/logo",
+      "category": "Software Development",
+      "tags": ["kubernetes", "terraform"],
+      "job_type": "full_time",
+      "publication_date": "2026-08-25T08:00:00",
+      "candidate_required_location": "EMEA",
+      "salary": "",
+      "description": "<p>Keep the fleet running: Kubernetes, Terraform, on-call rotation.</p>"
+    },
+    {
+      "id": 1912348,
+      "url": "https://remotive.com/remote-jobs/software-dev/backend-engineer-1912348",
+      "title": "Backend Engineer",
+      "company_name": "Legacy Systems Ltda",
+      "company_logo": "https://remotive.com/job/1912348/logo",
+      "category": "Software Development",
+      "tags": ["java"],
+      "job_type": "full_time",
+      "publication_date": "2026-08-18T10:00:00",
+      "candidate_required_location": "Brazil",
+      "salary": "",
+      "description": "<p>Maintain a Java monolith. Reposted every couple of weeks.</p>"
+    },
+    {
+      "id": 1912349,
+      "url": "https://remotive.com/remote-jobs/software-dev/backend-engineer-1912349",
+      "title": "Backend Engineer",
+      "company_name": "",
+      "company_logo": null,
+      "category": "Software Development",
+      "tags": [],
+      "job_type": "full_time",
+      "publication_date": "2026-08-25T07:00:00",
+      "candidate_required_location": "Worldwide",
+      "salary": "",
+      "description": "<p>A malformed entry: the company name is missing.</p>"
+    }
+  ]
+}
