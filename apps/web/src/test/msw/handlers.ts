@@ -1,5 +1,6 @@
 import { http, HttpResponse } from 'msw'
 import type { KeysSettingsResponse, ProfileResponse, ProvidersSettingsResponse } from '../../lib/api/dto'
+import { jobsHandlers } from './jobsScenarios'
 
 export const DEFAULT_MODEL_SUGGESTIONS = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -172,4 +173,8 @@ export const handlers = [
 
   // Profile: GitHub username (v4.1 follow-up).
   http.get('/api/profile', () => HttpResponse.json(DEFAULT_PROFILE)),
+
+  // Job Monitor (v7, ticket 11): a saved Search Profile, a finished partial Scan and a ranked
+  // list. Fixtures and per-scenario overrides live in ./jobsScenarios.ts.
+  ...jobsHandlers,
 ]
