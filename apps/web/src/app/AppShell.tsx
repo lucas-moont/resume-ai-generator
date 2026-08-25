@@ -2,6 +2,7 @@ import { SessionSidebar } from '../features/chat/components/SessionSidebar'
 import { ChatPanel } from '../features/chat/components/ChatPanel'
 import { useRestoreActiveSession } from '../features/chat/hooks/useChatSession'
 import { AnalysisShell } from '../features/analysis/components/AnalysisShell'
+import { JobsShell } from '../features/jobs/components/JobsShell'
 import { PreviewPanel } from '../features/resume/components/PreviewPanel'
 import { AppHeader } from './AppHeader'
 import { useAppModeStore } from './appModeStore'
@@ -34,6 +35,8 @@ export function AppShell() {
 
       {mode === 'analysis' ? (
         <AnalysisShell />
+      ) : mode === 'jobs' ? (
+        <JobsShell />
       ) : (
       <main
         id="main-content"

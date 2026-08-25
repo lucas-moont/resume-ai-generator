@@ -35,6 +35,7 @@ function AppModeToggle() {
     >
       {option('resume', 'Currículo')}
       {option('analysis', 'Análise de Perfil')}
+      {option('jobs', 'Monitor de Vagas')}
     </div>
   )
 }

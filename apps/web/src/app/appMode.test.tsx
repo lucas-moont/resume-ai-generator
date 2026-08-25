@@ -30,4 +30,24 @@ describe('App mode toggle', () => {
     await user.click(screen.getByRole('tab', { name: 'Currículo' }))
     expect(await screen.findByRole('button', { name: /new chat/i }, T)).toBeInTheDocument()
   })
+
+  it('switches to the Job Monitor area and back (v7 ticket 12)', async () => {
+    const T = { timeout: 15000 }
+    const user = userEvent.setup()
+    renderApp(<AppShell />)
+
+    expect(await screen.findByRole('button', { name: /new chat/i }, T)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Monitor de Vagas' }))
+
+    // Both of the jobs area's columns are mounted: the Search Profile form and the ranked list.
+    expect(await screen.findByRole('form', { name: 'Perfil de busca' }, T)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Buscar agora' }, T)).toBeInTheDocument()
+    expect(await screen.findByRole('list', { name: 'Vagas encontradas' }, T)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /new chat/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Currículo' }))
+    expect(await screen.findByRole('button', { name: /new chat/i }, T)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Buscar agora' })).not.toBeInTheDocument()
+  })
 })
