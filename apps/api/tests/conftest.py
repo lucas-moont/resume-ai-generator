@@ -19,7 +19,7 @@ from app.services import model_catalog as model_catalog_module
 from app.services import streaming as streaming_module
 from app.services import generation_service as generation_service_module
 
-from tests.fakes import FakeLlm
+from tests.fakes import FakeJobBoard, FakeLlm
 
 
 @pytest.fixture(autouse=True)
@@ -220,3 +220,25 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
 @pytest.fixture
 def parse_sse() -> Callable[[str], list[tuple[str, dict]]]:
     return _parse_sse
+
+
+@pytest.fixture
+def make_fake_board() -> Callable[..., FakeJobBoard]:
+    """Factory for scripted Job Boards (v7 ticket 03).
+
+    A FACTORY rather than a ready-made instance, unlike ``fake_llm``: a Scan runs several
+    boards at once, and its interesting cases are precisely the mixed ones (one ``ok``, one
+    ``blocked``, one raising), so a test needs to build two or three with different ids.
+    There is also nothing to monkeypatch here -- the Scan engine receives its boards through a
+    ``BoardProviderRegistry`` it is handed, so wiring is explicit:
+
+        registry = BoardProviderRegistry([
+            make_fake_board("linkedin").queue_ok({"title": "Dev", "company": "Acme", "url": u}),
+            make_fake_board("indeed").queue_blocked("429"),
+        ])
+    """
+
+    def _make(board_id: str = "linkedin", **kwargs: object) -> FakeJobBoard:
+        return FakeJobBoard(board_id, **kwargs)  # type: ignore[arg-type]
+
+    return _make
