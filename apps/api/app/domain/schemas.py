@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -273,3 +274,329 @@ class RenameChatSessionRequest(BaseModel):
         if not (1 <= len(trimmed) <= 120):
             raise ValueError("title must be 1..120 characters after trimming")
         return trimmed
+
+
+# =============================================================================
+# Job Monitor (v7, ticket 01) -- FROZEN CONTRACT
+# =============================================================================
+# Vocabulary: CONTEXT.md section "Job Monitor (v7)". Wire shapes: docs/v7-job-monitor.md.
+# Every type below is additive and has NO consumer yet: nothing in the app imports them, no
+# behavior changes. They exist so the backend, the web client and the tests of tickets 02-16
+# are all written against ONE agreed interface instead of discovering it three times.
+#
+# Two families live here, and they do not share a casing convention -- on purpose:
+#
+#  * DOMAIN types (``RawPosting``, ``BoardQuery``, ``BoardResult``) are internal: they cross the
+#    seam between a Job Board adapter and the Scan engine, never HTTP. snake_case, like the rest
+#    of the Python code and like the DB columns they end up in.
+#  * WIRE types (the ``*Out`` / ``*In`` models) are the JSON of ``/api/jobs``. camelCase, mirroring
+#    every contract added since v2 (``ChatSessionSummary.updatedAt``,
+#    ``ProviderEntry.defaultModelLockedByEnv``) and matching the TS DTOs in
+#    ``apps/web/src/lib/api/dto.ts`` field for field. Query parameters stay snake_case, as the
+#    spec writes them (``?max_band=``, ``?include_dismissed=1``).
+
+
+# The number of applicants as a BAND, never an exact count (CONTEXT.md: Applicant Band).
+# LinkedIn is the only board that exposes anything at all -- an exact number up to 100 and
+# "over 100" past that -- so the bands are exactly what that page can say, plus ``unknown`` for
+# every other board. ``unknown`` NEVER excludes a listing from the user's maximum-applicant
+# filter; it only scores neutrally (0.5) in the Visibility Score.
+ApplicantBand = Literal["<10", "<25", "<50", "<100", "100+", "unknown"]
+
+# The subset a user may pick as their MAXIMUM (the Search Profile select is
+# ``<10 · <25 · <50 · <100 · qualquer``). ``100+`` and ``unknown`` are deliberately not
+# offerable: as a cap they would either mean "everything" -- which is what ``None`` already
+# says -- or filter on an absence. ``None`` is "qualquer".
+MaxApplicantBand = Literal["<10", "<25", "<50", "<100"]
+
+# The user's relationship with a Job Listing (CONTEXT.md: Listing Status). Lives in the Listing
+# Memory, not on the listing row, so a ``dismissed`` job stays hidden when a later Scan finds it
+# again. ``new`` is only ever the initial state the Scan writes -- see ListingStatusUpdateIn.
+ListingStatus = Literal["new", "seen", "applied", "dismissed"]
+
+# How one Job Board fared in one Scan (CONTEXT.md: Scan). A Scan is PARTIAL, never failed, when
+# a board blocks or errors: the other boards' results stand and the UI shows a per-board flag.
+#   ok      -- the board answered
+#   blocked -- the board refused us (429, a challenge page, a login wall)
+#   error   -- the board broke (timeout, unparseable payload, adapter bug)
+#   skipped -- the board's OWN minimum interval had not elapsed, so we did not call it
+BoardStatus = Literal["ok", "blocked", "error", "skipped"]
+
+# What a board ADAPTER itself may report. Narrower than BoardStatus by one value on purpose:
+# ``skipped`` is the Scan engine's word, decided from ``min_interval_hours`` BEFORE any adapter
+# runs. A provider that could return it would be claiming a scheduling fact it cannot know.
+BoardReportedStatus = Literal["ok", "blocked", "error"]
+
+# The Job Boards of v7 (CONTEXT.md: Job Board). Closed on purpose, exactly like ``TemplateId``:
+# these ids are persisted in ``search_profile.boards`` and in ``listing_sources.board``, and a
+# typo in a PUT body should be a 422, not a board that silently never runs.
+#
+# Adding a board (the BR portals in the spec's "fora do escopo": Gupy, Programathor, Vagas.com,
+# Remotar) is a one-line widening here plus a provider -- safe, since no persisted row can name
+# a board that does not exist yet. REMOVING one is the direction that needs care: unlike
+# ``ResumeDocument.locale`` (typed ``str`` precisely so 8 already-persisted ``en-US`` rows keep
+# loading), these tables are new in v7 and start empty, so the Literal costs nothing today --
+# but retiring a board must ship a migration of ``search_profile.boards`` alongside it.
+BoardId = Literal[
+    "linkedin",
+    "indeed",
+    "glassdoor",
+    "google",
+    "remotive",
+    "weworkremotely",
+    "remoteok",
+]
+
+# What the user will accept, as stored in the Search Profile and passed down to every board.
+#   any         -- remote or on-site, no preference
+#   remote_only -- only postings the board flags as remote
+#   onsite_ok   -- on-site/hybrid within the chosen locations is fine (remote still counts)
+RemotePreference = Literal["any", "remote_only", "onsite_ok"]
+
+# How often the Job Monitor scans on its own. ``None`` is "off" (on-demand Immediate Scans
+# only). Closed to the values the UI offers so the scheduler never sleeps on a number nobody
+# chose; the effective interval per board is ``max(this, board.min_interval_hours)``.
+ScanIntervalHours = Literal[1, 3, 6, 12, 24]
+
+# Why this Scan ran, and where it is (CONTEXT.md: Scan). ``running`` is the single-flight state:
+# at most one Scan exists in it, and a second request while it holds gets a 409 carrying the
+# current Scan. There is no ``failed`` -- a Scan where every board broke is still ``done``, with
+# every Board Status telling the story.
+ScanTrigger = Literal["scheduled", "immediate"]
+ScanStatus = Literal["running", "done"]
+
+
+# --- Domain: the Job Board adapter seam (services/jobboards/, ticket 03) -------------------
+
+
+class BoardQuery(BaseModel):
+    """What the Scan engine asks ONE Job Board for. Built once per Scan from the Search
+    Profile, then handed unchanged to every enabled board -- so a board adapter never reads
+    the Search Profile itself and stays testable with a literal query."""
+
+    roles: list[str] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+    remote: RemotePreference = "any"
+    # Only postings newer than this. Derived from the scan interval (wide enough to overlap the
+    # previous Scan, so nothing falls between two runs), not from the user's interval directly.
+    hours_old: int = 24
+    # Per board, not per Scan: the cap on how many postings this board should return.
+    results_wanted: int = 50
+
+
+class RawPosting(BaseModel):
+    """One posting as ONE board reported it, before dedup, Fit or ranking (the input side of
+    CONTEXT.md: Listing Source). Deliberately dumb: an adapter's whole job is to produce these,
+    so everything interpretive -- identity, Repost detection, scoring -- happens once in the
+    Scan engine instead of seven times in seven adapters."""
+
+    title: str
+    company: str
+    location: str | None = None
+    is_remote: bool = False
+    url: str
+    # Clean TEXT, never HTML: the boards that serve HTML (Remotive, WWR) run it through
+    # ``services/html_sanitize`` in their own adapter. Downstream this feeds both the keyword
+    # Fit pass and, verbatim, the One-click Resume's job description.
+    description: str = ""
+    # Timezone-aware UTC, like every datetime in ``db/tables.py``. ``None`` when the board says
+    # nothing -- the recency term then scores as the oldest bucket rather than guessing.
+    # A board that exposes only a calendar date resolves to 00:00 UTC of that date: rounding a
+    # posting DOWN in freshness can only cost it rank, never inflate it.
+    date_posted: datetime | None = None
+    # ``None`` (not ``"unknown"``) everywhere but LinkedIn: the distinction is "this board has
+    # no such concept" vs "we looked and could not tell". Both become ``unknown`` on the wire.
+    applicant_band: ApplicantBand | None = None
+
+
+class BoardResult(BaseModel):
+    """What one Job Board returns for one BoardQuery. Carries its own status because a Scan is
+    partial, not failed, when a board blocks: an adapter reports and returns, it never raises
+    to abort the Scan (the engine converts an escaping exception into ``error`` anyway)."""
+
+    items: list[RawPosting] = Field(default_factory=list)
+    status: BoardReportedStatus = "ok"
+    # Human-readable, shown as-is in the BoardStatusBar ("LinkedIn: bloqueado, tentamos no
+    # próximo Scan"). Never an exception repr, never a URL with credentials.
+    message: str | None = None
+
+
+# --- Wire: /api/jobs (routers/jobs.py, ticket 09) -------------------------------------------
+
+
+class ListingSourceOut(BaseModel):
+    """One occurrence of a Job Listing on one Job Board (CONTEXT.md: Listing Source). A Job
+    Listing always keeps EVERY source link -- both because dedup must not cost the user the
+    board they would rather apply on, and because naming the board next to its link is what
+    Remotive's and Remote OK's terms require."""
+
+    board: BoardId
+    url: str
+    datePosted: datetime | None = None
+    # What THIS board reported. The listing's own band is the smallest known across its sources
+    # (the filter should judge a job by its least crowded posting), so the two can differ.
+    applicantBand: ApplicantBand = "unknown"
+
+
+class JobListingOut(BaseModel):
+    """One job found by the latest Scan (CONTEXT.md: Job Listing), deduplicated across boards.
+
+    Ephemeral by design: the list IS the last Scan, so an id here is only valid until the next
+    Scan completes. Anything that must outlive a Scan (``status``, the Fit already computed, a
+    One-click Resume) lives in the Listing Memory and is reattached by identity.
+
+    ``description`` is the one field the list endpoint omits (fifty full postings is a payload
+    nobody reads); ``GET /listings/{id}`` always sets it. ``descriptionWordCount`` is always
+    present precisely so the list can pre-disable One-click without carrying the text.
+    """
+
+    id: int
+    title: str
+    company: str
+    location: str | None = None
+    isRemote: bool = False
+    # Clean text. ``None`` means "not included in this response", never "empty posting".
+    description: str | None = None
+    descriptionWordCount: int = 0
+    datePosted: datetime | None = None
+    # A listing already known that came back with a newer ``datePosted`` (CONTEXT.md: Repost).
+    # Boards do not flag reposts, so this comparison is the only detection -- and it counts as
+    # fresh for ranking, because for the applicant it is a fresh queue.
+    isRepost: bool = False
+    applicantBand: ApplicantBand = "unknown"
+    # 0-100. ``fitEstimated`` is true when this is the cheap keyword pass's number rather than
+    # the LLM's: only the top N by keyword fit are scored by the model each Scan, and the rest
+    # keep an honest estimate instead of a fake precision.
+    fitScore: int = 0
+    fitEstimated: bool = True
+    # 0-100, the ranking key (CONTEXT.md: Visibility Score) -- the SAME scale as fitScore so the
+    # two badges sitting side by side can be read against each other. The weights blend
+    # normalized terms: 100 * (0.55*(fit/100) + 0.25*recency + 0.20*competition), with the
+    # weights and the band table in config.py.
+    visibilityScore: float = 0.0
+    # The posting's own language, resolved by the Scan (not the user's UI language). Feeds the
+    # Locale Authority when this listing becomes a Resume.
+    locale: str = DEFAULT_LOCALE
+    # From the Listing Memory, not from the Scan row.
+    status: ListingStatus = "new"
+    # True when the Listing Memory already holds a One-click Resume for this identity -- the
+    # detail view then offers "Baixar PDF" / "Regerar" instead of spending an LLM call again.
+    hasOneClickResume: bool = False
+    sources: list[ListingSourceOut] = Field(default_factory=list)
+
+
+class JobListingListOut(BaseModel):
+    """GET /api/jobs/listings. Wrapped in an object rather than served as a bare array -- the
+    same shape discipline as ``{"sessions": [...]}`` and ``{"keys": [...]}`` -- so the response
+    can grow a sibling field (a count, the scan it came from) without breaking every client.
+    Always ordered by ``visibilityScore`` descending; ``dismissed`` listings appear only with
+    ``?include_dismissed=1``."""
+
+    listings: list[JobListingOut] = Field(default_factory=list)
+
+
+class ListingStatusUpdateIn(BaseModel):
+    """PATCH /api/jobs/listings/{id}/status. ``new`` is not settable: it is what a Scan writes
+    for an identity with no memory, and "undo a dismiss" is ``seen``, not amnesia."""
+
+    status: Literal["seen", "applied", "dismissed"]
+
+
+class BoardStatusOut(BaseModel):
+    """How one board fared in one Scan. A LIST of these (rather than the ``{board: {...}}`` map
+    ``job_scans.board_statuses`` stores) is what goes on the wire: the BoardStatusBar renders
+    them in order, and a list keeps that order stable across responses."""
+
+    board: BoardId
+    status: BoardStatus
+    # Why, when the status is not ``ok`` -- shown verbatim to the user.
+    message: str | None = None
+    # Postings this board contributed BEFORE dedup, so the numbers explain a partial Scan
+    # ("Indeed: 40, LinkedIn: bloqueado") rather than the deduplicated total.
+    count: int = 0
+
+
+class ScanOut(BaseModel):
+    """One run of the Job Monitor (CONTEXT.md: Scan). Served by ``GET /scans/current`` while a
+    Scan holds the single-flight lock (``boards`` fills in as each board answers, which is what
+    the UI polls for), by ``GET /scans/latest`` afterwards, and in the 409 body when an
+    Immediate Scan is refused because one is already running."""
+
+    id: int
+    startedAt: datetime
+    finishedAt: datetime | None = None
+    trigger: ScanTrigger
+    status: ScanStatus
+    boards: list[BoardStatusOut] = Field(default_factory=list)
+    listingsFound: int = 0
+    listingsScored: int = 0
+    # COMPUTED, not persisted: ``finishedAt + interval_hours`` as the scheduler will next wake.
+    # ``None`` when the interval is off or this Scan is still running. It lives on the Scan
+    # rather than on the Search Profile because "próxima varredura" is a fact about the last
+    # run, and the scheduler rereads the interval every loop anyway.
+    nextScanAt: datetime | None = None
+
+
+class SearchProfileIn(BaseModel):
+    """PUT /api/jobs/search-profile -- what the user is looking for (CONTEXT.md: Search
+    Profile). Distinct from the Profile: the Profile says who you are, this says what you want.
+    Seeded from the Profile by ``POST /search-profile/suggest``, then owned by the user, which
+    is why every field is sent whole on a PUT rather than patched."""
+
+    roles: list[str] = Field(default_factory=list)
+    # Default "Brasil" + "Remote" is applied by the service, not here: an empty list from the
+    # user means empty, and only a first-time suggestion invents a value.
+    locations: list[str] = Field(default_factory=list)
+    remote: RemotePreference = "any"
+    # Languages of POSTINGS the user accepts (default pt + en) -- free-form tags matched
+    # case-insensitively, deliberately NOT ``SUPPORTED_LOCALES``: a job written in Spanish is a
+    # job this user might want, even though the Resume can only be produced in pt-BR or en.
+    languages: list[str] = Field(default_factory=list)
+    boards: list[BoardId] = Field(default_factory=list)
+    # ``None`` is "qualquer" -- no cap. A listing whose band is ``unknown`` passes ANY cap
+    # (CONTEXT.md: Applicant Band): an absent number is not evidence of a crowd.
+    maxApplicantBand: MaxApplicantBand | None = None
+    # ``None`` is off: no scheduled Scan, Immediate Scan still works.
+    intervalHours: ScanIntervalHours | None = None
+
+
+class SearchProfileOut(SearchProfileIn):
+    """GET /api/jobs/search-profile and the body of ``POST /search-profile/suggest``.
+
+    ``updatedAt`` is ``None`` for a SUGGESTION -- the one case where this shape describes
+    something that was never saved. That is the whole reason the suggest endpoint returns the
+    full profile rather than a diff: the form can render it as if it were loaded, and the user
+    edits it into existence with a normal PUT.
+    """
+
+    updatedAt: datetime | None = None
+
+
+class BoardOut(BaseModel):
+    """One entry of ``GET /api/jobs/boards`` -- the catalog the Search Profile form renders its
+    checkboxes from, and the source of the display name a Listing Source chip shows. Served
+    from the provider registry rather than hardcoded in the web app so a board added in the
+    backend appears in the UI without a frontend change."""
+
+    id: BoardId
+    displayName: str
+    # The board's OWN floor, independent of the user's interval (Remotive's terms cap us at 4
+    # calls a day, hence 6). The Scan uses ``max(user interval, this)`` and marks the board
+    # ``skipped`` when it has not elapsed -- which the form shows so a 1h interval does not
+    # silently mean 1h for every board.
+    minIntervalHours: int = 1
+
+
+class BoardListOut(BaseModel):
+    """GET /api/jobs/boards -- same object-wrapping rule as JobListingListOut."""
+
+    boards: list[BoardOut] = Field(default_factory=list)
+
+
+class OpenInChatOut(BaseModel):
+    """POST /api/jobs/listings/{id}/open-in-chat. Creates a normal ``kind='resume'`` session
+    seeded with the listing's description and returns nothing but its id: the frontend then
+    selects that session and streams a turn exactly as if the user had pasted the posting, so
+    the Job Monitor adds NO new path through the chat."""
+
+    sessionId: int

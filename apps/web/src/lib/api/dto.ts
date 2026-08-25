@@ -395,3 +395,203 @@ export interface UpdateGithubUsernameResponse {
   profileVersion: number
   githubUsername: string | null
 }
+
+// --- Job Monitor (v7, ticket 01) — FROZEN CONTRACT ---
+// Vocabulary: CONTEXT.md section "Job Monitor (v7)". Wire shapes: docs/v7-job-monitor.md §Backend-6.
+// Mirrors the `*Out`/`*In` pydantic models in apps/api/app/domain/schemas.py field for field.
+// Additive and unconsumed: no client, no store, no component reads these yet — tickets 11-15 do.
+//
+// The backend's domain types (RawPosting / BoardQuery / BoardResult) deliberately have NO
+// counterpart here. They cross the seam between a Job Board adapter and the Scan engine and
+// never reach HTTP, so a copy in `lib/api` would be a shape the frontend can neither receive
+// nor send.
+//
+// Dates are ISO 8601 strings on the wire (pydantic serializes the backend's timezone-aware UTC
+// datetimes), same as `ChatSessionSummary.updatedAt`.
+
+/** The number of applicants as a BAND, never an exact count (CONTEXT.md: Applicant Band).
+ * LinkedIn is the only board that exposes anything — an exact number up to 100, "over 100"
+ * past that — so the bands are what that page can say, plus `'unknown'` for every other board.
+ * `'unknown'` never excludes a listing from the user's cap; it only scores neutrally. */
+export type ApplicantBand = '<10' | '<25' | '<50' | '<100' | '100+' | 'unknown'
+
+/** The subset a user may pick as their MAXIMUM (the select is `<10 · <25 · <50 · <100 ·
+ * qualquer`). `'100+'`/`'unknown'` are not offerable: as a cap they would mean "everything",
+ * which `null` already says. */
+export type MaxApplicantBand = '<10' | '<25' | '<50' | '<100'
+
+/** The user's relationship with a Job Listing (CONTEXT.md: Listing Status). Kept in the Listing
+ * Memory, so a `'dismissed'` job stays hidden when a later Scan finds it again. */
+export type ListingStatus = 'new' | 'seen' | 'applied' | 'dismissed'
+
+/** How one Job Board fared in one Scan. A Scan is PARTIAL, never failed, when a board blocks:
+ * `'blocked'` = the board refused us, `'error'` = the board or the adapter broke, `'skipped'` =
+ * that board's own minimum interval had not elapsed, so it was not called at all. */
+export type BoardStatus = 'ok' | 'blocked' | 'error' | 'skipped'
+
+/** The Job Boards of v7 (CONTEXT.md: Job Board). Closed like `TemplateId`: these ids are
+ * persisted server-side and a typo should fail loudly. Widening it (the BR portals are out of
+ * scope for v7) is safe; retiring a board needs a backend migration. */
+export type BoardId =
+  | 'linkedin'
+  | 'indeed'
+  | 'glassdoor'
+  | 'google'
+  | 'remotive'
+  | 'weworkremotely'
+  | 'remoteok'
+
+/** What the user will accept: `'remote_only'` keeps only postings the board flags remote;
+ * `'onsite_ok'` allows on-site/hybrid within the chosen locations (remote still counts). */
+export type RemotePreference = 'any' | 'remote_only' | 'onsite_ok'
+
+/** How often the Job Monitor scans on its own; `null` (off) still allows an Immediate Scan.
+ * The effective interval per board is `max(this, board.minIntervalHours)`. */
+export type ScanIntervalHours = 1 | 3 | 6 | 12 | 24
+
+export type ScanTrigger = 'scheduled' | 'immediate'
+
+/** `'running'` is the single-flight state: at most one Scan holds it, and a second Immediate
+ * Scan request meanwhile gets a 409 carrying that Scan. There is no `'failed'` — a Scan where
+ * every board broke is still `'done'`, with the Board Statuses telling the story. */
+export type ScanStatus = 'running' | 'done'
+
+/** One occurrence of a Job Listing on one Job Board (CONTEXT.md: Listing Source). Every source
+ * link is kept: dedup must not cost the user the board they would rather apply on, and naming
+ * the board beside its link is what Remotive's and Remote OK's terms require. */
+export interface ListingSourceDto {
+  board: BoardId
+  url: string
+  datePosted: string | null
+  /** What THIS board reported. The listing's own band is the smallest known across its
+   * sources, so the two can differ. */
+  applicantBand: ApplicantBand
+}
+
+/** One job found by the latest Scan (CONTEXT.md: Job Listing), deduplicated across boards.
+ *
+ * Ephemeral: the list IS the last Scan, so `id` is only valid until the next Scan completes.
+ * What outlives a Scan (`status`, the Fit already computed, a One-click Resume) lives in the
+ * Listing Memory and is reattached by identity.
+ *
+ * `description` is `null` in the LIST response (fifty full postings is a payload nobody reads)
+ * and always a string from `GET /listings/{id}`. `descriptionWordCount` is always present, so
+ * a card can pre-disable One-click without carrying the text. */
+export interface JobListingDto {
+  id: number
+  title: string
+  company: string
+  location: string | null
+  isRemote: boolean
+  /** `null` means "not included in this response", never "empty posting". */
+  description: string | null
+  descriptionWordCount: number
+  datePosted: string | null
+  /** A known listing that came back with a newer `datePosted` (CONTEXT.md: Repost). Boards do
+   * not flag reposts, so this is the only detection — and it ranks as fresh, because for the
+   * applicant it is a fresh queue. */
+  isRepost: boolean
+  applicantBand: ApplicantBand
+  /** 0–100. `fitEstimated` is true when this is the cheap keyword pass's number rather than the
+   * LLM's: only the top N by keyword fit are scored by the model each Scan. */
+  fitScore: number
+  fitEstimated: boolean
+  /** 0–100, the ranking key (CONTEXT.md: Visibility Score) — the same scale as `fitScore` so
+   * the two badges can be read against each other. */
+  visibilityScore: number
+  /** The POSTING's language, not the UI's. */
+  locale: string
+  status: ListingStatus
+  /** True when the Listing Memory already holds a One-click Resume for this identity — the
+   * detail view then offers "Baixar PDF" / "Regerar" instead of spending an LLM call. */
+  hasOneClickResume: boolean
+  sources: ListingSourceDto[]
+}
+
+export interface JobListingListResponse {
+  listings: JobListingDto[]
+}
+
+/** PATCH /api/jobs/listings/{id}/status. `'new'` is not settable: it is what a Scan writes for
+ * an identity with no memory, and "undo a dismiss" is `'seen'`, not amnesia. */
+export interface ListingStatusUpdateRequest {
+  status: Exclude<ListingStatus, 'new'>
+}
+
+/** How one board fared in one Scan. A list (not the `{board: {...}}` map the backend stores)
+ * so BoardStatusBar renders them in a stable order. */
+export interface BoardStatusDto {
+  board: BoardId
+  status: BoardStatus
+  /** Why, when the status is not `'ok'` — shown verbatim ("LinkedIn: bloqueado, tentamos no
+   * próximo Scan"). */
+  message: string | null
+  /** Postings this board contributed BEFORE dedup, so the numbers explain a partial Scan. */
+  count: number
+}
+
+/** One run of the Job Monitor (CONTEXT.md: Scan). `GET /scans/current` serves it while the Scan
+ * holds the single-flight lock — `boards` fills in as each board answers, which is what the UI
+ * polls for — `GET /scans/latest` afterwards, and it is also the 409 body when an Immediate
+ * Scan is refused. */
+export interface ScanDto {
+  id: number
+  startedAt: string
+  finishedAt: string | null
+  trigger: ScanTrigger
+  status: ScanStatus
+  boards: BoardStatusDto[]
+  listingsFound: number
+  listingsScored: number
+  /** COMPUTED, not stored: when the scheduler will next wake. `null` when the interval is off
+   * or this Scan is still running. */
+  nextScanAt: string | null
+}
+
+/** PUT /api/jobs/search-profile — what the user is looking for (CONTEXT.md: Search Profile).
+ * Distinct from the Profile: the Profile says who you are, this says what you want. Sent whole
+ * on every save rather than patched, because the user owns it outright once suggested. */
+export interface SearchProfileUpdateRequest {
+  roles: string[]
+  locations: string[]
+  remote: RemotePreference
+  /** Languages of POSTINGS the user accepts (default pt + en) — deliberately not the resume's
+   * supported locales: a posting in Spanish may still be one this user wants. */
+  languages: string[]
+  boards: BoardId[]
+  /** `null` is "qualquer" — no cap. A listing whose band is `'unknown'` passes any cap. */
+  maxApplicantBand: MaxApplicantBand | null
+  /** `null` is off: no scheduled Scan; Immediate Scan still works. */
+  intervalHours: ScanIntervalHours | null
+}
+
+/** GET /api/jobs/search-profile, and the body of `POST /search-profile/suggest`.
+ *
+ * `updatedAt` is `null` for a SUGGESTION — the one case where this shape describes something
+ * never saved. That is why suggest returns the whole profile rather than a diff: the form
+ * renders it as if loaded, and the user edits it into existence with a normal PUT. */
+export interface SearchProfileDto extends SearchProfileUpdateRequest {
+  updatedAt: string | null
+}
+
+/** One entry of `GET /api/jobs/boards` — the catalog the Search Profile form builds its
+ * checkboxes from, and where a Listing Source chip gets its display name. Served from the
+ * backend's provider registry, so a board added there shows up without a frontend change. */
+export interface BoardDto {
+  id: BoardId
+  displayName: string
+  /** The board's OWN floor, independent of the user's interval (Remotive's terms cap us at 4
+   * calls a day, hence 6). A board below it is marked `'skipped'` for that Scan. */
+  minIntervalHours: number
+}
+
+export interface BoardListResponse {
+  boards: BoardDto[]
+}
+
+/** POST /api/jobs/listings/{id}/open-in-chat. Creates a normal `kind: 'resume'` session seeded
+ * with the listing's description; the frontend selects it and streams a turn exactly as if the
+ * user had pasted the posting, so the Job Monitor adds no new path through the chat. */
+export interface OpenInChatResponse {
+  sessionId: number
+}
