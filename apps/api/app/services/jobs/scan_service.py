@@ -22,19 +22,20 @@ Four rules run through everything below and are worth stating once:
    recency score, every Repost comparison and every ``last_seen_at``. Datetimes coming back out
    of SQLite are naive and are read as UTC (``domain.recency.as_utc``).
 
-Not in this ticket: the Fit Score. ``fit_score`` is whatever the Listing Memory already holds
-(0 for a job never scored), ``fit_estimated`` is False -- nothing here estimates anything -- and
-``visibility_score`` is the recency term alone, on the 0-100 scale of the contract. Ticket 08
-adds the keyword pass, the LLM pass and the real weighted blend.
+Ranking (ticket 08) is delegated, not implemented here: ``services/jobs/fit_service.py`` owns
+the two-stage Fit Score and ``domain/visibility.py`` owns the blend that turns Fit, recency and
+the Applicant Band into the one ranking key. The engine's job is to run them at the right
+moment -- after the boards have answered and the Listing Memory has been read, before the
+result is written -- and to persist what stage 2 learned so the next Scan does not pay for it
+again.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -46,10 +47,19 @@ from app.db.tables import JobListing, JobScan, ListingMemory, ListingSource, Sea
 from app.domain.listing_identity import identity_key
 from app.domain.locale import DEFAULT_LOCALE, detect_locale
 from app.domain.recency import as_utc, recency_score
-from app.domain.schemas import BoardQuery, BoardResult, RawPosting
+from app.domain.schemas import BoardQuery, BoardResult, ProfileMaster, RawPosting
+from app.domain.visibility import visibility_score
 from app.repositories import jobs_repo
+from app.services import profile_resolution
 from app.services.jobboards.base import JobBoardProvider
 from app.services.jobboards.provider_registry import BOARD_SPECS, BoardProviderRegistry
+from app.services.jobs import fit_service
+from app.services.jobs.fit_service import (
+    FitCandidate,
+    FitOutcome,
+    RememberedFit,
+    description_hash,
+)
 from app.services.secret_redaction import redact_secrets
 
 logger = logging.getLogger(__name__)
@@ -428,10 +438,10 @@ def group_postings(
 # --- Memory, filtering and ranking -------------------------------------------------------------
 
 
-def description_hash(description: str) -> str:
-    """sha256 of a posting's description -- what ``listing_memory.fit_description_hash`` stores,
-    so a Repost whose text was rewritten can be told from the same text coming back."""
-    return hashlib.sha256((description or "").encode("utf-8")).hexdigest()
+# ``description_hash`` is imported above rather than defined here: it moved to ``fit_service``
+# with ticket 08, because the only question it answers ("was the stored Fit computed for THIS
+# text?") is a Fit question and the column it feeds is named after the Fit. It stays importable
+# from this module for the callers that already read it here.
 
 
 def is_repost(memory: ListingMemory | None, date_posted: datetime | None) -> bool:
@@ -464,11 +474,33 @@ def passes_band_cap(band: str, max_band: str | None) -> bool:
 
 
 def _build_listing(
-    group: _Group, memory: ListingMemory | None, *, now: datetime
+    group: _Group,
+    memory: ListingMemory | None,
+    *,
+    fit: FitOutcome | None = None,
+    now: datetime,
 ) -> tuple[JobListing, bool]:
-    """One ``job_listings`` row from a group plus whatever the Listing Memory remembers."""
+    """One ``job_listings`` row from a group, the Listing Memory, and this Scan's Fit.
+
+    ``fit`` is ``None`` only when the Fit stage did not run at all -- there is no Profile to
+    match against (see ``_load_profile``). The listing is still built and still ranked: the Fit
+    falls back to whatever the memory holds, and the Visibility Score is computed either way, so
+    recency and the Applicant Band still order the list.
+
+    ``fit_estimated`` carries ONE meaning throughout, which is what makes it countable: false
+    means "this is a real Fit Score" -- the model's number, whether it was produced this Scan or
+    reattached from the Listing Memory -- and true means it is not, whether because the keyword
+    pass estimated it or because nothing scored this listing at all and the 0 is a placeholder.
+    ``job_scans.listings_scored`` is exactly the count of the false ones.
+    """
     repost = is_repost(memory, group.date_posted)
     recency = recency_score(group.date_posted, now)
+    if fit is not None:
+        fit_score, fit_estimated = fit.score, fit.estimated
+    elif memory is not None and memory.fit_score is not None:
+        fit_score, fit_estimated = memory.fit_score, False
+    else:
+        fit_score, fit_estimated = 0, True
     listing = JobListing(
         scan_id=0,  # replace_listings owns it
         identity_key=group.key,
@@ -481,15 +513,13 @@ def _build_listing(
         date_posted=as_utc(group.date_posted),
         is_repost=repost,
         applicant_band=group.band,
-        # Reattached, never recomputed here: the LLM's number if this identity was ever scored,
-        # 0 otherwise. ``fit_estimated`` is False in BOTH cases because nothing in this ticket
-        # estimates a Fit -- claiming an estimate exists would be a fake precision. Ticket 08
-        # introduces the keyword pass that legitimately sets it True.
-        fit_score=(memory.fit_score if memory is not None and memory.fit_score is not None else 0),
-        fit_estimated=False,
-        # Provisional: the recency term alone, on the contract's 0-100 scale. Ticket 08 replaces
-        # this with 100 * (0.55*fit + 0.25*recency + 0.20*competition).
-        visibility_score=round(100.0 * recency, 2),
+        # From the Fit stage: the LLM's number, the one already remembered for this exact text,
+        # or the keyword pass's estimate (``fit_estimated`` says which). See ``fit_service``.
+        fit_score=fit_score,
+        fit_estimated=fit_estimated,
+        # The one ranking key (CONTEXT.md: Visibility Score). Blended in ``domain/visibility.py``
+        # from the three terms; the band is this listing's SMALLEST known one across its sources.
+        visibility_score=float(visibility_score(fit_score, recency, group.band)),
         locale=detect_locale(group.description) or DEFAULT_LOCALE,
     )
     return listing, repost
@@ -500,6 +530,29 @@ def _build_listing(
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _load_profile(session: Session) -> ProfileMaster | None:
+    """The Living Profile the Fit Score matches against, or ``None`` when there is none to read.
+
+    Never raises. ``resolve_active_profile`` legitimately does -- no profile saved yet
+    (``FileNotFoundError``), invalid JSON on disk, a Profile.pdf that will not extract -- and
+    every one of those is a reason for the Monitor to rank without a Fit, not a reason for a
+    background Scan to die and leave the user's list stale with no explanation. The Monitor
+    only ever READS the Profile (CONTEXT.md: it never mutates the Living Profile).
+    """
+    try:
+        return profile_resolution.resolve_active_profile(session).profile
+    except FileNotFoundError:
+        logger.info("job scan: no Profile saved -- listings will be ranked without a Fit Score")
+        return None
+    except Exception:
+        logger.warning(
+            "job scan: the Profile could not be read -- listings will be ranked without a "
+            "Fit Score",
+            exc_info=True,
+        )
+        return None
 
 
 class ScanRunner:
@@ -526,9 +579,15 @@ class ScanRunner:
         *,
         now: datetime | None = None,
         clock: Callable[[], datetime] = _utcnow,
+        fit_llm: fit_service.LlmCall | None = None,
+        fit_model: str | None = None,
     ) -> ScanOutcome | None:
         """Run one Scan, or raise ``ScanAlreadyRunning``. ``None`` means there was nothing to
         search for (no Search Profile saved) -- no Scan row is written in that case.
+
+        ``fit_llm``/``fit_model`` are the Fit stage's seam, defaulted to ``None`` so production
+        callers (the router, the scheduler) never wire an LLM by hand: ``fit_service`` resolves
+        the configured one. A test passes its scripted fake here instead.
 
         The ``locked()`` check and the acquire that follows are not a race in this codebase:
         ``asyncio.Lock.acquire`` takes an uncontended lock without suspending, so no other task
@@ -538,7 +597,15 @@ class ScanRunner:
             raise ScanAlreadyRunning(self._load_running_scan(engine))
         await self._lock.acquire()
         try:
-            return await self._run(engine, registry, trigger, now=now, clock=clock)
+            return await self._run(
+                engine,
+                registry,
+                trigger,
+                now=now,
+                clock=clock,
+                fit_llm=fit_llm,
+                fit_model=fit_model,
+            )
         finally:
             self._current_scan_id = None
             self._lock.release()
@@ -562,6 +629,8 @@ class ScanRunner:
         *,
         now: datetime | None,
         clock: Callable[[], datetime],
+        fit_llm: fit_service.LlmCall | None = None,
+        fit_model: str | None = None,
     ) -> ScanOutcome | None:
         instant = as_utc(now) or as_utc(clock())
         assert instant is not None  # as_utc only returns None for a None input
@@ -577,6 +646,10 @@ class ScanRunner:
                 )
                 return None
             plan = _plan(session, profile_row, registry, now=instant)
+            # The Living Profile, read (never written -- CONTEXT.md: the Monitor never mutates
+            # it) here in phase 1 rather than later, so a broken profile is discovered before
+            # any board is called instead of after.
+            profile = _load_profile(session)
             scan = jobs_repo.start_scan(session, trigger=trigger)
             # The Scan's own timestamps come from the Scan's instant, not from a second read of
             # the clock inside the repository. Production cannot tell the difference (``now``
@@ -607,13 +680,24 @@ class ScanRunner:
                 outcomes[provider.id] = outcome
                 found.extend((provider.id, posting) for posting in items)
 
+            # Phase 2b -- dedup, then the Fit Score. Both happen BEFORE the write transaction
+            # because stage 2 is a network call of its own: holding the Scan's one transaction
+            # open across twenty-five LLM calls would lock the database for the whole time the
+            # user is browsing the previous list.
+            groups = group_postings(found)
+            fit = await self._fit(
+                engine, profile, groups, fit_llm=fit_llm, model=fit_model
+            )
+
             # Phase 3 -- one transaction for the whole result.
             return self._write(
                 engine,
                 scan_id=scan_id,
                 trigger=trigger,
                 started_at=started_at,
-                found=found,
+                groups=groups,
+                raw_count=len(found),
+                fit=fit,
                 outcomes=outcomes,
                 any_called=bool(called),
                 max_band=plan.max_band,
@@ -635,7 +719,9 @@ class ScanRunner:
         scan_id: int,
         trigger: str,
         started_at: datetime,
-        found: Sequence[tuple[str, RawPosting]],
+        groups: Sequence[_Group],
+        raw_count: int,
+        fit: Mapping[str, FitOutcome],
         outcomes: dict[str, BoardOutcome],
         any_called: bool,
         max_band: str | None,
@@ -643,19 +729,27 @@ class ScanRunner:
         clock: Callable[[], datetime] = _utcnow,
     ) -> ScanOutcome:
         finished_clock = clock
-        groups = group_postings(found)
         with Session(engine) as session:
             memories = jobs_repo.get_memories(session, [g.key for g in groups])
             pairs: list[tuple[JobListing, Sequence[ListingSource]]] = []
             hidden = 0
+            discarded = 0
             for group in groups:
                 memory = memories.get(group.key)
-                listing, repost = _build_listing(group, memory, now=now)
+                group_fit = fit.get(group.key)
+                listing, repost = _build_listing(group, memory, fit=group_fit, now=now)
                 # Every job the Scan SAW updates its memory, including the ones the user will
                 # not see: ``last_seen_at`` is a fact about the Monitor having found the job,
                 # independent of whether a filter hides it -- and it is the baseline the next
                 # Repost detection compares against.
-                self._remember(session, group, memory, repost=repost, now=now)
+                self._remember(session, group, memory, repost=repost, fit=group_fit, now=now)
+                if group_fit is not None and group_fit.discarded:
+                    # A clear miss by the cheap keyword pass -- dropped from the list entirely
+                    # rather than shown at the bottom (CONTEXT.md: Fit Score, "a cheap keyword
+                    # pass discards clear misses"). Its memory was still updated above, so a
+                    # later Scan can tell that this job kept reappearing.
+                    discarded += 1
+                    continue
                 if memory is not None and memory.status == "dismissed":
                     hidden += 1
                     continue
@@ -668,11 +762,14 @@ class ScanRunner:
             if replaced:
                 jobs_repo.replace_listings(session, scan_id=scan_id, listings=pairs)
                 listings_found = len(pairs)
+                listings_scored = sum(1 for listing, _ in pairs if not listing.fit_estimated)
             else:
                 # Nothing was called, or nothing answered: keep the previous list rather than
                 # wiping the user's Job Monitor on the strength of a rate limit. The Board
                 # Statuses below say why the list did not move.
-                listings_found = len(jobs_repo.list_listings(session))
+                previous = jobs_repo.list_listings(session)
+                listings_found = len(previous)
+                listings_scored = sum(1 for listing in previous if not listing.fit_estimated)
 
             scan = jobs_repo.get_scan(session, scan_id)
             assert scan is not None  # written and committed by phase 1
@@ -682,7 +779,12 @@ class ScanRunner:
                 scan,
                 board_statuses=board_statuses,
                 listings_found=listings_found,
-                listings_scored=0,  # ticket 08 scores; this ticket scores nothing
+                # "Scored" = carries a real Fit Score rather than the keyword estimate, whether
+                # the model produced it in THIS Scan or an earlier one paid for it. The number
+                # the user is owed is "how much of this list is actually judged", not a count of
+                # this Scan's invoices -- a Scan that reused every Fit from memory has scored the
+                # whole list, and reporting 0 there would read as a failure.
+                listings_scored=listings_scored,
             )
             # ``finished_at`` is read from the clock rather than reused from ``now``, so a Scan
             # that took two minutes says so; ``finish_scan``'s own default is overridden for the
@@ -693,11 +795,14 @@ class ScanRunner:
             session.commit()
 
         logger.info(
-            "job scan finished: id=%d trigger=%s raw=%d listings=%d hidden=%d replaced=%s",
+            "job scan finished: id=%d trigger=%s raw=%d listings=%d scored=%d "
+            "discarded=%d hidden=%d replaced=%s",
             scan_id,
             trigger,
-            len(found),
+            raw_count,
             listings_found,
+            listings_scored,
+            discarded,
             hidden,
             replaced,
         )
@@ -707,7 +812,7 @@ class ScanRunner:
             started_at=started_at,
             finished_at=finished_at,
             listings_found=listings_found,
-            listings_scored=0,
+            listings_scored=listings_scored,
             board_statuses=board_statuses,
             listings_replaced=replaced,
         )
@@ -719,17 +824,36 @@ class ScanRunner:
         memory: ListingMemory | None,
         *,
         repost: bool,
+        fit: FitOutcome | None,
         now: datetime,
     ) -> None:
-        """Reattach-and-bump. ``status`` is never written by a Scan for an identity that
-        already has one (``upsert_memory`` reads ``None`` as "leave alone"), so a ``dismissed``
-        job stays dismissed and an ``applied`` one stays applied; a brand-new identity gets
-        ``new`` from the repository's own default.
+        """Reattach-and-bump, plus whatever this Scan learned about the Fit.
 
-        The one thing a Scan DOES clear: a Repost whose description was rewritten invalidates
-        the stored Fit, because that number was computed for different text. The same text
-        coming back does not -- which is exactly what ``fit_description_hash`` is for.
+        ``status`` is never written by a Scan for an identity that already has one
+        (``upsert_memory`` reads ``None`` as "leave alone"), so a ``dismissed`` job stays
+        dismissed and an ``applied`` one stays applied; a brand-new identity gets ``new`` from
+        the repository's own default.
+
+        The Fit is written in exactly one case: stage 2 produced a number for THIS description
+        (``FitOutcome.should_remember``). Score and hash always travel together -- the hash is
+        what a later Scan checks to decide the number is still about this text -- and an
+        ESTIMATE is never written, because storing one would look identical to a paid-for score
+        and would lock the listing out of stage 2 forever.
+
+        Otherwise the ticket-07 rule stands: a Repost whose description was rewritten CLEARS the
+        stored Fit, since that number was computed for different text. Only reachable now when
+        the rewritten posting did not make this Scan's top N -- when it did, the branch above
+        has already replaced both fields with the fresh answer.
         """
+        if fit is not None and fit.should_remember:
+            jobs_repo.upsert_memory(
+                session,
+                group.key,
+                fit_score=fit.score,
+                fit_description_hash=fit.description_hash,
+                seen_at=now,
+            )
+            return
         clear_fit = (
             repost
             and memory is not None
@@ -743,6 +867,45 @@ class ScanRunner:
             fit_description_hash=None if clear_fit else jobs_repo.KEEP,
             seen_at=now,
         )
+
+    async def _fit(
+        self,
+        engine: Engine,
+        profile: ProfileMaster | None,
+        groups: Sequence[_Group],
+        *,
+        fit_llm: fit_service.LlmCall | None,
+        model: str | None,
+    ) -> dict[str, FitOutcome]:
+        """This Scan's Fit Scores, or an empty map when there is nothing to score.
+
+        The Listing Memory is read into plain values BEFORE the await and the Session is closed
+        again: stage 2 can take minutes, and neither a database connection nor a detached ORM
+        row should be alive across it.
+
+        Every failure here degrades to "no Fit stage ran" rather than failing the Scan. A Scan
+        is partial, never failed (module docstring, rule 2), and that rule is not only about
+        boards: a missing prompt file or an unreachable provider must still leave the user with
+        the listings the boards did return, ranked by recency and crowding alone.
+        """
+        if profile is None or not groups:
+            return {}
+        try:
+            with Session(engine) as session:
+                memories = jobs_repo.get_memories(session, [g.key for g in groups])
+                remembered = {
+                    key: RememberedFit(
+                        fit_score=row.fit_score, description_hash=row.fit_description_hash
+                    )
+                    for key, row in memories.items()
+                }
+            candidates = [FitCandidate(key=g.key, description=g.description) for g in groups]
+            return await fit_service.score_listings(
+                profile, candidates, remembered, llm=fit_llm, model=model
+            )
+        except Exception:
+            logger.exception("job scan: the Fit stage failed wholesale -- ranking without it")
+            return {}
 
     def _close_failed(
         self, engine: Engine, scan_id: int, outcomes: dict[str, BoardOutcome]
@@ -803,9 +966,12 @@ async def run_scan(
     now: datetime | None = None,
     clock: Callable[[], datetime] = _utcnow,
     runner: ScanRunner | None = None,
+    fit_llm: fit_service.LlmCall | None = None,
+    fit_model: str | None = None,
 ) -> ScanOutcome | None:
     """Run one Scan (see ``ScanRunner.run``). The module-level entry point every caller uses;
-    ``runner`` is the test seam for an isolated lock."""
+    ``runner`` is the test seam for an isolated lock and ``fit_llm`` the one for the Fit
+    stage's model."""
     return await (runner or default_runner).run(
-        engine, registry, trigger, now=now, clock=clock
+        engine, registry, trigger, now=now, clock=clock, fit_llm=fit_llm, fit_model=fit_model
     )

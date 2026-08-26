@@ -497,8 +497,10 @@ class TestSecondScan:
 
         listing = read_listings(test_db_engine)[0]
         assert listing.is_repost is True
-        # A Repost counts as new for ranking, and the fresh date is what makes that true.
-        assert listing.visibility_score == 100.0
+        # A Repost counts as new for ranking, and the fresh date is what makes that true: with
+        # no Fit and an unknown band, the recency term is the only one that moved --
+        # 100*(0.25*1.0 + 0.20*0.5) = 35 (ticket 08's blend; ticket 07 scored recency alone).
+        assert listing.visibility_score == 35.0
 
     async def test_the_same_old_posting_coming_back_is_not_a_repost(
         self, test_db_engine, make_fake_board
@@ -711,7 +713,10 @@ class TestDedupAndRanking:
             row = jobs_repo.get_scan(session, outcome.scan_id)
             assert row.trigger == "scheduled"
             assert row.listings_found == 2  # the LinkedIn and Indeed "Backend Engineer" merged
-            assert row.listings_scored == 0  # no Fit in ticket 07
+            # No Profile is saved in these tests, so the Fit stage (ticket 08) does not run and
+            # nothing here carries a real Fit Score. ``tests/integration/test_scan_fit.py``
+            # covers the counting when it does.
+            assert row.listings_scored == 0
             statuses = jobs_repo.get_board_statuses(row)
         assert statuses["linkedin"]["count"] == 2
         assert statuses["indeed"]["count"] == 1

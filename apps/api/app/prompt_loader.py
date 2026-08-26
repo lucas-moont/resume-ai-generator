@@ -66,3 +66,15 @@ def load_propose_improvements_system_prompt(prompts_dir: Path) -> str:
 
 def load_proposal_turn_system_prompt(prompts_dir: Path) -> str:
     return load_prompt("system/proposal_turn.md", prompts_dir)
+
+
+def load_job_fit_system_prompt(prompts_dir: Path) -> str:
+    """v7 (Job Monitor): stage 2 of the Fit Score -- Profile x Job Listing, one number out.
+
+    Deliberately NOT composed with ``resume-craft``/``humanizer`` like the prompts above. Those
+    blocks exist to make PROSE good, and this call produces no prose at all: the contract is
+    ``{"fit": 0-100}`` with the justification explicitly discarded (CONTEXT.md: Fit Score, "a
+    percentage only -- no written justification"). Composing them in would be craft guidance
+    the model cannot use, paid for on up to ``FIT_LLM_TOP_N`` calls per Scan.
+    """
+    return load_prompt("skills/job-fit.md", prompts_dir)

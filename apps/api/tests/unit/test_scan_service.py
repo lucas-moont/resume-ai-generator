@@ -14,6 +14,7 @@ from app.db.tables import ListingMemory
 from app.domain.listing_identity import identity_key
 from app.domain.schemas import BoardResult, RawPosting
 from app.services.jobs import scan_service
+from app.services.jobs.fit_service import FitOutcome
 from app.services.jobs.scan_service import (
     BoardOutcome,
     ScanAlreadyRunning,
@@ -284,20 +285,35 @@ class TestBuildListing:
     def _group(self, **kwargs):
         return group_postings([("linkedin", posting(**kwargs))])[0]
 
-    def test_visibility_is_the_recency_term_alone_on_the_0_100_scale(self):
+    def test_visibility_blends_recency_with_the_neutral_terms(self):
+        # Ticket 08 replaced ticket 07's provisional "recency alone". A fresh posting with no
+        # Fit and an unknown band scores 100*(0.25*1.0 + 0.20*0.5) = 35.
         listing, _ = _build_listing(self._group(date_posted=ago(1)), None, now=NOW)
-        assert listing.visibility_score == 100.0
+        assert listing.visibility_score == 35.0
 
     def test_an_old_posting_ranks_at_the_bottom(self):
+        # Only the neutral competition term is left: 100*(0.20*0.5) = 10.
         listing, _ = _build_listing(self._group(date_posted=ago(300)), None, now=NOW)
-        assert listing.visibility_score == 0.0
+        assert listing.visibility_score == 10.0
+
+    def test_a_scored_listing_outranks_an_equally_fresh_unscored_one(self):
+        fit = FitOutcome(score=90, estimated=False, source="llm", description_hash="h")
+        scored, _ = _build_listing(self._group(date_posted=ago(1)), None, fit=fit, now=NOW)
+        unscored, _ = _build_listing(self._group(date_posted=ago(1)), None, now=NOW)
+        assert scored.visibility_score > unscored.visibility_score
 
     def test_no_fit_is_claimed_when_the_memory_has_none(self):
         listing, _ = _build_listing(self._group(), None, now=NOW)
         assert listing.fit_score == 0
-        # False, not True: nothing in ticket 07 estimates a Fit, so claiming an estimate
-        # exists would be a fake precision. Ticket 08's keyword pass sets it.
-        assert listing.fit_estimated is False
+        # True since ticket 08: ``fit_estimated`` carries one meaning -- "this is not a real Fit
+        # Score" -- so that ``listings_scored`` can simply count the false ones. A 0 nobody
+        # computed is exactly what the flag is for; ticket 07 read it as "nothing estimated it".
+        assert listing.fit_estimated is True
+
+    def test_the_fit_from_this_scan_lands_on_the_row(self):
+        fit = FitOutcome(score=64, estimated=True, source="keyword", description_hash="h")
+        listing, _ = _build_listing(self._group(), None, fit=fit, now=NOW)
+        assert (listing.fit_score, listing.fit_estimated) == (64, True)
 
     def test_a_fit_already_paid_for_is_reattached_from_the_memory(self):
         listing, _ = _build_listing(self._group(), memory(fit_score=78), now=NOW)

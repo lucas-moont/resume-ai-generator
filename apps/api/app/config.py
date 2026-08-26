@@ -397,3 +397,61 @@ def profile_json_candidates_message() -> str:
         ]
     )
     return "\n  ".join(lines)
+
+
+# --- Fit Score and Visibility Score (v7 ticket 08) --------------------------------------------
+#
+# Plain module constants, NOT env accessors like the Scan knobs above -- and that asymmetry is
+# deliberate. The spec pins the ranking formula to this file precisely because it is not a
+# per-install tuning parameter: "pesos do Visibility Score editáveis na UI" is explicitly out of
+# scope for v7, to be calibrated after real use. Every consumer reads them module-qualified
+# (``config_module.VISIBILITY_WEIGHTS``) at CALL time, which is the same discipline the
+# accessors above exist for -- and which is what lets a test monkeypatch the name.
+
+# The Visibility Score blend (docs/v7-job-monitor.md, "Visibility Score"):
+#   100 * (0.55*(fit/100) + 0.25*recency + 0.20*competition)
+# Fit weighs most because it is the only term about the JOB; recency and competition are about
+# the QUEUE the resume lands in, which is what separates this score from the Fit Score itself
+# (CONTEXT.md: "a perfect fit with 300 applicants ranks below a good fit posted an hour ago").
+VISIBILITY_WEIGHTS: dict[str, float] = {
+    "fit": 0.55,
+    "recency": 0.25,
+    "competition": 0.20,
+}
+
+# The competition term, per Applicant Band. ``unknown`` is NOT a point on this scale -- it is
+# the absence of one -- so it scores exactly neutral (CONTEXT.md: Applicant Band, "unknown never
+# excludes a listing from the user's maximum-applicants filter, it only scores neutrally").
+# ``100+`` is near zero rather than zero: LinkedIn stops counting at 100, so the band covers
+# both 101 and 3000 applicants and the difference from an unknown queue is still real.
+APPLICANT_BAND_SCORE: dict[str, float] = {
+    "<10": 1.0,
+    "<25": 0.9,
+    "<50": 0.75,
+    "<100": 0.5,
+    "100+": 0.1,
+    "unknown": 0.5,
+}
+
+# Stage 1 of the Fit Score: a keyword coverage below this is a clear miss and the listing is
+# dropped from the Scan's result entirely, before any token is spent on it. Low on purpose --
+# it exists to remove the recruiter-spam and the wrong-discipline postings a broad board query
+# drags in, not to curate. A listing the LLM already scored is never dropped by it (the model's
+# number is better evidence than the cheap pass -- see fit_service.score_listings).
+FIT_KEYWORD_FLOOR = 15
+
+# Stage 2 of the Fit Score: how many listings per Scan the LLM may score. The cap is a cost
+# ceiling, so it counts CALLS, not listings -- a listing whose Fit is reused from the Listing
+# Memory costs nothing and does not consume a slot.
+FIT_LLM_TOP_N = 25
+
+
+def fit_llm_concurrency() -> int:
+    """How many stage-2 Fit calls may be in flight at once.
+
+    Small on purpose. Twenty-five sequential calls to a local Ollama model is minutes of wall
+    clock for a background Scan nobody is watching, while firing all twenty-five at a hosted
+    provider is exactly the burst a rate limiter answers with 429s. Four is the compromise; an
+    env override exists because the right number depends on the provider, not on the product.
+    """
+    return _env_int("FIT_LLM_CONCURRENCY", 4, minimum=1, maximum=25)
