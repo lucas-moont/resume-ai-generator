@@ -1,6 +1,6 @@
 # Resume agent (local)
 
-**Chat-based resume tailoring**: paste a job description into a conversation and watch an ATS-friendly resume come to life in the A4 preview beside it — then refine it by talking ("make the summary shorter", "translate to English"), **edit any field inline right on the preview** (with undo/redo), switch layouts instantly, and download a pixel-faithful PDF. Conversations are **persisted sessions** (local SQLite): close the app, come back, resume where you left off.
+**Chat-based resume tailoring**: paste a job description into a conversation and watch an ATS-friendly resume come to life in the A4 preview beside it — then refine it by talking ("make the summary shorter", "translate to English"), **edit any field inline right on the preview** (with undo/redo), switch layouts instantly, and download a pixel-faithful PDF. Conversations are **persisted sessions** (local SQLite): close the app, come back, resume where you left off. Since v7 you don't even have to bring the posting: the **Job Monitor** scans seven job boards on your schedule, ranks what it finds by how likely your resume is to be read, and turns any listing into a tailored PDF in one click.
 
 Your professional data is a **Living Profile**: drop a `.json`, `.md` or `.pdf` into the chat and an incremental merge pipeline (deterministic diff → LLM adjudicates only what's new or divergent → deterministic validator) proposes a reviewable patch — approve or reject it from the conversation. Every change is versioned with provenance (which upload or chat message caused it), history is append-only, and any version can be reverted. Quick fact changes work straight from chat: "I changed my phone number to X".
 
@@ -10,7 +10,7 @@ Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Ha
 
 - **Chat UI** (left) + always-visible **live A4 preview** (right): message bubbles, step-by-step progress card while the model runs, retry on errors, Stop button, mobile tabs.
 - **Persisted chat sessions** (SQLite in `data/app.db`, created automatically): session sidebar to resume/delete conversations; the active session, resume, template and theme all survive a page reload.
-- **Template picker** — **8 ATS-friendly designs** with visual thumbnails, applied to both the live preview and the exported PDF: **Modern** (indigo sidebar), **Classic** (serif, single column), **Minimal** (airy, monochrome), **Compact** (dense), **ATS Plain** (single column, system fonts — maximum parser compatibility), **Two-Column ATS** (visual grid, linear DOM order preserved), **Executive** (spacious serif, centered header) and **Tech** (monospace accents, skills first). One semantic structure; switching is instant CSS — never a regeneration. Template identity + CSS live in a **single shared package** (`packages/resume-templates`: `templates.json` manifest + `resume.css`) consumed by both the web preview and the PDF renderer, with a guard test binding the two sides.
+- **Template picker** — **9 ATS-friendly designs** with visual thumbnails, applied to both the live preview and the exported PDF: **Modern** (indigo sidebar), **Classic** (serif, single column), **Minimal** (airy, monochrome), **Compact** (dense), **ATS Plain** (single column, system fonts — maximum parser compatibility), **Two-Column ATS** (visual grid, linear DOM order preserved), **Executive** (spacious serif, centered header), **Tech** (monospace accents, skills first) and **LaTeX ATS** (single column, navy rules, per-role key-technologies line — ported from [danielteles/ats-friendly-latex-cv](https://github.com/danielteles/ats-friendly-latex-cv), MIT). One semantic structure; switching is instant CSS — never a regeneration. Template identity + CSS live in a **single shared package** (`packages/resume-templates`: `templates.json` manifest + `resume.css`) consumed by both the web preview and the PDF renderer, with a guard test binding the two sides.
 - **Instant chat commands**: "switch to the classic layout" / "troca pro layout classic" and "export the pdf" are resolved locally — zero LLM/network round-trip.
 - **Deterministic intent routing** in the chat backend: a job-description-looking message generates; a follow-up on an active resume refines (with recent conversation as context); small talk gets a canned localized reply without spending an LLM call.
 - **Streaming** everywhere (SSE with heartbeat): generation and refinement show live progress.
@@ -22,9 +22,10 @@ Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Ha
 - **Settings UI (v3)**: gear icon in the header → runtime provider/model/key management. Availability + auth-mode badge per provider (`api_key` / `cli` / `local`), write-only key inputs showing only the configured state (`env` / `keychain`), dynamic per-provider model picker, env-lock indicators when a `.env` variable pins a setting. Everything takes effect on the next LLM call — no restart, no `.env` edits. A **GitHub** section lets you view, set or clear the `githubUsername` used for repo merging directly from the UI — no more hand-editing `data/profile/resume.json`.
 - **Visual resume diff (v3)**: after a refine, the chat card shows what actually changed — before → after per section, with honest fallbacks when only deeper details changed.
 - **Accessible primitives (v3)**: a single Dialog (focus trap, Escape, focus return) and an ARIA-complete Combobox power the settings, confirmations and model pickers; mobile tab state lives in the URL (`?tab=`), so reload and deep links work.
+- **Job Monitor (v7)**: a third app area that scans **7 job boards** on your schedule (or on demand), deduplicates across them, scores **Fit** against your Profile and ranks by **Visibility Score** — how likely your resume is to actually be read. Each listing offers a **One-click Resume** (tailored PDF, no approval turn) and **Open in chat** (the full proposal-review flow). See [Job Monitor](#job-monitor-v7) below.
 - **Light / dark theme** (persisted in `localStorage`).
 - **Keyboard shortcuts**: `Enter` sends a chat message (`Shift+Enter` for a newline), `Esc` closes any open dialog, `Ctrl`/`Cmd`-`Z` and `Ctrl`/`Cmd`-`Shift`-`Z` undo/redo resume edits — all left alone while typing in a text field or contenteditable region, so they never fight native per-field editing.
-- **Test suite + CI**: 496 pytest (unit + integration, LLM always faked and network-isolated; 5 e2e render a real PDF) · 485 Vitest/Testing-Library/MSW · 20 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api (PDF e2e as a separate opt-in job).
+- **Test suite + CI**: 1555 pytest (unit + integration, LLM and job boards always faked and network-isolated; 6 e2e render a real PDF) · 754 Vitest/Testing-Library/MSW · 29 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api (PDF e2e as a separate opt-in job).
 
 ## Prerequisites
 
@@ -69,7 +70,7 @@ Optional **`AI_DEFAULT_MODEL`** applies when the UI does not send a `model` fiel
 
 ## Setup
 
-**Single command:** `npm run setup` creates the backend venv, installs Python deps, installs the Playwright Chromium browser, installs frontend deps, and seeds `.env` / `data/profile/resume.json` from their examples when missing. Edit `data/profile/resume.json` afterwards with your real data — it's just seeded from the example. Safe to re-run any time (skips what's already done). See the manual steps below if you'd rather run them one by one or something in `setup` fails.
+**Single command:** `npm run setup` creates the backend venv, installs Python deps, installs the Playwright Chromium browser, installs frontend deps, and seeds `.env` / `data/profile/resume.json` from their examples when missing. Edit `data/profile/resume.json` afterwards with your real data — it's just seeded from the example. Safe to re-run any time (skips what's already done). See the manual steps below if you'd rather run them one by one or something in `setup` fails. It does **not** install `python-jobspy` — that one is a deliberate opt-in, see [Job Monitor](#job-monitor-v7).
 
 ### 1) Profile and projects
 
@@ -156,6 +157,104 @@ url: https://...
 Free-form markdown: problem, your role, stack, outcomes.
 ```
 
+## Job Monitor (v7)
+
+The third area of the app (next to the resume chat and Profile Analysis), reachable from the header toggle. On a schedule you choose — or when you press **Buscar agora** — it searches job boards for the roles in your **Search Profile**, merges duplicates across boards, scores each listing against your Profile and ranks the result by how likely your resume is to actually be read.
+
+Three things it deliberately does **not** do:
+
+- **It never touches the Living Profile.** The Monitor only reads your Profile; writes still come from chat, uploads and inline edits alone.
+- **It is the only part of the product that reaches a job board.** The chat still accepts pasted text only — pressing *Open in chat* hands over the description the scan already fetched, it does not open a new fetching path.
+- **Tests never call a real board or a real LLM** — fake boards, fake LLM, in-memory SQLite, like everywhere else in this repo.
+
+**How the ranking works.** Every listing gets a **Fit Score** (0–100, how well your Profile matches it) in two stages: a cheap deterministic keyword pass scores everything and discards the clear misses, then the LLM scores only the top 25 of what survived — one small JSON-only call each, capped by `FIT_LLM_CONCURRENCY`. A listing already scored is not re-scored on the next scan unless it was reposted with a different description. The list is then ordered by **Visibility Score** = `0.55·fit + 0.25·recency + 0.20·competition` (recency decays from 1.0 at ≤24h to 0 at 7 days; competition comes from the applicant band). A perfect fit with 300 applicants ranks below a good fit posted an hour ago. The weights live in `apps/api/app/config.py` (`VISIBILITY_WEIGHTS`, `APPLICANT_BAND_SCORE`) and are not editable from the UI in v7.
+
+**The list is the last scan.** Job listings are ephemeral — a listing that the newest scan did not find disappears from it. What survives is the **Listing Memory**, keyed by normalized company + title: the status you gave the listing (`new → seen → applied | dismissed`), the Fit Score already paid for, and the One-click Resume already generated. A dismissed job stays hidden when a later scan finds it again.
+
+### The seven boards
+
+Each board is toggled on or off in the Search Profile, and each has its own minimum interval — the scan uses `max(your interval, the board's minimum)` and reports `skipped` for a board whose own floor has not elapsed yet.
+
+| Board | How it is reached | Min. interval |
+|---|---|---|
+| **LinkedIn** | `python-jobspy` scraper (optional install, see below) | 1h |
+| **Indeed** | `python-jobspy` scraper | 1h |
+| **Glassdoor** | `python-jobspy` scraper | 1h |
+| **Google Jobs** | `python-jobspy` scraper | 1h |
+| **Remotive** | Public JSON API — `GET https://remotive.com/api/remote-jobs?category=software-dev` | **6h** (terms) |
+| **We Work Remotely** | Public RSS feeds (`remote-programming-jobs.rss` plus back-end / front-end / full-stack), parsed with the stdlib `xml.etree` | 1h |
+| **Remote OK** | Public JSON API — `GET https://remoteok.com/api`, explicit `User-Agent` | 1h |
+
+**A scan is partial, not failed.** Each board reports its own status — `ok`, `blocked`, `error` or `skipped` — and the other boards' results stand. The `BoardStatusBar` above the list shows what happened ("LinkedIn: bloqueado, tentamos na próxima varredura"). The previous list is only replaced when a scan actually learned something about the market: if every board was blocked, your listings stay where they were instead of being wiped by a rate limit.
+
+### Optional: install the JobSpy-backed boards
+
+`python-jobspy` is **not** installed by `requirements.txt`. Its published metadata hard-pins `NUMPY==1.26.3` and `regex<2025`, neither of which has a wheel for CPython 3.13+/3.14 (and numpy 1.26.3 does not build against it), so listing it there would make `pip install -r requirements.txt` fail outright. Those pins are stale rather than real — the library runs fine on the modern versions this project installs — but pip cannot override a dependency's pin from a requirements file, so the resolver is skipped for this one package:
+
+```bash
+cd apps/api
+pip install -r requirements.txt              # includes jobspy's REAL deps: pandas, beautifulsoup4, markdownify, regex, tls-client
+pip install --no-deps -r requirements-jobspy.txt
+```
+
+**Without it the app still runs, and so does the Monitor.** The import is lazy, all seven boards stay registered, and the four JobSpy-backed ones report Board Status `error` with an actionable message while Remotive, We Work Remotely and Remote OK work normally. Removing them from the registry instead would leave a Search Profile with LinkedIn enabled scanning nothing, silently — the opposite of what the status bar exists for.
+
+### Terms of use and attribution
+
+- **Remotive** allows at most **4 API calls a day**. That is where the 6h minimum interval comes from, and the Monitor makes exactly **one** request per scan (with several target roles it asks for a wider page and filters locally, rather than one call per role). Their terms also require attribution: the app serves the note *"Vagas fornecidas por Remotive (remotive.com)."* with the board catalog and shows the board name next to every source link.
+- **Remote OK** requires attribution as well — *"Vagas fornecidas por Remote OK (remoteok.com)."*, same mechanism.
+- Every Listing Source always keeps and displays its board's name plus the original link, on every board. If you add a board, put its attribution note next to its id in `apps/api/app/services/jobs/search_profile_service.py` rather than in the web app — it is a legal obligation, not copy.
+
+### LinkedIn: what it can and cannot do
+
+- **It is the only board that reports applicant counts**, and only as an **Applicant Band** (`<10`, `<25`, `<50`, `<100`, `100+`, `unknown`) — never an exact number, because LinkedIn itself only shows the exact figure up to 100 and "over 100" past that. Getting it costs one extra request to the listing's public page (concurrency 4, 6s timeout); a failure yields `unknown` and never brings the board down. Every other board reports nothing, and `unknown` never excludes a listing from your maximum-applicants filter — it just scores neutrally.
+- **429 blocks are common and are detected from the log, not from an exception.** The scraper swallows LinkedIn's 429 and returns an empty result, which would be indistinguishable from "nothing found today"; the adapter watches the library's logger during the call and reports `blocked` instead.
+- **There are no proxies and no IP rotation in v7.** A blocked board is reported and retried on the next scan; that is the whole mitigation. If `blocked` shows up constantly, that is the signal to revisit.
+- Searches are sequential, not parallel (roles × locations, capped at 6 queries per board per scan, with `SCAN_RESULTS_WANTED` split across them) — a burst is the fastest way to get rate-limited.
+
+### The scheduler
+
+An `asyncio` task started in the API's lifespan, next to the upload reaper — no new scheduling dependency. It wakes every `SCAN_CHECK_INTERVAL_SECONDS`, re-reads your interval from the Search Profile each time (so changing it, or switching it off, takes effect without a restart) and decides whether the next scan is due by looking at the **last scan in the database** — so a 24h interval survives a restart, and an on-demand scan resets the clock. **At most one scan runs at a time**: a second request while one is running gets `409` carrying the running scan.
+
+The product's off switch is `intervalHours: off` in the Search Profile, not an env var.
+
+### One-click Resume vs. Open in chat
+
+| | **One-click Resume** | **Open in chat** |
+|---|---|---|
+| What happens | The full pipeline runs — Analysis → Improvement Proposal → generation → PDF — with the proposal **auto-approved exactly as produced**. The only place in the app where a Resume is generated without a human approving the plan. | Creates a chat session titled "Company · Role" seeded with the listing's description as your first message, hydrates it and takes you to the resume area. From there it is an ordinary session: the normal Analysis → proposal → review flow. |
+| Guard rails | Unchanged: Patch Validator, Relevance Filter, `MIN_SKILLS_AFTER_DROPS`, employer/role/degree never dropped. | Unchanged. |
+| Language | The locale the scan resolved for that posting. | Resolved normally from the description. |
+| Refused when | The description is too short to look like a job description (the button is disabled, with a tooltip). | — |
+| Repeat click | Returns the saved PDF without spending an LLM call; **Regerar** is the explicit button that pays for a new one. | A new session each time. |
+| Where it lands | `resume_versions` with `session_id = NULL` — it does **not** appear in the session sidebar. | A normal session in the sidebar. |
+
+> **Known gap (v7):** the One-click PDF is rendered on the server, which reads the global template preference from `app_settings['resume_template']` — and nothing writes that key yet (the web app keeps your choice in `localStorage`). In practice every One-click PDF currently comes out in **Modern**. The chat/preview export is unaffected.
+
+### `/api/jobs/*` endpoints
+
+- `GET /api/jobs/search-profile` · `PUT /api/jobs/search-profile` — what you are looking for: target roles, locations, remote preference, accepted languages, enabled boards, maximum applicant band, scan interval. A profile is only stored once you save it; the `GET` on a fresh install returns a suggestion-shaped default with `updatedAt: null`.
+- `POST /api/jobs/search-profile/suggest` — a Search Profile derived deterministically from your Profile's `headline` (no LLM call, at most 5 roles, your own words kept verbatim). It is **not** persisted — review it and save.
+- `GET /api/jobs/boards` — the catalog: board id, display name, minimum interval, attribution note.
+- `POST /api/jobs/scans` — start an immediate scan → `202` with the running scan; `409` (carrying the current scan) if one is already running; `422` if no Search Profile has been saved.
+- `GET /api/jobs/scans/current` · `GET /api/jobs/scans/latest` — the running scan and the last finished one, with per-board statuses and `nextScanAt`. `204` when there is none.
+- `GET /api/jobs/listings?status=&board=&max_band=&include_dismissed=1` — the ranked list (Visibility descending); dismissed listings are hidden unless asked for.
+- `GET /api/jobs/listings/{id}` — full description and every source link (also advances `new → seen`) · `PATCH /api/jobs/listings/{id}/status` → the updated listing.
+- `POST /api/jobs/listings/{id}/one-click-resume?regenerate=0|1` → `application/pdf`. `422 description_too_short`, `409` while one is already generating for that listing, `502` when the LLM call fails.
+- `POST /api/jobs/listings/{id}/open-in-chat` → `{ sessionId }`.
+
+### Environment variables
+
+All optional; the defaults are what the app runs on.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `SCAN_CHECK_INTERVAL_SECONDS` | `60` (1–3600) | How often the scheduler wakes to re-read your interval and check whether a scan is due. **Not** the scan interval — that one lives in the Search Profile. |
+| `SCAN_RESULTS_WANTED` | `50` (1–200) | Cap on postings **one board** returns for one scan. The JobSpy adapter divides it across its role × location grid, so it is that board's whole budget for the query. |
+| `FIT_LLM_CONCURRENCY` | `4` (1–25) | Parallel LLM calls in the Fit stage. Lower it if a hosted provider rate-limits you; raise it against a fast local Ollama. |
+| `SCAN_SCHEDULER_ENABLED` | on | Whether the lifespan starts the background scheduler at all. Exists for the test suite (`0` in `tests/conftest.py`); to stop scheduled scans as a user, set the interval to **off** in the Search Profile instead. |
+| `JOB_BOARDS_FAKE` | off | Swaps the real board adapters for deterministic fakes. For the opt-in `@real` Playwright run, which drives the real app and a real LLM but must never reach a real board. Not for normal use. |
+
 ## API overview
 
 **Chat (the primary flow used by the UI):**
@@ -186,7 +285,7 @@ Free-form markdown: problem, your role, stack, outcomes.
 - `POST /api/generate/stream` — same body as generate; **SSE** stream with `stage` events (progress, message) and a final `done` event with the resume JSON
 - `POST /api/refine` — body: `{ "resume", "message", "model?" }`
 - `POST /api/refine/stream` — same as refine over **SSE**
-- `POST /api/export/pdf` — body: `{ "resume": { ... }, "template?": "modern" | "classic" | "minimal" | "compact" | "ats-plain" | "two-column-ats" | "executive" | "tech" }` → PDF download (defaults to `modern`)
+- `POST /api/export/pdf` — body: `{ "resume": { ... }, "template?": "modern" | "classic" | "minimal" | "compact" | "ats-plain" | "two-column-ats" | "executive" | "tech" | "latex-ats" }` → PDF download (defaults to `modern`)
 
 **Settings (v3 — runtime provider/model/key management):**
 
@@ -196,6 +295,8 @@ Free-form markdown: problem, your role, stack, outcomes.
 - `PUT /api/settings/keys` — body `{ name: "ANTHROPIC_API_KEY" | "GEMINI_API_KEY" | "GITHUB_TOKEN", value }` — writes to the OS keychain only (never SQLite, never logged/echoed)
 - `DELETE /api/settings/keys/{name}` — removes the keychain entry
 
+**Job Monitor (v7):** `/api/jobs/*` — search profile, scans, ranked listings, one-click resume. Listed in [Job Monitor](#job-monitor-v7) above.
+
 ## Prompts
 
 - **System:** `apps/api/prompts/system/` — `generate.md`, `refine.md`, `extract_profile.md` (JSON-only resume output rules and PDF-profile extraction).
@@ -203,9 +304,9 @@ Free-form markdown: problem, your role, stack, outcomes.
 
 ## Tests
 
-**Backend** (from `apps/api`, venv active): `python -m pytest` — 496 tests. Fast unit + integration suites use a fake LLM, an in-memory SQLite and a black-holed HTTP transport (never a real network call, even if real keys exist on the machine); the 5 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
+**Backend** (from `apps/api`, venv active): `python -m pytest` — 1555 tests. Fast unit + integration suites use a fake LLM, fake Job Boards, an in-memory SQLite and a black-holed HTTP transport (never a real network call, even if real keys exist on the machine); the 6 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
 
-**Web** (from `apps/web`): `npm run test:run` (485 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (20 Playwright tests against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`).
+**Web** (from `apps/web`): `npm run test:run` (754 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (29 Playwright tests against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`). Under a loaded machine the full Vitest run can trip the default 5s per-test timeout on a handful of unrelated heavy tests — `--testTimeout=30000` is the known workaround, not a regression.
 
 **CI:** `.github/workflows/web.yml` (npm ci → lint → tsc → vitest coverage → mocked Playwright) and `api.yml` (pytest, plus a separate opt-in `workflow_dispatch` job for the PDF e2e) run on every push touching each app.
 
