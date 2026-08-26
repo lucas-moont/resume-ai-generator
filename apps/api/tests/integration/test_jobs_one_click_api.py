@@ -1,9 +1,16 @@
 """POST /api/jobs/listings/{id}/one-click-resume and .../open-in-chat (v7 ticket 10).
 
-Every test starts from a REAL Scan run through the actual engine with ``FakeJobBoard``s (same
-setup as test_jobs_listings_api.py), so the listing these endpoints are pointed at is the row
-production writes -- description, ``identity_key`` and locale included -- rather than a
-hand-built one that could quietly disagree with it.
+The listings these endpoints are pointed at are written straight through ``jobs_repo``, in the
+shape a finished Scan leaves them (``identity_key`` from the real ``domain/listing_identity``
+normalizer, not a hand-typed string). Deliberately NOT by running a Scan the way
+test_jobs_listings_api.py's ``scanned`` fixture does: that starts a background task whose
+Session shares the single connection ``StaticPool`` hands out for an in-memory DB, and under a
+full-suite load the two intermittently interleave -- observed as a listing missing from the
+list, and (in that other file) as a ``ListingMemory`` that could not be refreshed. It is a
+test-harness race, not a product one (a real deployment is a file DB where every Session gets
+its own connection), and it is written up in the ticket's Comments. What THIS file is about is
+the two endpoints, so paying for that race here buys nothing; a Scan writing real listing rows
+is already ticket 09's coverage.
 
 What is faked, and only this: the LLM (``fake_llm``, CLAUDE.md -- no real provider, ever) and
 the Chromium render (``render_resume_pdf``; the real one is covered by the ``@e2e`` tests in
@@ -20,12 +27,10 @@ import json
 import pytest
 from sqlmodel import Session, select
 
-from app.db.tables import ImprovementProposal, ResumeVersion
+from app.db.tables import ImprovementProposal, JobListing, ListingSource, ResumeVersion
+from app.domain.listing_identity import identity_key
 from app.repositories import jobs_repo
-from app.routers import jobs as jobs_router
-from app.services.jobboards.provider_registry import BoardProviderRegistry
-from app.services.jobs import one_click_service, scan_service
-from app.services.jobs.scan_service import ScanRunner
+from app.services.jobs import one_click_service
 from tests.factories import make_profile, make_resume_payload
 
 ONE_CLICK = "/api/jobs/listings/{id}/one-click-resume"
@@ -85,34 +90,10 @@ def _identity_key(session: Session, listing_id: int) -> str:
 
 
 @pytest.fixture(autouse=True)
-def isolated_runner(monkeypatch) -> ScanRunner:
-    runner = ScanRunner()
-    monkeypatch.setattr(scan_service, "default_runner", runner)
-    return runner
-
-
-@pytest.fixture(autouse=True)
-def boards(monkeypatch) -> list:
-    registered: list = []
-    monkeypatch.setattr(jobs_router, "build_registry", lambda: BoardProviderRegistry(registered))
-    return registered
-
-
-@pytest.fixture(autouse=True)
 def _clean_locks():
     one_click_service._locks.clear()
     yield
     one_click_service._locks.clear()
-
-
-@pytest.fixture(autouse=True)
-async def _drain_scan_tasks():
-    yield
-    tasks = list(jobs_router._scan_tasks)
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.fixture
@@ -132,31 +113,45 @@ def profile(write_profile):
     return write_profile(make_profile())
 
 
+def _row(posting: dict) -> tuple[JobListing, list[ListingSource]]:
+    description = posting["description"]
+    listing = JobListing(
+        scan_id=0,  # replace_listings owns this
+        identity_key=identity_key(posting["company"], posting["title"]),
+        title=posting["title"],
+        company=posting["company"],
+        location=posting.get("location"),
+        is_remote=bool(posting.get("is_remote")),
+        description=description,
+        description_word_count=len(description.split()),
+        locale=posting.get("locale", "en"),
+        visibility_score=posting.get("visibility_score", 50.0),
+    )
+    return listing, [ListingSource(listing_id=0, board="linkedin", url=posting["url"])]
+
+
 @pytest.fixture
-async def listings(client, test_db_engine, boards, make_fake_board) -> dict[str, int]:
-    """A finished Scan holding one long posting and one too short to tailor to. Returns
-    ``{title: listing id}``."""
+async def listings(client, test_db_engine) -> dict[str, int]:
+    """The last Scan's two listings -- one long posting and one too short to tailor to.
+    Returns ``{title: listing id}``."""
     with Session(test_db_engine) as session:
-        jobs_repo.put_search_profile(
+        scan = jobs_repo.start_scan(session, trigger="immediate")
+        jobs_repo.replace_listings(
             session,
-            roles=["Backend Engineer"],
-            locations=["Brasil"],
-            remote="any",
-            languages=["pt", "en"],
-            boards=["linkedin"],
-            max_applicant_band=None,
-            interval_hours=None,
+            scan_id=int(scan.id or 0),
+            listings=[_row(LONG_POSTING), _row(SHORT_POSTING)],
+        )
+        for posting in (LONG_POSTING, SHORT_POSTING):
+            # A Scan writes a memory for every job it SAW -- so the endpoints under test see
+            # the same "already remembered, nothing generated yet" starting point they do in
+            # production, not a listing whose memory row does not exist yet.
+            jobs_repo.upsert_memory(
+                session, identity_key(posting["company"], posting["title"]), status="new"
+            )
+        jobs_repo.finish_scan(
+            session, scan, board_statuses={}, listings_found=2, listings_scored=0
         )
         session.commit()
-
-    board = make_fake_board("linkedin")
-    board.queue_ok(LONG_POSTING, SHORT_POSTING)
-    boards.append(board)
-
-    assert (await client.post("/api/jobs/scans")).status_code == 202
-    tasks = list(jobs_router._scan_tasks)
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
 
     rows = (await client.get("/api/jobs/listings")).json()["listings"]
     assert len(rows) == 2, rows

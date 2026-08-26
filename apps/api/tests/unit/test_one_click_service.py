@@ -20,6 +20,7 @@ import json
 import pytest
 from sqlmodel import Session, select
 
+from app import config as config_module
 from app.db.tables import ChatMessage, ChatSession, ImprovementProposal, JobListing, ResumeVersion
 from app.repositories import chat_repo, jobs_repo, proposal_repo
 from app.services import settings_service
@@ -469,7 +470,18 @@ class TestTemplate:
         assert rendered[-1][1] == "latex-ats"
 
     async def test_it_falls_back_to_the_default_template_when_nothing_was_saved(self):
+        """Today's real state: the web still keeps the pick in ``localStorage``, so nothing
+        writes this app_setting yet and every One-click PDF renders with the default."""
         assert settings_service.get_resume_template() == "modern"
+
+    async def test_a_saved_preference_is_read_from_app_settings(self, session, profile, fake_llm, rendered):
+        listing = seed_listing(session)
+        script_one_click(fake_llm)
+        config_module.set_app_setting(settings_service.RESUME_TEMPLATE_SETTING_KEY, "latex-ats")
+
+        await one_click_service.one_click_resume(session, int(listing.id or 0))
+
+        assert rendered[-1][1] == "latex-ats"
 
 
 class TestResolveListingLocale:
