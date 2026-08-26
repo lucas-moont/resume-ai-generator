@@ -158,6 +158,12 @@ def _relax_improvement_proposals_session_id_to_nullable(engine: Engine) -> None:
     ``improvement_proposals`` is durable (every approved plan behind an existing resume lives in
     it), so the copy is the whole point and the row count is asserted before the old table goes.
 
+    The copy runs with ``PRAGMA foreign_keys=OFF``, as SQLite's own documented table-rebuild
+    procedure prescribes: ``app/db/engine.py`` turns enforcement ON for every connection, and a
+    row whose ``chat_sessions`` parent has already gone missing would otherwise make the copy
+    (and therefore the boot) fail over pre-existing data this migration did not create and is
+    not here to fix.
+
     Idempotent: once the column is nullable, ``PRAGMA table_info`` says so and this returns
     immediately.
     """
@@ -171,8 +177,7 @@ def _relax_improvement_proposals_session_id_to_nullable(engine: Engine) -> None:
         needs_rebuild = any(row[1] == "session_id" and row[3] == 1 for row in columns)
         if not columns or not needs_rebuild:
             return
-        names = [row[1] for row in columns]
-        column_list = ", ".join(names)
+        column_list = ", ".join(row[1] for row in columns)
         before = conn.execute(text("SELECT COUNT(*) FROM improvement_proposals")).scalar_one()
         conn.execute(
             text("ALTER TABLE improvement_proposals RENAME TO _improvement_proposals_pre_v7")
@@ -182,21 +187,34 @@ def _relax_improvement_proposals_session_id_to_nullable(engine: Engine) -> None:
     logger.info("db migration: rebuilding improvement_proposals with a nullable session_id")
     ImprovementProposal.metadata.create_all(engine, tables=[ImprovementProposal.__table__])
 
-    with engine.connect() as conn:
-        conn.execute(
-            text(
+    # The DBAPI connection directly, not a SQLAlchemy Connection: ``PRAGMA foreign_keys`` is a
+    # no-op inside a transaction, and a SQLAlchemy Connection has already begun one by the time
+    # the first statement runs.
+    raw = engine.raw_connection()
+    try:
+        cursor = raw.cursor()
+        cursor.execute("PRAGMA foreign_keys=OFF")
+        try:
+            cursor.execute(
                 f"INSERT INTO improvement_proposals ({column_list}) "
                 f"SELECT {column_list} FROM _improvement_proposals_pre_v7"
             )
-        )
-        after = conn.execute(text("SELECT COUNT(*) FROM improvement_proposals")).scalar_one()
-        if after != before:  # pragma: no cover - a copy that loses rows must not be committed
-            conn.rollback()
-            raise RuntimeError(
-                f"improvement_proposals rebuild copied {after} of {before} rows; aborting"
-            )
-        conn.execute(text("DROP TABLE _improvement_proposals_pre_v7"))
-        conn.commit()
+            cursor.execute("SELECT COUNT(*) FROM improvement_proposals")
+            after = cursor.fetchone()[0]
+            if after != before:  # pragma: no cover - a copy that loses rows is never committed
+                raw.rollback()
+                raise RuntimeError(
+                    f"improvement_proposals rebuild copied {after} of {before} rows; aborting"
+                )
+            cursor.execute("DROP TABLE _improvement_proposals_pre_v7")
+            raw.commit()
+        finally:
+            # Back on before this connection returns to the pool -- every later user of it
+            # expects the enforcement engine.py's connect hook set up.
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+    finally:
+        raw.close()
 
 
 # Ordered, append-only -- see module docstring.

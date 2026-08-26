@@ -198,10 +198,41 @@ def set_listing_status(
     return to_listing_out(row, sources, memory, include_description=True)
 
 
+def remember_one_click_resume(
+    session: Session,
+    identity_key: str,
+    *,
+    resume_version_id: int,
+    memory: ListingMemory | None,
+) -> ListingMemory:
+    """Point a Job Listing's memory at the One-click Resume just generated for it (v7 ticket
+    10) -- what makes ``hasOneClickResume`` true and the SECOND click free.
+
+    Goes through ``_write_memory`` for the same reason ``_set_status`` does: a click is not a
+    sighting. The caller commits.
+    """
+    return _write_memory(
+        session, identity_key, memory=memory, resume_version_id=resume_version_id
+    )
+
+
 def _set_status(
     session: Session, identity_key: str, status: str, memory: ListingMemory | None
 ) -> ListingMemory:
-    """Write a status the USER chose, without pretending the Monitor just saw the job.
+    """Write a status the USER chose, without pretending the Monitor just saw the job."""
+    return _write_memory(session, identity_key, memory=memory, status=status)
+
+
+def _write_memory(
+    session: Session,
+    identity_key: str,
+    *,
+    memory: ListingMemory | None,
+    status: str | None = None,
+    resume_version_id: int | None = None,
+) -> ListingMemory:
+    """Write to the Listing Memory on the USER's account, without pretending the Monitor just
+    saw the job.
 
     ``upsert_memory`` bumps ``last_seen_at`` on every call, which is right for the Scan (its
     only other caller) and wrong here: ``last_seen_at`` is the baseline Repost detection
@@ -209,11 +240,25 @@ def _set_status(
     forward would make a job reposted between the Scan and the click read as not-a-Repost on
     the next Scan. So the previous value is put back afterwards -- deliberately NOT by passing
     ``seen_at``, which would drag ``status_changed_at`` back with it and misdate the very thing
-    this function exists to record. Same shape as the Scan engine overriding ``finished_at``
+    a status write exists to record. Same shape as the Scan engine overriding ``finished_at``
     right after ``finish_scan``.
+
+    One function rather than one per column (status in ticket 09, the One-click Resume in
+    ticket 10) because the rule being protected is the same rule, and two copies of it would
+    eventually disagree about which timestamps a click may move.
+
+    ``None`` means "leave this column alone" for BOTH columns here -- not ``upsert_memory``'s
+    three-way KEEP/None/value, whose "clear it" arm exists for the Scan (a Repost must clear a
+    stale Fit) and has no meaning on a click: nothing the user does from the UI un-generates a
+    resume or un-sets a status.
     """
     previous_seen: datetime | None = memory.last_seen_at if memory is not None else None
-    row = jobs_repo.upsert_memory(session, identity_key, status=status)
+    row = jobs_repo.upsert_memory(
+        session,
+        identity_key,
+        status=status,
+        resume_version_id=jobs_repo.KEEP if resume_version_id is None else resume_version_id,
+    )
     if previous_seen is not None:
         row.last_seen_at = previous_seen
         session.add(row)

@@ -26,6 +26,7 @@ from app.domain.schemas import (
     ListingStatus,
     ListingStatusUpdateIn,
     MaxApplicantBand,
+    OpenInChatOut,
     ScanOut,
     SearchProfileIn,
     SearchProfileOut,
@@ -34,7 +35,14 @@ from app.repositories import jobs_repo
 from app.routers.deps import get_session, resolve_active_profile_or_error
 from app.services.errors import http_error
 from app.services.jobboards.provider_registry import BoardProviderRegistry
-from app.services.jobs import listing_query, scan_presenter, scan_service, search_profile_service
+from app.services.jobs import (
+    listing_query,
+    one_click_service,
+    scan_presenter,
+    scan_service,
+    search_profile_service,
+)
+from app.services.profile_resolution import ProfileValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -314,3 +322,83 @@ async def patch_listing_status(
         raise http_error(404, f"Job Listing {listing_id} not found")
     session.commit()
     return out
+
+
+# --- One-click Resume / Abrir no chat (ticket 10) ------------------------------------------
+
+
+@router.post(
+    "/listings/{listing_id}/one-click-resume",
+    response_class=Response,
+    responses={
+        200: {"content": {"application/pdf": {}}, "description": "The tailored resume"},
+        409: {"description": "This listing is already generating"},
+        422: {"description": "The posting is too short to tailor a resume to"},
+        502: {"description": "The AI provider failed"},
+    },
+)
+async def one_click_resume(
+    listing_id: int,
+    regenerate: bool = Query(
+        default=False,
+        description="1 spends a new LLM call even when the Listing Memory already holds one.",
+    ),
+    session: Session = Depends(get_session),
+) -> Response:
+    """The One-click Resume (CONTEXT.md), as a PDF attachment.
+
+    Every status here is a different instruction to the user, which is why they are not one
+    generic 500: **422** ``description_too_short`` is a fact about the posting that will not
+    change on a retry (the web turns it into its own copy and never prints this code);
+    **409** and **502** carry sentences written to be read, so the web shows them verbatim;
+    **404** is an id the last Scan no longer has -- listings are ephemeral.
+
+    A **200 costs nothing on the second click**: the Listing Memory already points at the
+    generated ``resume_versions`` row, so it is re-rendered rather than regenerated. That is
+    the whole reason ``regenerate`` is an explicit parameter and not a cache-busting guess.
+    """
+    try:
+        pdf = await one_click_service.one_click_resume(
+            session, listing_id, regenerate=regenerate
+        )
+    except one_click_service.ListingNotFound as e:
+        raise http_error(404, str(e)) from e
+    except one_click_service.DescriptionTooShort as e:
+        raise http_error(422, str(e)) from e
+    except one_click_service.OneClickAlreadyRunning as e:
+        raise http_error(409, str(e)) from e
+    except one_click_service.OneClickGenerationFailed as e:
+        logger.exception("one-click resume failed for listing %s", listing_id)
+        raise http_error(502, str(e)) from e
+    except one_click_service.PdfRenderFailed as e:
+        logger.exception("one-click PDF render failed for listing %s", listing_id)
+        raise http_error(500, str(e)) from e
+    except FileNotFoundError as e:
+        raise http_error(404, str(e)) from e
+    except ProfileValidationError as e:
+        raise http_error(400, str(e)) from e
+
+    return Response(
+        content=pdf.content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{pdf.filename}"'},
+    )
+
+
+@router.post("/listings/{listing_id}/open-in-chat", response_model=OpenInChatOut)
+async def open_listing_in_chat(
+    listing_id: int, session: Session = Depends(get_session)
+) -> OpenInChatOut:
+    """Open a Job Listing as an ordinary chat session and return its id -- nothing else.
+
+    No LLM call and no turn is run here (the Job Monitor adds NO new path through the chat):
+    the session is created with the posting as its ``job_description`` and as its first ``user``
+    message, and the frontend then selects it and streams a turn exactly as if the posting had
+    been pasted -- Analysis, Pending Proposal, human approval.
+    """
+    try:
+        chat_session = one_click_service.open_in_chat(session, listing_id)
+    except one_click_service.ListingNotFound as e:
+        raise http_error(404, str(e)) from e
+    session.commit()
+    return OpenInChatOut(sessionId=int(chat_session.id or 0))

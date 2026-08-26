@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from app.db.engine import create_db_engine, init_db
+from app.repositories import proposal_repo
 
 
 def _create_legacy_v1_resume_versions_table(engine) -> None:
@@ -189,3 +190,100 @@ def test_init_db_kind_migration_is_a_no_op_on_a_fresh_db(tmp_path):
     init_db(engine)  # second boot must not error
 
     assert "kind" in _table_columns(engine, "chat_sessions")
+
+
+def _column_is_not_null(engine, table_name: str, column: str) -> bool:
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+    return any(row[1] == column and row[3] == 1 for row in rows)
+
+
+def _create_legacy_pre_v7_improvement_proposals_table(engine) -> None:
+    """Raw SQL matching the v4 improvement_proposals schema, whose ``session_id`` is NOT NULL.
+    v7 ticket 10 makes it nullable (a One-click Resume's proposal belongs to a Job Listing, not
+    to a conversation), and SQLite has no ALTER COLUMN -- so the migration rebuilds the table
+    and this is the only way to exercise that path."""
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE improvement_proposals (
+                    id INTEGER PRIMARY KEY,
+                    session_id INTEGER NOT NULL,
+                    job_description TEXT NOT NULL,
+                    items TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    resume_version_id INTEGER,
+                    model_used TEXT,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO improvement_proposals "
+                "(id, session_id, job_description, items, revision, status, created_at, updated_at) "
+                "VALUES (7, 3, 'a real posting', '[]', 2, 'approved', "
+                "'2026-01-01T00:00:00', '2026-01-02T00:00:00')"
+            )
+        )
+        conn.commit()
+
+
+def test_init_db_relaxes_improvement_proposals_session_id_without_losing_rows(tmp_path):
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'legacy_v6.db').as_posix()}")
+    _create_legacy_pre_v7_improvement_proposals_table(engine)
+    assert _column_is_not_null(engine, "improvement_proposals", "session_id")
+
+    init_db(engine)
+
+    assert not _column_is_not_null(engine, "improvement_proposals", "session_id")
+    # Nothing is discarded: this table is durable (every approved plan behind an existing
+    # resume lives in it), unlike the ephemeral job_listings the other v7 rebuild drops.
+    with Session(engine) as session:
+        row = session.exec(
+            text(
+                "SELECT session_id, job_description, revision, status, updated_at "
+                "FROM improvement_proposals WHERE id = 7"
+            )
+        ).first()
+        assert row is not None
+        assert row[0] == 3
+        assert row[1] == "a real posting"
+        assert row[2] == 2
+        assert row[3] == "approved"
+    # The scaffolding table is gone, not left behind for the next boot to trip over.
+    with engine.connect() as conn:
+        leftovers = conn.execute(
+            text("SELECT name FROM sqlite_master WHERE name = '_improvement_proposals_pre_v7'")
+        ).fetchall()
+    assert leftovers == []
+
+
+def test_a_sessionless_proposal_can_be_written_after_the_rebuild(tmp_path):
+    """The point of the migration: the One-click Resume's proposal has no chat session."""
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'legacy_v6b.db').as_posix()}")
+    _create_legacy_pre_v7_improvement_proposals_table(engine)
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        row = proposal_repo.create_pending(
+            session, session_id=None, job_description="a listing", items=[]
+        )
+        session.commit()
+        assert row.session_id is None
+    with Session(engine) as session:
+        assert proposal_repo.get(session, row.id).session_id is None
+
+
+def test_init_db_proposal_rebuild_is_a_no_op_on_a_fresh_db(tmp_path):
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'fresh_v7.db').as_posix()}")
+
+    init_db(engine)
+    init_db(engine)  # second boot must not error
+
+    assert not _column_is_not_null(engine, "improvement_proposals", "session_id")

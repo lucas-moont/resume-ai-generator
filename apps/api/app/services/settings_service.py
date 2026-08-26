@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app import config as config_module
 from app.config import RuntimeConfig
+from app.domain.schemas import DEFAULT_TEMPLATE
 from app.services import model_catalog
 from app.services.llm.provider_factory import build_provider
 from app.services.llm.provider_resolver import provider_context_for
@@ -83,6 +84,26 @@ def update_providers_settings(provider: str, default_model: str | None) -> None:
         return
     key = "ai_default_model" if provider == "auto" else f"default_{provider}_model"
     config_module.set_app_setting(key, trimmed)
+
+
+# The app_settings key holding the globally-preferred resume Template.
+RESUME_TEMPLATE_SETTING_KEY = "resume_template"
+
+
+def get_resume_template() -> str:
+    """The Template a server-rendered PDF should use (v7 ticket 10, One-click Resume).
+
+    CONTEXT.md calls the Template "a global sticky user preference (like theme)", and until v7
+    every render was started by the browser, which sent its own choice in the request body
+    (``PdfExportRequest.template``). The One-click Resume has no browser in the loop: the
+    server renders the PDF itself, so it needs the preference server-side. This reads it from
+    the same ``app_settings`` table every other preference lives in, and falls back to
+    ``DEFAULT_TEMPLATE`` while nothing has written it -- which is the honest state today, since
+    the web still keeps its pick in ``localStorage``. Whatever is stored is still folded onto
+    the manifest by ``pdf_export._safe_template``, so a stale/unknown id can never break a
+    render.
+    """
+    return config_module.app_setting_str(RESUME_TEMPLATE_SETTING_KEY) or DEFAULT_TEMPLATE
 
 
 def _key_record(name: str) -> dict:

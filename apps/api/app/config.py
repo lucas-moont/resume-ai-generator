@@ -145,6 +145,15 @@ def _app_setting_str(key: str) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def app_setting_str(key: str) -> str | None:
+    """Read a non-sensitive runtime preference as a trimmed string, or ``None`` when it is
+    unset/blank -- the public face of ``_app_setting_str`` for preferences that are not part of
+    ``RuntimeConfig`` (v7 ticket 10: the globally-preferred resume Template, read by
+    ``settings_service.get_resume_template``). Same cache and same invalidation as every other
+    app_settings read."""
+    return _app_setting_str(key)
+
+
 def set_app_setting(key: str, value: Any) -> None:
     """Write a non-sensitive runtime preference (e.g. ``ai_provider``) and invalidate the
     cache so it takes effect on the very next get_runtime_config() call -- no restart, no
