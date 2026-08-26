@@ -304,6 +304,30 @@ def get_listing(session: Session, listing_id: int) -> JobListing | None:
     return session.exec(select(JobListing).where(JobListing.id == listing_id)).first()
 
 
+def get_sources_by_listing(
+    session: Session, listing_ids: Sequence[int]
+) -> dict[int, list[ListingSource]]:
+    """Every listing's sources in ONE query, keyed by ``listing_id`` (ticket 09).
+
+    The list endpoint needs the sources of all fifty listings at once -- the cards render a
+    chip per board and the ``?board=`` filter asks which boards a listing was found on -- and
+    calling ``get_listing_sources`` per row would be fifty queries for one page. Same ordering
+    as the single-listing reader (by id, i.e. the order the Scan wrote them, i.e. the order the
+    boards answered in); a listing with no sources is simply absent from the map.
+    """
+    if not listing_ids:
+        return {}
+    rows = session.exec(
+        select(ListingSource)
+        .where(ListingSource.listing_id.in_(list(listing_ids)))
+        .order_by(ListingSource.id)
+    ).all()
+    grouped: dict[int, list[ListingSource]] = {}
+    for row in rows:
+        grouped.setdefault(row.listing_id, []).append(row)
+    return grouped
+
+
 def get_listing_sources(session: Session, listing_id: int) -> list[ListingSource]:
     """Every board this listing was found on (CONTEXT.md: a Job Listing always keeps every
     source link), ordered by id -- i.e. the order the Scan wrote them, which is the order the
