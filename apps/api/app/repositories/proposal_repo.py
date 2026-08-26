@@ -41,7 +41,7 @@ def get_items(row: ImprovementProposal) -> list[ProposalItem]:
 def create_pending(
     session: Session,
     *,
-    session_id: int,
+    session_id: int | None,
     job_description: str,
     items: list[ProposalItem],
     model_used: str | None = None,
@@ -52,8 +52,15 @@ def create_pending(
     `session.flush()` call, so there is never an intermediate state (within the transaction or
     after commit) with two 'proposed' rows for the same session, nor a window with zero rows
     while the old one is being retired.
+
+    `session_id=None` (v7 ticket 10) is a One-click Resume's proposal: it belongs to a Job
+    Listing, not to a conversation. Nothing is superseded in that case -- "at most one
+    'proposed' row" is an invariant PER SESSION (it is what switches that session's intent
+    routing), and there is no session here; two Job Listings being one-clicked at the same
+    moment are two independent proposals, not a pending one being replaced. Each is approved
+    within its own request anyway, so a sessionless row is never left `proposed` for long.
     """
-    previous = get_pending(session, session_id)
+    previous = get_pending(session, session_id) if session_id is not None else None
     if previous is not None:
         previous.status = "superseded"
         previous.updated_at = _utcnow()

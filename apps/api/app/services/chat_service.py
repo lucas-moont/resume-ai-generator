@@ -111,7 +111,11 @@ from app.services.analysis_service import analysis_turn_events
 from app.services.html_sanitize import sanitize_resume_for_display
 from app.services.generation_service import generate_resume_events
 from app.services.ingestion.merge_service import parse_patch_ops_from_llm_response, resolve_profile_for_merge
-from app.services.llm.proposal_json_parser import parse_proposal_json, parse_proposal_turn_json
+from app.services.llm.proposal_json_parser import (
+    ParsedProposal,
+    parse_proposal_json,
+    parse_proposal_turn_json,
+)
 from app.services.profile_resolution import resolve_active_profile
 from app.services.refine_service import refine_resume_events
 from app.services.secret_redaction import redact_secrets
@@ -365,7 +369,7 @@ def link_upload_to_session(session: Session, chat_session_id: int | None, row: S
 def _finalize_resume_turn(
     session: Session,
     *,
-    chat_session: ChatSession,
+    chat_session: ChatSession | None,
     resume_doc: ResumeDocument,
     intent: str,
     model: str | None,
@@ -399,36 +403,47 @@ def _finalize_resume_turn(
     exists once THIS function is already mid-flight. Called with the freshly-flushed
     ``resume_row`` right before ``session.commit()``; every other caller leaves it ``None``
     (no behavior change).
+
+    ``chat_session=None`` (v7 ticket 10, One-click Resume) is a generation with NO conversation
+    behind it: the ``ResumeVersion`` is written with ``session_id = NULL`` and the three
+    chat-only writes -- moving the session's active-resume pointer, appending the assistant
+    confirmation, touching the session -- are skipped, so ``assistant_msg`` comes back ``None``.
+    Everything else, ``on_before_commit`` and the single commit included, is the same code the
+    chat runs: that is the whole point of threading the One-click through here rather than
+    giving it a second persistence path where the proposal's approval could drift out of the
+    ResumeVersion's transaction.
     """
     resume_row = resume_repo.insert_version(
         session,
         data=resume_doc.model_dump_json(),
-        session_id=chat_session.id,
+        session_id=chat_session.id if chat_session is not None else None,
         parent_version_id=parent_version_id,
         profile_version_id=profile_version_id,
         model_used=model,
         provider_used=backend_label,
     )
-    chat_session.active_resume_version_id = resume_row.id
-    session.add(chat_session)
 
     # Follows the RESULTING resume's own locale, not the session/request locale: a refine
     # turn can itself change the document's language (e.g. "translate this to English"),
     # which would otherwise leave the confirmation bubble in the stale, pre-turn language.
     content = content_override if content_override is not None else _reply_text_for_locale(intent, resume_doc.locale)
-    meta = {"model": model, "provider": backend_label}
-    if extra_meta:
-        meta.update(extra_meta)
-    assistant_msg = chat_repo.append_message(
-        session,
-        session_id=chat_session.id,
-        role="assistant",
-        content=content,
-        intent=intent,
-        resume_version_id=resume_row.id,
-        meta=json.dumps(meta),
-    )
-    chat_repo.touch_session(session, chat_session.id)
+    assistant_msg = None
+    if chat_session is not None:
+        chat_session.active_resume_version_id = resume_row.id
+        session.add(chat_session)
+        meta = {"model": model, "provider": backend_label}
+        if extra_meta:
+            meta.update(extra_meta)
+        assistant_msg = chat_repo.append_message(
+            session,
+            session_id=chat_session.id,
+            role="assistant",
+            content=content,
+            intent=intent,
+            resume_version_id=resume_row.id,
+            meta=json.dumps(meta),
+        )
+        chat_repo.touch_session(session, chat_session.id)
     if on_before_commit is not None:
         on_before_commit(resume_row)
     session.commit()
@@ -464,7 +479,7 @@ async def _handle_question_turn(
 async def _handle_generate_turn(
     *,
     session: Session,
-    chat_session: ChatSession,
+    chat_session: ChatSession | None,
     user_message: str,
     job_description: str | None,
     model: str | None,
@@ -483,6 +498,12 @@ async def _handle_generate_turn(
     ``_finalize_resume_turn``'s docstring), and ``extra_done_data`` lets it add ``proposalId``
     to the terminal ``done`` frame -- all three default to ``None``/unused, so this function's
     behavior for its own hypothetical direct callers is unchanged.
+
+    ``chat_session=None`` (v7 ticket 10) runs the very same pipeline for the One-click Resume,
+    which has no conversation to write into: the session-level ``job_description`` write and
+    every other chat-only write are skipped (see ``_finalize_resume_turn``), the frames are
+    still yielded for a caller that wants progress, and ``messageId`` is ``None`` because no
+    assistant message was written. Reached through ``approve_and_generate``, never directly.
     """
     jd_text = job_description or user_message
     resolved_profile = resolve_active_profile(session)
@@ -500,7 +521,8 @@ async def _handle_generate_turn(
         else:
             yield event, data
     assert resume_doc is not None
-    chat_session.job_description = jd_text
+    if chat_session is not None:
+        chat_session.job_description = jd_text
 
     resume_row, content, assistant_msg = _finalize_resume_turn(
         session,
@@ -514,7 +536,11 @@ async def _handle_generate_turn(
     )
     yield "resume", {"resume": resume_doc, "resumeVersionId": resume_row.id}
     yield "message", {"content": content}
-    done_data = {"progress": 100, "messageId": assistant_msg.id, "resumeVersionId": resume_row.id}
+    done_data = {
+        "progress": 100,
+        "messageId": assistant_msg.id if assistant_msg is not None else None,
+        "resumeVersionId": resume_row.id,
+    }
     if extra_done_data:
         done_data.update(extra_done_data)
     yield "done", done_data
@@ -569,8 +595,7 @@ async def _handle_propose_turn(
         jd_text = job_description or user_message
         resolved_locale = resolve_locale(locale, jd_text, resolved_profile.profile.locale)
 
-    system = load_propose_improvements_system_prompt(PROMPTS_DIR)
-    user_msg = build_proposal_analysis_user_msg(
+    system, user_msg = build_analysis_prompt(
         profile=resolved_profile.profile, job_description=jd_text, locale=resolved_locale
     )
 
@@ -593,22 +618,12 @@ async def _handle_propose_turn(
         yield "stage", data
     raw = llm_task.result()
 
-    parsed = parse_proposal_json(raw)
-    if parsed is None:
-        # Analysis-specific failure (spec SS6): garbage/unusable LLM output is an error frame,
-        # same as any other main-generation LLM failure -- unlike the Proposal Turn's OWN
-        # parser (B4), which never treats garbage as an error. Zero rows are committed: nothing
-        # below this point has run yet.
-        raise ValueError(
-            "LLM returned an unusable Improvement Proposal (invalid JSON or no valid items)."
-        )
-
-    proposal_row = proposal_repo.create_pending(
+    proposal_row, parsed = persist_proposal(
         session,
         session_id=chat_session.id,
         job_description=jd_text,
-        items=parsed.items,
-        model_used=model,
+        raw=raw,
+        model=model,
     )
     assistant_msg = chat_repo.append_message(
         session,
@@ -701,6 +716,138 @@ async def _handle_approve_branch(
         extra_done_data={"proposalId": proposal.id},
     ):
         yield event, data
+
+
+# --- Sessionless seams (v7 ticket 10 -- One-click Resume) ----------------------------------
+#
+# The Job Monitor generates a Resume from a Job Listing with NO chat session and NO human
+# approval turn (CONTEXT.md: One-click Resume -- "the pipeline is unchanged, only the human
+# approval turn is skipped"). These two functions are how it reaches that pipeline, and they
+# exist so there is exactly ONE Analysis and ONE generation in this codebase rather than a
+# parallel copy in services/jobs/ that would quietly miss the next fix made here.
+#
+# Neither of them commits the Analysis on its own: ``propose_for_description`` only flushes the
+# ``proposed`` row, and it is ``approve_and_generate``'s single commit (the one that inserts
+# the ResumeVersion) that lands the proposal, its approval and the document together. So a
+# generation that fails leaves NO proposal behind at all -- deliberately different from the
+# chat, where the proposal survives as ``proposed`` precisely because there is a conversation
+# to reapprove it in. Callers own the rollback (see ``services/jobs/one_click_service.py``).
+
+
+def build_analysis_prompt(
+    *, profile: ProfileMaster, job_description: str, locale: str
+) -> tuple[str, str]:
+    """The Analysis's (system, user) prompt pair -- the single place either caller builds it."""
+    return (
+        load_propose_improvements_system_prompt(PROMPTS_DIR),
+        build_proposal_analysis_user_msg(
+            profile=profile, job_description=job_description, locale=locale
+        ),
+    )
+
+
+def persist_proposal(
+    session: Session,
+    *,
+    session_id: int | None,
+    job_description: str,
+    raw: str,
+    model: str | None,
+) -> tuple[ImprovementProposal, ParsedProposal]:
+    """Parse one Analysis response and write its Improvement Proposal.
+
+    Raises ``ValueError`` on unusable output BEFORE anything is written (spec SS6: garbage from
+    the Analysis is an error, unlike the Proposal Turn's own parser, which never treats it as
+    one) -- so a failure here leaves zero rows, in the chat and in the One-click alike.
+
+    ``session_id=None`` is the One-click's proposal: real, itemized, auditable, but attached to
+    no conversation.
+    """
+    parsed = parse_proposal_json(raw)
+    if parsed is None:
+        raise ValueError(
+            "LLM returned an unusable Improvement Proposal (invalid JSON or no valid items)."
+        )
+    row = proposal_repo.create_pending(
+        session,
+        session_id=session_id,
+        job_description=job_description,
+        items=parsed.items,
+        model_used=model,
+    )
+    return row, parsed
+
+
+async def propose_for_description(
+    session: Session,
+    *,
+    profile: ProfileMaster,
+    job_description: str,
+    locale: str,
+    model: str | None = None,
+    session_id: int | None = None,
+) -> tuple[ImprovementProposal, ParsedProposal]:
+    """Run the Analysis for a job description and persist the Improvement Proposal it produced.
+
+    The chat's own Analysis (``_handle_propose_turn``) is this same prompt and this same parse
+    wrapped in the SSE heartbeat that keeps the stream alive; with no stream to feed there is
+    nothing to tick, so the call is a plain ``await`` under the SAME ``LLM_TIMEOUT_SECONDS``
+    ceiling. ``TimeoutError`` (from ``asyncio.timeout``), ``ValueError`` (unusable output) and
+    whatever the provider raises all propagate -- the caller decides what they mean on the wire.
+    """
+    system, user_msg = build_analysis_prompt(
+        profile=profile, job_description=job_description, locale=locale
+    )
+    async with asyncio.timeout(LLM_TIMEOUT_SECONDS):
+        raw = await llm_client.chat_json(system, user_msg, model=model)
+    return persist_proposal(
+        session,
+        session_id=session_id,
+        job_description=job_description,
+        raw=raw,
+        model=model,
+    )
+
+
+async def approve_and_generate(
+    session: Session,
+    *,
+    proposal: ImprovementProposal,
+    model: str | None,
+    locale: str | None,
+    backend_label: str,
+) -> tuple[ResumeVersion, ResumeDocument]:
+    """Generate the Resume an Improvement Proposal was written for, with no conversation.
+
+    Runs ``_handle_generate_turn`` -- the exact function the chat's approve branch runs, with
+    ``chat_session=None`` -- and drains its frames: the generation prompt gets the proposal's
+    items as the APPROVED IMPROVEMENT PLAN, the ``ResumeVersion`` lands with
+    ``session_id = NULL``, and ``mark_approved`` folds into that insert's OWN commit through
+    the same ``on_before_commit`` hook the chat uses. A generation failure therefore never
+    leaves an approved proposal pointing at a resume that does not exist.
+    """
+    resume_doc: ResumeDocument | None = None
+    resume_version_id: int | None = None
+    async for event, data in _handle_generate_turn(
+        session=session,
+        chat_session=None,
+        user_message="",
+        job_description=proposal.job_description,
+        model=model,
+        locale=locale,
+        backend_label=backend_label,
+        agreed_improvements=proposal_repo.get_items(proposal),
+        on_before_commit=lambda resume_row: proposal_repo.mark_approved(
+            session, proposal, resume_version_id=resume_row.id
+        ),
+    ):
+        if event == "resume":
+            resume_doc = data["resume"]
+            resume_version_id = data["resumeVersionId"]
+    assert resume_doc is not None and resume_version_id is not None
+    resume_row = resume_repo.get(session, resume_version_id)
+    assert resume_row is not None
+    return resume_row, resume_doc
 
 
 async def _handle_proposal_turn(

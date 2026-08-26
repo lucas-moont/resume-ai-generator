@@ -189,12 +189,21 @@ class ImprovementProposal(SQLModel, table=True):
     pending one) | 'discarded' (reserved, no UI path in v4). Same CASCADE-on-session-delete
     treatment as ChatMessage.session_id above -- a proposal has no meaning once its chat
     session is gone.
+
+    ``session_id`` is NULLABLE as of v7 ticket 10 (CONTEXT.md: One-click Resume -- the one
+    exception to "no Resume without an approved proposal", where the proposal is auto-approved
+    as produced). A One-click's Analysis is a real, itemized, auditable proposal; what it does
+    not have is a conversation, and inventing a hidden chat session to hang it on would put a
+    session in the sidebar that the user never opened. Rows written by the chat still always
+    carry one -- `db/migrations.py`'s
+    `_relax_improvement_proposals_session_id_to_nullable` is what lets an on-disk DB accept
+    the NULL.
     """
 
     __tablename__ = "improvement_proposals"
 
     id: int | None = Field(default=None, primary_key=True)
-    session_id: int = Field(foreign_key="chat_sessions.id", ondelete="CASCADE")
+    session_id: int | None = Field(default=None, foreign_key="chat_sessions.id", ondelete="CASCADE")
     # The JD that produced this Analysis -- source of truth for approve. Since v6 this holds
     # EITHER a real pasted posting OR a Target Brief (app/domain/baseline_brief.py), the synthetic
     # stand-in a Baseline Resume request runs on, so a no-posting request reuses this one pipeline

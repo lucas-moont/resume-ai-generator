@@ -145,6 +145,60 @@ def _rebuild_job_monitor_ephemeral_tables_without_rowid_reuse(engine: Engine) ->
     )
 
 
+def _relax_improvement_proposals_session_id_to_nullable(engine: Engine) -> None:
+    """v7 ticket 10 makes ``improvement_proposals.session_id`` nullable: a One-click Resume's
+    Improvement Proposal belongs to a Job Listing, not to a conversation (CONTEXT.md: One-click
+    Resume). Every DB created before this carries the column as ``NOT NULL``, and ``create_all``
+    is ``CREATE TABLE IF NOT EXISTS`` -- it never widens an existing column.
+
+    SQLite has no ``ALTER COLUMN``, so this is the standard table rebuild: rename the old table
+    aside, let the CURRENT definition create the new one, copy every row across by name, drop
+    the old one. Unlike
+    ``_rebuild_job_monitor_ephemeral_tables_without_rowid_reuse``, NOTHING is discarded here --
+    ``improvement_proposals`` is durable (every approved plan behind an existing resume lives in
+    it), so the copy is the whole point and the row count is asserted before the old table goes.
+
+    Idempotent: once the column is nullable, ``PRAGMA table_info`` says so and this returns
+    immediately.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    from app.db.tables import ImprovementProposal  # local: avoid an import cycle at boot
+
+    with engine.connect() as conn:
+        columns = conn.execute(text("PRAGMA table_info(improvement_proposals)")).fetchall()
+        # row = (cid, name, type, notnull, dflt_value, pk)
+        needs_rebuild = any(row[1] == "session_id" and row[3] == 1 for row in columns)
+        if not columns or not needs_rebuild:
+            return
+        names = [row[1] for row in columns]
+        column_list = ", ".join(names)
+        before = conn.execute(text("SELECT COUNT(*) FROM improvement_proposals")).scalar_one()
+        conn.execute(
+            text("ALTER TABLE improvement_proposals RENAME TO _improvement_proposals_pre_v7")
+        )
+        conn.commit()
+
+    logger.info("db migration: rebuilding improvement_proposals with a nullable session_id")
+    ImprovementProposal.metadata.create_all(engine, tables=[ImprovementProposal.__table__])
+
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                f"INSERT INTO improvement_proposals ({column_list}) "
+                f"SELECT {column_list} FROM _improvement_proposals_pre_v7"
+            )
+        )
+        after = conn.execute(text("SELECT COUNT(*) FROM improvement_proposals")).scalar_one()
+        if after != before:  # pragma: no cover - a copy that loses rows must not be committed
+            conn.rollback()
+            raise RuntimeError(
+                f"improvement_proposals rebuild copied {after} of {before} rows; aborting"
+            )
+        conn.execute(text("DROP TABLE _improvement_proposals_pre_v7"))
+        conn.commit()
+
+
 # Ordered, append-only -- see module docstring.
 MIGRATIONS: list[Callable[[Engine], None]] = [
     _drop_legacy_resume_versions_template_id_column,
@@ -153,6 +207,7 @@ MIGRATIONS: list[Callable[[Engine], None]] = [
     _add_missing_chat_sessions_kind_column,
     _note_job_monitor_tables_added,
     _rebuild_job_monitor_ephemeral_tables_without_rowid_reuse,
+    _relax_improvement_proposals_session_id_to_nullable,
 ]
 
 
