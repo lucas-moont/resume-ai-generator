@@ -393,6 +393,23 @@ def scan_scheduler_enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def job_boards_fake() -> bool:
+    """Whether ``build_default_registry`` swaps the real Job Board adapters for deterministic
+    fakes (``app/services/jobboards/fake_providers.py``).
+
+    OFF unless explicitly set, and it exists for exactly one caller: the opt-in ``@real``
+    Playwright variant (``apps/web/e2e/jobs.spec.ts``), which drives the real app and the real
+    LLM but must never reach a real board -- CLAUDE.md and the v7 spec both say so. Set it on
+    the uvicorn process for that run and nowhere else; the boards then answer from a constant
+    and every layer above them is production code.
+
+    Not the same switch as ``scan_scheduler_enabled``: that one stops Scans from happening at
+    all, this one changes what a Scan talks to.
+    """
+    raw = os.getenv("JOB_BOARDS_FAKE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def profile_json_candidates_message() -> str:
     lines: list[str] = []
     o = os.getenv("PROFILE_JSON_PATH", "").strip()

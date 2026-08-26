@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 
+from app import config as config_module
 from app.services.jobboards.base import JobBoardProvider
 from app.services.jobboards.feed_providers import feed_providers
 from app.services.jobboards.provider_registry import BoardProviderRegistry
@@ -50,7 +51,25 @@ def build_default_registry(**kwargs: object) -> BoardProviderRegistry:
     ``kwargs`` reach the JobSpy boards only (``default_country``, ``max_queries``, ...): the
     feed adapters' knobs are network seams (``transport``, ``clock``) that production never
     passes and that a test injects by constructing ``feed_providers()`` itself.
+
+    ``JOB_BOARDS_FAKE=1`` (v7 ticket 15) short-circuits the whole thing with deterministic
+    stand-ins. The branch lives HERE rather than in ``routers/jobs.py``'s ``build_registry``
+    because the scheduler builds its own registry from this same function: a flag that only
+    covered the Immediate Scan would leave the background loop calling real boards, which is
+    the one thing it exists to prevent. ``kwargs`` are ignored on that path -- they configure
+    adapters the fakes do not have.
     """
+    if config_module.job_boards_fake():
+        from app.services.jobboards.fake_providers import fake_providers
+
+        registry = BoardProviderRegistry(fake_providers())
+        logger.warning(
+            "job boards: JOB_BOARDS_FAKE is set — using deterministic FAKE boards (%s). "
+            "No real Job Board will be contacted.",
+            ",".join(registry.ids()) or "-",
+        )
+        return registry
+
     providers: list[JobBoardProvider] = jobspy_providers_or_none(**kwargs)
     providers.extend(feed_providers())
     registry = BoardProviderRegistry(providers)

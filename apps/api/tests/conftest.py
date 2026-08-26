@@ -132,6 +132,19 @@ def _no_scan_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SCAN_SCHEDULER_ENABLED", "0")
 
 
+@pytest.fixture(autouse=True)
+def _no_fake_job_boards(monkeypatch: pytest.MonkeyPatch) -> None:
+    """v7 ticket 15: pytest always sees the REAL registry composition.
+
+    ``JOB_BOARDS_FAKE=1`` is for the opt-in ``@real`` Playwright run, and a developer sets it on
+    a uvicorn process -- often by putting it in ``.env``, which ``config`` loads into the
+    environment of every process in this repo, pytest included. Left standing, it would quietly
+    turn ``test_default_registry``'s "all seven boards" assertions into a three-fake registry.
+    The tests that DO exercise the flag set it themselves, on top of this.
+    """
+    monkeypatch.delenv("JOB_BOARDS_FAKE", raising=False)
+
+
 def _blackhole_transport_handler(request: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError(
         "network access is disabled in tests by default (see "
