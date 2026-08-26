@@ -25,7 +25,7 @@ Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Ha
 - **Job Monitor (v7)**: a third app area that scans **7 job boards** on your schedule (or on demand), deduplicates across them, scores **Fit** against your Profile and ranks by **Visibility Score** — how likely your resume is to actually be read. Each listing offers a **One-click Resume** (tailored PDF, no approval turn) and **Open in chat** (the full proposal-review flow). See [Job Monitor](#job-monitor-v7) below.
 - **Light / dark theme** (persisted in `localStorage`).
 - **Keyboard shortcuts**: `Enter` sends a chat message (`Shift+Enter` for a newline), `Esc` closes any open dialog, `Ctrl`/`Cmd`-`Z` and `Ctrl`/`Cmd`-`Shift`-`Z` undo/redo resume edits — all left alone while typing in a text field or contenteditable region, so they never fight native per-field editing.
-- **Test suite + CI**: 1575 pytest (unit + integration, LLM and job boards always faked and network-isolated; 6 e2e render a real PDF) · 754 Vitest/Testing-Library/MSW · 31 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api (PDF e2e as a separate opt-in job).
+- **Test suite + CI**: 1575 pytest (unit + integration, LLM and job boards always faked and network-isolated; 6 e2e render a real PDF) · 754 Vitest/Testing-Library/MSW · 31 Playwright e2e tests — 28 run against a mocked API by default, 3 `@real` variants are opt-in · GitHub Actions workflows for web and api (PDF e2e as a separate opt-in job).
 
 ## Prerequisites
 
@@ -253,7 +253,7 @@ All optional; the defaults are what the app runs on.
 | `SCAN_RESULTS_WANTED` | `50` (1–200) | Cap on postings **one board** returns for one scan. The JobSpy adapter divides it across its role × location grid, so it is that board's whole budget for the query. |
 | `FIT_LLM_CONCURRENCY` | `4` (1–25) | Parallel LLM calls in the Fit stage. Lower it if a hosted provider rate-limits you; raise it against a fast local Ollama. |
 | `SCAN_SCHEDULER_ENABLED` | on | Whether the lifespan starts the background scheduler at all. Exists for the test suite (`0` in `tests/conftest.py`); to stop scheduled scans as a user, set the interval to **off** in the Search Profile instead. |
-| `JOB_BOARDS_FAKE` | off | Swaps the real board adapters for deterministic fakes. For the opt-in `@real` Playwright run, which drives the real app and a real LLM but must never reach a real board. Not for normal use. |
+| `JOB_BOARDS_FAKE` | off | Swaps every real board adapter for a long-lived deterministic stub, inside `build_default_registry()` — so the background scheduler is covered too, not just an on-demand scan. For the opt-in `@real` Playwright run, which drives the real app and a real LLM but must never reach a real board (`apps/web/e2e/README.md` has the exact uvicorn command). Fail-safe: only `1`/`true`/`yes`/`on` turn it on, and the test suite unsets it. Not for normal use. |
 
 ## API overview
 
@@ -306,7 +306,7 @@ All optional; the defaults are what the app runs on.
 
 **Backend** (from `apps/api`, venv active): `python -m pytest` — 1575 tests. Fast unit + integration suites use a fake LLM, fake Job Boards, an in-memory SQLite and a black-holed HTTP transport (never a real network call, even if real keys exist on the machine); the 6 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
 
-**Web** (from `apps/web`): `npm run test:run` (754 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (31 Playwright tests against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`). Under a loaded machine the full Vitest run can trip the default 5s per-test timeout on a handful of unrelated heavy tests — `--testTimeout=30000` is the known workaround, not a regression.
+**Web** (from `apps/web`): `npm run test:run` (754 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (28 Playwright tests against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (the 3 opt-in `@real` variants, against a live uvicorn on port 8000 — the Job Monitor one also needs `JOB_BOARDS_FAKE=1` on that process; see `apps/web/e2e/README.md`). Under a loaded machine the full Vitest run can trip the default 5s per-test timeout on a handful of unrelated heavy tests — `--testTimeout=30000` is the known workaround, not a regression.
 
 **CI:** `.github/workflows/web.yml` (npm ci → lint → tsc → vitest coverage → mocked Playwright) and `api.yml` (pytest, plus a separate opt-in `workflow_dispatch` job for the PDF e2e) run on every push touching each app.
 
