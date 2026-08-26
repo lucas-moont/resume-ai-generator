@@ -25,7 +25,7 @@ Powered by a **pluggable LLM backend**: **Anthropic Claude** (Opus / Sonnet / Ha
 - **Job Monitor (v7)**: a third app area that scans **7 job boards** on your schedule (or on demand), deduplicates across them, scores **Fit** against your Profile and ranks by **Visibility Score** — how likely your resume is to actually be read. Each listing offers a **One-click Resume** (tailored PDF, no approval turn) and **Open in chat** (the full proposal-review flow). See [Job Monitor](#job-monitor-v7) below.
 - **Light / dark theme** (persisted in `localStorage`).
 - **Keyboard shortcuts**: `Enter` sends a chat message (`Shift+Enter` for a newline), `Esc` closes any open dialog, `Ctrl`/`Cmd`-`Z` and `Ctrl`/`Cmd`-`Shift`-`Z` undo/redo resume edits — all left alone while typing in a text field or contenteditable region, so they never fight native per-field editing.
-- **Test suite + CI**: 1555 pytest (unit + integration, LLM and job boards always faked and network-isolated; 6 e2e render a real PDF) · 754 Vitest/Testing-Library/MSW · 29 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api (PDF e2e as a separate opt-in job).
+- **Test suite + CI**: 1575 pytest (unit + integration, LLM and job boards always faked and network-isolated; 6 e2e render a real PDF) · 754 Vitest/Testing-Library/MSW · 31 Playwright e2e tests (mocked by default, `@real` variants opt-in) · GitHub Actions workflows for web and api (PDF e2e as a separate opt-in job).
 
 ## Prerequisites
 
@@ -304,9 +304,9 @@ All optional; the defaults are what the app runs on.
 
 ## Tests
 
-**Backend** (from `apps/api`, venv active): `python -m pytest` — 1555 tests. Fast unit + integration suites use a fake LLM, fake Job Boards, an in-memory SQLite and a black-holed HTTP transport (never a real network call, even if real keys exist on the machine); the 6 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
+**Backend** (from `apps/api`, venv active): `python -m pytest` — 1575 tests. Fast unit + integration suites use a fake LLM, fake Job Boards, an in-memory SQLite and a black-holed HTTP transport (never a real network call, even if real keys exist on the machine); the 6 tests marked `e2e` render a real PDF via Playwright (`-m "not e2e"` to skip them).
 
-**Web** (from `apps/web`): `npm run test:run` (754 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (29 Playwright tests against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`). Under a loaded machine the full Vitest run can trip the default 5s per-test timeout on a handful of unrelated heavy tests — `--testTimeout=30000` is the known workaround, not a regression.
+**Web** (from `apps/web`): `npm run test:run` (754 Vitest + Testing Library + MSW tests, including SSE stream mocks) · `npm run test:e2e` (31 Playwright tests against a mocked API — deterministic, CI-safe) · `npm run test:e2e:real` (opt-in variants against a live uvicorn on port 8000; see `e2e/README.md`). Under a loaded machine the full Vitest run can trip the default 5s per-test timeout on a handful of unrelated heavy tests — `--testTimeout=30000` is the known workaround, not a regression.
 
 **CI:** `.github/workflows/web.yml` (npm ci → lint → tsc → vitest coverage → mocked Playwright) and `api.yml` (pytest, plus a separate opt-in `workflow_dispatch` job for the PDF e2e) run on every push touching each app.
 
