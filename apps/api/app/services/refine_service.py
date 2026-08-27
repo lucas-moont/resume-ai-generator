@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 from app.config import LLM_TIMEOUT_SECONDS, PROJECTS_DIR, PROMPTS_DIR
 from app.domain.locale import mentions_language_change, normalize_locale
 from app.domain.prompts_builder import build_refine_user_msg
+from app.domain.quality import wrong_language_issue
 from app.domain.schemas import GitHubRepoInfo, ProfileMaster, ResumeDocument
 from app.prompt_loader import load_refine_system_prompt
 from app.services import llm_client, streaming
@@ -38,6 +39,34 @@ _GITHUB_MENTION_RE = re.compile(r"\b(github|repos?|reposit[óo]rios?)\b", re.IGN
 def _build_project_sources_block(md_entries: list[dict], repos: list[GitHubRepoInfo]) -> str:
     merged = merge_github_with_markdown(md_entries, repos)
     return f"Project notes:\n{merged}"
+
+
+async def _enforce_resume_locale(
+    resume: ResumeDocument, expected_locale: str | None, model: str | None
+) -> ResumeDocument:
+    """Rewrite the resume into ``expected_locale`` when any section drifted from it.
+
+    The generation flow catches wrong-language drift through its quality pass
+    (``generation_service.auto_improve_if_needed``); a refine had no equivalent, so an edit that
+    let a section slip into the other language shipped with only its ``locale`` label corrected,
+    never its words (ADR-0001, Furo 4). This runs just the per-section language check -- NOT the
+    job-description-driven quality checks, which have no place in an edit -- and the same
+    translate-in-place fix. It is a no-op when the language was left unpinned (the user asked to
+    change it: ``wrong_language_issue`` returns None for a ``None`` expected locale).
+    """
+    issue = wrong_language_issue(resume, expected_locale)
+    if not issue:
+        return resume
+    system = load_refine_system_prompt(PROMPTS_DIR)
+    user_msg = f"""Current resume JSON:
+{resume.model_dump_json(indent=2)}
+
+Quality issue to fix:
+- {issue}
+
+Revise the resume to address the issue without inventing facts. Return full JSON only."""
+    raw = await llm_client.chat_json(system, user_msg, model=model)
+    return parse_resume_json(raw, resume, refine=True, expected_locale=expected_locale)
 
 
 async def refine_resume_events(
@@ -123,4 +152,8 @@ async def refine_resume_events(
         yield "done", {"progress": 100, "resume": None, "question": question}
         return
     refined = parse_resume_json(raw, resume, refine=True, expected_locale=pinned_locale)
+    # v6 pinned the ``locale`` field; a drifted section's WORDS still slip through (ADR-0001,
+    # Furo 4). Run the same per-section language check + translate-in-place fix the generation
+    # flow already has. A no-op unless a section actually drifted from the pinned language.
+    refined = await _enforce_resume_locale(refined, pinned_locale, model)
     yield "done", {"progress": 100, "resume": refined, "question": None}

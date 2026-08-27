@@ -17,6 +17,7 @@ import pytest
 from sqlmodel import Session, select
 
 from app.db.tables import ChatSession, ResumeVersion, SourceDocument
+from app.domain.locale import detect_locale as _detect_locale
 from app.domain.schemas import GitHubRepoInfo
 from app.repositories import chat_repo, profile_repo, resume_repo
 from app.services import refine_service as refine_service_module
@@ -516,6 +517,62 @@ class TestChatMessageStreamRefineIntent:
         assert after["session"]["activeResumeVersionId"] == resume_event["resumeVersionId"]
         assert after["activeResume"]["summary"] == updated["summary"]
 
+    async def test_a_refine_that_drifts_the_language_is_caught_and_rewritten(
+        self, client, fake_llm, parse_sse, test_db_engine, write_profile
+    ):
+        # Furo 4 / ADR-0001: a refine had no language gate of its own, so a non-language edit
+        # that let a section slip into the other language shipped with only its `locale` label
+        # corrected, never its words. It now runs the same per-section language check and
+        # translate-in-place fix the generation flow already has.
+        write_profile(make_profile())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        pt_resume = make_resume_payload(
+            locale="pt-BR",
+            summary=(
+                "Engenheira de back-end sênior com mais de sete anos construindo serviços "
+                "confiáveis em Python e Node.js, com foco em arquitetura limpa e observabilidade."
+            ),
+            experience=[
+                {
+                    "company": "Acme Corp",
+                    "title": "Engenheira de Back-end Sênior",
+                    "location": "Remoto",
+                    "start": "2021",
+                    "end": None,
+                    "highlights": [
+                        "Liderou a migração do serviço de cobrança para uma stack em Python e FastAPI",
+                        "Desenhou o schema PostgreSQL e a camada de cache que cortou a latência p95",
+                        "Orientou três pessoas e conduziu o rodízio de plantão do time de pagamentos",
+                    ],
+                }
+            ],
+        )
+        _seed_active_resume(test_db_engine, created["id"], pt_resume)
+
+        # The refine LLM drifts the summary to English on a non-language edit...
+        drifted = make_resume_payload(**{**pt_resume, "summary": (
+            "Senior backend engineer with over seven years building reliable services in "
+            "Python and Node.js, focused on clean architecture and observability."
+        )})
+        # ...and the follow-up language pass translates it back to Portuguese.
+        corrected = make_resume_payload(**{**pt_resume, "summary": (
+            "Engenheira de back-end sênior com sete anos entregando serviços confiáveis, "
+            "mantendo cada fato idêntico ao original em português."
+        )})
+        fake_llm.queue(json.dumps(drifted), json.dumps(corrected))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "Deixe o resumo mais forte."},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        resume_event = next(data for e, data in events if e == "resume")
+        # A second LLM call ran to fix the drift, and the shipped summary is no longer English.
+        assert fake_llm.call_count == 2
+        assert _detect_locale(resume_event["resume"]["summary"]) != "en"
+
     async def test_refine_confirmation_follows_the_resulting_resume_locale_not_the_session_locale(
         self, client, fake_llm, parse_sse, test_db_engine, write_profile
     ):
@@ -620,12 +677,37 @@ class TestChatMessageStreamRefineSimSimHomemFix:
         self, client, fake_llm, parse_sse, test_db_engine, write_profile
     ):
         write_profile(make_profile())
-        seeded_resume = make_resume_payload(locale="pt-BR")
+        # A genuinely Portuguese resume (content AND locale), so the refine's own per-section
+        # language check (Furo 4) stays a no-op and only the projects change is exercised. The
+        # summary/experience are shared with ``updated`` so the diff names ONLY projects.
+        pt_summary = (
+            "Engenheira de back-end sênior com mais de sete anos construindo serviços "
+            "confiáveis em Python e Node.js, com foco em arquitetura limpa e observabilidade."
+        )
+        pt_experience = [
+            {
+                "company": "Acme Corp",
+                "title": "Engenheira de Back-end Sênior",
+                "location": "Remoto",
+                "start": "2021",
+                "end": None,
+                "highlights": [
+                    "Liderou a migração do serviço de cobrança para uma stack em Python e FastAPI",
+                    "Desenhou o schema PostgreSQL e a camada de cache que cortou a latência p95",
+                    "Orientou três pessoas e conduziu o rodízio de plantão do time de pagamentos",
+                ],
+            }
+        ]
+        seeded_resume = make_resume_payload(
+            locale="pt-BR", summary=pt_summary, experience=pt_experience
+        )
         created = (await client.post("/api/chat/sessions", json={})).json()
         active_resume_version_id = _seed_active_resume(test_db_engine, created["id"], seeded_resume)
 
         updated = make_resume_payload(
             locale="pt-BR",
+            summary=pt_summary,
+            experience=pt_experience,
             projects=[
                 {
                     "name": "novo-projeto",
