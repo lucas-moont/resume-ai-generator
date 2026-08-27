@@ -30,4 +30,5 @@ Re-read your JSON and verify, in order:
 
 1. **One language only.** EVERY reader-visible field is in the target locale — including each experience `title` and each education `degree`. If any `title` or `degree` is still in the profile's source language, **translate it now** (e.g. pt-BR: `Full Stack Developer` → `Desenvolvedor Full Stack`, `Associate Degree, Systems Analysis and Development` → `Tecnólogo em Análise e Desenvolvimento de Sistemas`). Only `company`, `institution`, product/brand and technology names keep their original form. A `title`/`degree` left in another language is a defect — fix it before returning.
 2. **Correct person.** `highlights` use first-person singular in languages that inflect person (pt-BR: `Desenvolvi`, `Liderei`), person-neutral verbs in English; no explicit subject pronouns; no third person (`Liderou`).
-3. **No duplicated bullets** across different roles.
+3. **No split-gender titles.** No `(a)`, `/a`, `@`, `x`, or duplicated-gender variants in any `title`, `degree`, `headline`, or field — each reader-visible role is one natural grammatical form (pt-BR default: the unmarked market form, e.g. `Desenvolvedor Full Stack`). A `Desenvolvedor(a)`-style form is a defect — fix it before returning.
+4. **No duplicated bullets** across different roles.
