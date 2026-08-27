@@ -70,33 +70,47 @@ def allows_lean_skills(agreed_improvements: list[ProposalItem] | None) -> bool:
     )
 
 
-def resume_prose_text(resume: ResumeDocument) -> str:
-    """The reader-visible PROSE of a resume, for language detection (v6).
+def _resume_language_sections(resume: ResumeDocument) -> list[str]:
+    """The reader-visible PROSE of a resume, grouped into sections for language detection.
 
     Only fields whose wording is the LLM's own: summary, bullets, job titles, degrees, project
     write-ups. Deliberately excludes ``skills`` and ``keyTechnologies`` (technology names look
     identical in both languages and would dilute the signal toward English) and the contact
     fields (proper nouns and addresses, no language content at all).
+
+    Grouped, NOT glued into one blob (ADR-0001): judged as a single aggregate, one section
+    drifting to the other language (an English summary above Portuguese bullets) nets out as the
+    majority language and ships. Each section is detected on its own so a drifted one is visible.
+    Sections are kept large enough to clear the per-section floor -- the experience block carries
+    every title and bullet together, since a title on its own is too short to detect.
     """
-    parts: list[str] = [resume.summary or "", resume.headline or ""]
+    top = " ".join(p for p in (resume.summary or "", resume.headline or "") if p)
+    experience: list[str] = []
     for e in resume.experience:
-        parts.append(e.title or "")
-        parts.extend(e.highlights or [])
-    for p in resume.projects:
-        parts.append(p.description or "")
+        experience.append(e.title or "")
+        experience.extend(e.highlights or [])
+    projects = " ".join(p.description or "" for p in resume.projects if p.description)
+    education: list[str] = []
     for e in resume.education:
-        parts.append(e.degree or "")
-        parts.append(e.details or "")
-    return " ".join(part for part in parts if part)
+        education.append(e.degree or "")
+        education.append(e.details or "")
+    sections = [
+        top,
+        " ".join(p for p in experience if p),
+        projects,
+        " ".join(p for p in education if p),
+    ]
+    return [s for s in sections if s.strip()]
 
 
-# A document shorter than this has too little prose for detect_locale to be trusted; below it
-# a language mismatch is not reported rather than reported wrongly.
-_LOCALE_CHECK_MIN_WORDS = 40
+# A section shorter than this has too little prose for detect_locale to be trusted; below it the
+# section is skipped rather than judged wrongly. Lower than a whole-document floor by design: a
+# single section (a summary) is judged here, not the concatenation of every section at once.
+_SECTION_MIN_WORDS = 15
 
 
 def wrong_language_issue(resume: ResumeDocument, expected_locale: str | None) -> str | None:
-    """The issue text when the resume's PROSE is not in ``expected_locale`` -- otherwise None.
+    """The issue text when any section of the resume's PROSE is not in ``expected_locale``.
 
     This is the one place a quality issue is allowed to ask for a rewrite of everything, and the
     one case where doing so cannot fabricate anything: translating a stated fact leaves the fact
@@ -106,21 +120,24 @@ def wrong_language_issue(resume: ResumeDocument, expected_locale: str | None) ->
 
     Detection runs on the generated prose, NOT on the ``locale`` field: since v6 that field is
     pinned by the server, so it always says the right thing and can no longer reveal the drift.
+    It runs per section (ADR-0001) so a single drifted section cannot hide behind the correct
+    ones -- an English summary over Portuguese bullets no longer nets out as Portuguese.
     """
     if not expected_locale:
         return None
-    prose = resume_prose_text(resume)
-    if len(prose.split()) < _LOCALE_CHECK_MIN_WORDS:
-        return None
-    detected = detect_locale(prose)
-    if detected is None or detected == expected_locale:
-        return None
-    return (
-        f"The resume is written in {detected} but this job requires {expected_locale}. Rewrite "
-        f"EVERY reader-visible field in {expected_locale} -- summary, all bullets, job titles, "
-        "degrees and project descriptions -- keeping every fact identical. Company, institution, "
-        "product and technology names stay as they are."
-    )
+    for section in _resume_language_sections(resume):
+        if len(section.split()) < _SECTION_MIN_WORDS:
+            continue
+        detected = detect_locale(section)
+        if detected is not None and detected != expected_locale:
+            return (
+                f"Part of the resume is written in {detected} but this job requires "
+                f"{expected_locale}. Rewrite EVERY reader-visible field in {expected_locale} -- "
+                "summary, all bullets, job titles, degrees and project descriptions -- keeping "
+                "every fact identical. Company, institution, product and technology names stay "
+                "as they are."
+            )
+    return None
 
 
 def quality_issues(

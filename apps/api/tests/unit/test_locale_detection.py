@@ -193,3 +193,21 @@ class WrongLanguageIssueTests(unittest.TestCase):
         issues = quality_issues(self._english(), "Vaga em português", expected_locale="pt-BR")
         self.assertTrue(issues)
         self.assertIn("pt-BR", issues[0])
+
+    def test_a_single_section_in_the_wrong_language_is_reported(self) -> None:
+        # The core bug (ADR-0001): an English summary sitting above Portuguese bullets. Judged
+        # as one aggregate the document nets out as Portuguese -- the bullets dominate -- and the
+        # mix ships ("RESUMO" in pt with an English summary under it). Each section is detected
+        # on its own so the drifted summary cannot hide behind the correct bullets.
+        mixed = self._resume(
+            [
+                "Desenvolvi a migração do serviço de cobrança e desenhei a camada de dados dele",
+                "Construí e entreguei a API de pagamentos com responsabilidade pela confiabilidade",
+                "Orientei pessoas do time e conduzi a cultura de revisão de código na equipe",
+            ],
+            "Senior backend engineer with strong experience building and shipping reliable "
+            "services for the payments team, with a pragmatic approach to delivery.",
+        )
+        issue = wrong_language_issue(mixed, "pt-BR")
+        self.assertIsNotNone(issue)
+        self.assertIn("pt-BR", issue)
