@@ -960,6 +960,7 @@ class TestProposalActionIgnoredWithoutPendingProposal:
         self, client, fake_llm, write_profile, parse_sse
     ):
         write_profile(make_profile())
+        fake_llm.queue(json.dumps({"reply": "Oi! Em que posso ajudar?"}))
         created = (await client.post("/api/chat/sessions", json={})).json()
 
         resp = await client.post(
@@ -970,10 +971,15 @@ class TestProposalActionIgnoredWithoutPendingProposal:
         assert resp.status_code == 200
         events = parse_sse(resp.text)
         kinds = [e for e, _ in events]
-        # No active resume, no pending proposal, a short greeting -- plain v1 "question"
-        # routing, spending no LLM call at all (proves the shortcut never fired).
-        assert kinds == ["message", "done"]
-        assert fake_llm.call_count == 0
+        # No active resume and no pending proposal: the approve shortcut never fires and the turn
+        # routes normally to the conversation lane. The proof the shortcut stayed inert is that no
+        # resume was generated (the approve branch would have emitted a `resume`); the greeting is
+        # simply answered.
+        assert "resume" not in kinds
+        assert "proposal" not in kinds
+        assert kinds[-1] == "done"
+        done_event = next(data for e, data in events if e == "done")
+        assert done_event["resumeVersionId"] is None
 
 
 class TestApproveHonorsTheRelevanceFilter:

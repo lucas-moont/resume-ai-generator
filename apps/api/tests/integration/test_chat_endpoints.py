@@ -4,9 +4,10 @@ repositories against the in-memory engine wired in tests/conftest.py's ``client`
 (dependency_overrides on deps.get_session) -- no real data/app.db is ever touched.
 
 Intent routing is deterministic (docs/v1-chat-experience.md): no active resume + message
-looks like a job description -> generate; active resume exists -> refine (with recent chat
-history folded into the refine instruction); neither -> a canned "question" reply with no LLM
-call at all.
+looks like a job description -> generate; an active resume + an explicit edit verb -> refine
+(with recent chat history folded into the refine instruction); anything that is not an explicit
+edit -> the read-only conversation lane (converse), which answers with an LLM and never mutates
+the resume (see ``TestChatMessageStreamConverseIntent``).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from sqlmodel import Session, select
 
 from app.db.tables import ChatSession, ResumeVersion, SourceDocument
 from app.domain.locale import detect_locale as _detect_locale
-from app.domain.schemas import GitHubRepoInfo
+from app.domain.schemas import GitHubRepoInfo, ResumeDocument
 from app.repositories import chat_repo, profile_repo, resume_repo
 from app.services import refine_service as refine_service_module
 from tests.factories import make_profile, make_resume_payload
@@ -1163,26 +1164,141 @@ class TestChatMessageStreamProfileUpdateIntent:
             assert json.loads(version.data)["experience"] == []
 
 
-class TestChatMessageStreamQuestionIntent:
-    async def test_a_short_greeting_with_no_active_resume_does_not_call_the_llm(
-        self, client, fake_llm, parse_sse
+class TestChatMessageStreamConverseIntent:
+    """The read-only conversation lane (converse). A turn that is not an explicit edit, a
+    posting, a baseline request, or a profile fact is answered by an LLM that reads the
+    resume/profile/job and mutates NOTHING -- no ResumeVersion, no proposal, only a message
+    bubble. It replaced the old canned `question` reply (no LLM) and the `refine` DEFAULT that
+    silently edited the resume on a mere question.
+    """
+
+    async def test_a_greeting_with_no_active_resume_is_answered_by_the_llm(
+        self, client, fake_llm, write_profile, parse_sse
     ):
+        # Was pinned as "does not call the LLM" (the canned question reply). A greeting now opens
+        # the conversation lane like any non-posting turn and is answered by the model.
+        write_profile(make_profile())
+        fake_llm.queue(json.dumps({"reply": "Oi! Como posso ajudar com seu currículo?"}))
         created = (await client.post("/api/chat/sessions", json={})).json()
 
         resp = await client.post(
             f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": "hi there"},
+            json={"message": "oi, tudo bem?"},
         )
 
         assert resp.status_code == 200
         events = parse_sse(resp.text)
         kinds = [e for e, _ in events]
         assert "resume" not in kinds
+        assert "proposal" not in kinds
         assert "message" in kinds
+        assert kinds[-1] == "done"
+        message_event = next(data for e, data in events if e == "message")
+        assert message_event["content"] == "Oi! Como posso ajudar com seu currículo?"
+        done_event = next(data for e, data in events if e == "done")
+        assert done_event["resumeVersionId"] is None
+        assert fake_llm.call_count == 1
+
+    async def test_a_question_about_the_resume_answers_without_touching_it(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        # The flagship bug: this used to fall to the refine default and produce an unwanted diff.
+        write_profile(make_profile())
+        seeded = make_resume_payload(summary="Original summary the question must not change.")
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        active_id = _seed_active_resume(test_db_engine, created["id"], seeded)
+        fake_llm.queue(json.dumps({"reply": "O resumo enfatiza backend porque a vaga pede Python."}))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "por que o resumo está assim?"},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "resume" not in kinds
         assert kinds[-1] == "done"
         done_event = next(data for e, data in events if e == "done")
         assert done_event["resumeVersionId"] is None
-        assert fake_llm.call_count == 0
+        # No new version, and the active resume is unchanged byte-for-byte.
+        assert _resume_version_count(test_db_engine, created["id"]) == 1
+        with Session(test_db_engine) as session:
+            still = resume_repo.get(session, active_id)
+            assert ResumeDocument.model_validate_json(still.data).summary == seeded["summary"]
+
+    async def test_an_off_schema_artifact_request_is_chat_text_not_saved(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
+        summary_text = "Qualification summary: backend engineer with 5 years in Python and PostgreSQL."
+        fake_llm.queue(json.dumps({"reply": summary_text}))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "me manda um qualification summary pra colar em outro formulário"},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "resume" not in kinds
+        assert "proposal" not in kinds
+        message_event = next(data for e, data in events if e == "message")
+        assert message_event["content"] == summary_text
+        # The artifact is chat text only: still just the one seeded resume, nothing new versioned.
+        assert _resume_version_count(test_db_engine, created["id"]) == 1
+
+    async def test_a_blank_llm_reply_falls_back_to_canned_copy_not_an_error(
+        self, client, fake_llm, write_profile, parse_sse, test_db_engine
+    ):
+        write_profile(make_profile())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        _seed_active_resume(test_db_engine, created["id"], make_resume_payload())
+        fake_llm.queue(json.dumps({"reply": "   "}))  # blank -> parser returns None
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "hmm, não sei"},
+        )
+
+        assert resp.status_code == 200
+        events = parse_sse(resp.text)
+        kinds = [e for e, _ in events]
+        assert "error" not in kinds
+        assert kinds[-1] == "done"
+        message_event = next(data for e, data in events if e == "message")
+        assert message_event["content"].strip()  # a non-empty canned reply, never blank
+
+    async def test_the_llm_sees_the_resume_profile_and_session_job(
+        self, client, fake_llm, write_profile, test_db_engine
+    ):
+        write_profile(make_profile(fullName="Ana Costa"))
+        seeded = make_resume_payload(summary="A recognizable seeded summary.")
+        created = (await client.post("/api/chat/sessions", json={})).json()
+        _seed_active_resume(test_db_engine, created["id"], seeded)
+        # A generated resume leaves the posting on the session (chat_service writes
+        # chat_session.job_description); reproduce that so the converse turn can see the job.
+        with Session(test_db_engine) as session:
+            row = session.get(ChatSession, created["id"])
+            row.job_description = "Senior Python role at Acme, owning the PostgreSQL data layer."
+            session.add(row)
+            session.commit()
+        fake_llm.queue(json.dumps({"reply": "ok"}))
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": "esse currículo está bom pra vaga?"},
+        )
+
+        assert resp.status_code == 200
+        assert fake_llm.call_count == 1
+        user_prompt = fake_llm.calls[-1]["user"]
+        assert "A recognizable seeded summary." in user_prompt  # the resume
+        assert "Ana Costa" in user_prompt  # the profile
+        assert "Senior Python role at Acme" in user_prompt  # the session's job
 
 
 class TestChatMessageStreamErrors:

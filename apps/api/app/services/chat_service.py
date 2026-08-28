@@ -98,9 +98,14 @@ from app.domain.baseline_brief import build_baseline_brief, has_career_target, i
 from app.domain.chat_intent import classify_intent
 from app.domain.locale import DEFAULT_LOCALE, SUPPORTED_LOCALES, resolve_locale
 from app.domain.profile_patch import PatchOp, PatchValidationFailed, apply_patch
-from app.domain.prompts_builder import build_proposal_analysis_user_msg, build_proposal_turn_user_msg
+from app.domain.prompts_builder import (
+    build_converse_user_msg,
+    build_proposal_analysis_user_msg,
+    build_proposal_turn_user_msg,
+)
 from app.domain.schemas import ProfileMaster, ProposalItem, ResumeDocument
 from app.prompt_loader import (
+    load_converse_system_prompt,
     load_profile_update_system_prompt,
     load_proposal_turn_system_prompt,
     load_propose_improvements_system_prompt,
@@ -111,6 +116,7 @@ from app.services.analysis_service import analysis_turn_events
 from app.services.html_sanitize import sanitize_resume_for_display
 from app.services.generation_service import generate_resume_events
 from app.services.ingestion.merge_service import parse_patch_ops_from_llm_response, resolve_profile_for_merge
+from app.services.llm.converse_json_parser import parse_converse_json
 from app.services.llm.proposal_json_parser import (
     ParsedProposal,
     parse_proposal_json,
@@ -1059,6 +1065,85 @@ async def _handle_proposal_turn(
     }
 
 
+async def _handle_converse_turn(
+    *,
+    session: Session,
+    chat_session: ChatSession,
+    user_message: str,
+    prior_messages: list,
+    active_resume_row,
+    model: str | None,
+    locale: str | None,
+    backend_label: str,
+) -> AsyncIterator[tuple[str, dict]]:
+    """The read-only conversation turn: an LLM answers the user having read the current resume,
+    the profile, and the session's job, and NOTHING is mutated -- no ResumeVersion, no proposal,
+    no card. It emits only heartbeat ``stage`` events, one ``message`` bubble, and ``done`` with
+    ``resumeVersionId`` null.
+
+    Context assembly reuses the same seams every other turn does: the active resume row decoded
+    with ``ResumeDocument.model_validate_json`` (or ``None`` before any resume exists),
+    ``resolve_active_profile``, the session's ``job_description``, and ``_format_history``. There
+    is deliberately no pending proposal to pass -- ``classify_intent`` routes to ``proposal_turn``
+    whenever one exists, so a converse turn by construction has none.
+
+    The heartbeat's ``step`` is ``analyzing_job`` only because that is the id the frontend maps to
+    a plain typing indicator (no work-checklist card), which is the right affordance for a chat
+    reply; the label is never shown. A blank/garbage LLM reply falls back to the canned converse
+    copy rather than erroring -- same non-destructive posture as the proposal turn.
+    """
+    resolved_locale = _resolve_concrete_locale(locale, user_message, None)
+    resume_doc = (
+        ResumeDocument.model_validate_json(active_resume_row.data)
+        if active_resume_row is not None
+        else None
+    )
+    resolved_profile = resolve_active_profile(session)
+    history_text = _format_history(prior_messages, _HISTORY_MESSAGES_FOR_REFINE)
+    system = load_converse_system_prompt(PROMPTS_DIR)
+    user_msg = build_converse_user_msg(
+        resume=resume_doc,
+        profile=resolved_profile.profile,
+        job_description=chat_session.job_description,
+        proposal_items=None,
+        history_text=history_text,
+        message=user_message,
+        locale=resolved_locale,
+    )
+
+    llm_task = asyncio.create_task(llm_client.chat_json(system, user_msg, model=model))
+    async for is_timeout, data in run_with_heartbeat(
+        llm_task,
+        heartbeat_seconds=streaming.HEARTBEAT_SECONDS,
+        timeout_seconds=LLM_TIMEOUT_SECONDS,
+        tick=lambda elapsed: {
+            "step": "analyzing_job",
+            "progress": 50,
+            "message": f"Thinking about your message... ({elapsed}s)",
+        },
+        on_timeout=lambda elapsed: {
+            "message": f"Timed out waiting for LLM response after {LLM_TIMEOUT_SECONDS}s."
+        },
+    ):
+        if is_timeout:
+            raise TimeoutError(data["message"])
+        yield "stage", data
+    raw = llm_task.result()
+
+    reply = parse_converse_json(raw) or _reply_text_for_locale("converse", resolved_locale)
+    assistant_msg = chat_repo.append_message(
+        session,
+        session_id=chat_session.id,
+        role="assistant",
+        content=reply,
+        intent="converse",
+    )
+    chat_repo.touch_session(session, chat_session.id)
+    session.commit()
+    yield "message", {"content": reply}
+    yield "done", {"progress": 100, "messageId": assistant_msg.id, "resumeVersionId": None}
+
+
 def _sanitize_client_resume_override(resume: ResumeDocument) -> ResumeDocument:
     """v2 ticket 11 review fix: the client-supplied refine override is untrusted input arriving
     fresh at this seam (unlike the DB's active row, already sanitized by construction), and it
@@ -1354,7 +1439,7 @@ async def handle_chat_turn(
         has_pending_proposal=pending_proposal is not None,
     )
 
-    if intent in ("question", "clarify_scope", "converse"):
+    if intent in ("question", "clarify_scope"):
         async for event, data in _handle_question_turn(
             session=session,
             chat_session=chat_session,
@@ -1405,6 +1490,18 @@ async def handle_chat_turn(
                 model=model,
                 backend_label=backend_label,
                 client_resume_override=client_resume,
+            ):
+                yield event, data
+        elif intent == "converse":
+            async for event, data in _handle_converse_turn(
+                session=session,
+                chat_session=chat_session,
+                user_message=user_message,
+                prior_messages=prior_messages,
+                active_resume_row=active_resume_row,
+                model=model,
+                locale=locale,
+                backend_label=backend_label,
             ):
                 yield event, data
         elif intent == "proposal_turn":
