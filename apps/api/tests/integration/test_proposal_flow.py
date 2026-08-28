@@ -178,7 +178,7 @@ class TestAnalysisTurnHappyPath:
     async def test_the_proposal_carries_the_detected_locale_on_the_event_and_on_reload(
         self, client, fake_llm, write_profile, parse_sse
     ):
-        # Furo 3A / ADR-0001: the approval step shows "Vou gerar em [pt-BR ...]" pre-filled with
+        # The approval step shows "Vou gerar em [pt-BR ...]" pre-filled with
         # the language detected from the posting, so the detected locale must reach the client --
         # live on the `proposal` event, and after a reload on `pendingProposal`. The profile is
         # locale "en", but a Portuguese posting must still be detected as pt-BR (detection wins).

@@ -49,7 +49,7 @@ async def _enforce_resume_locale(
     The generation flow catches wrong-language drift through its quality pass
     (``generation_service.auto_improve_if_needed``); a refine had no equivalent, so an edit that
     let a section slip into the other language shipped with only its ``locale`` label corrected,
-    never its words (ADR-0001, Furo 4). This runs just the per-section language check -- NOT the
+    never its words. This runs just the per-section language check -- NOT the
     job-description-driven quality checks, which have no place in an edit -- and the same
     translate-in-place fix. It is a no-op when the language was left unpinned (the user asked to
     change it: ``wrong_language_issue`` returns None for a ``None`` expected locale).
@@ -152,8 +152,8 @@ async def refine_resume_events(
         yield "done", {"progress": 100, "resume": None, "question": question}
         return
     refined = parse_resume_json(raw, resume, refine=True, expected_locale=pinned_locale)
-    # v6 pinned the ``locale`` field; a drifted section's WORDS still slip through (ADR-0001,
-    # Furo 4). Run the same per-section language check + translate-in-place fix the generation
-    # flow already has. A no-op unless a section actually drifted from the pinned language.
+    # v6 pinned the ``locale`` field; a drifted section's WORDS still slip through. Run the same
+    # per-section language check + translate-in-place fix the generation flow already has. A
+    # no-op unless a section actually drifted from the pinned language.
     refined = await _enforce_resume_locale(refined, pinned_locale, model)
     yield "done", {"progress": 100, "resume": refined, "question": None}

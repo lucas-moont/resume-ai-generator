@@ -19,8 +19,8 @@ export function PreviewToolbar() {
   const template = useTemplate()
   const setTemplate = useResumeStore((s) => s.setTemplate)
   const requestTranslation = useChatStore((s) => s.requestTranslation)
-  // Furo 3B: the picker shows the DOCUMENT's own language (the labels follow `resume.locale`),
-  // not the request preference. Switching it asks ChatPanel for a translate turn (Q13-A).
+  // The picker shows the DOCUMENT's own language (the labels follow `resume.locale`), not the
+  // request preference. Switching it asks ChatPanel for a translate turn.
   const currentLocale = (resume?.locale || '').toLowerCase().startsWith('pt') ? 'pt-BR' : 'en'
   const validationIssues = useValidationIssues()
   const [pdfLoading, setPdfLoading] = useState(false)

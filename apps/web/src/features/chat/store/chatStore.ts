@@ -62,8 +62,8 @@ export interface ProposalCard {
   status: 'proposed' | 'approved' | 'superseded'
   revision: number
   itemsCount: number
-  /** Furo 3A: the language detected from the posting, pre-filling the approval step's language
-   * picker. Optional — a card rehydrated from a proposal persisted before this may lack it. */
+  /** The language detected from the posting, pre-filling the approval step's language picker.
+   * Optional — a card rehydrated from a proposal persisted before this may lack it. */
   detectedLocale?: string
 }
 
@@ -103,8 +103,8 @@ interface ChatState {
    * top-level `pendingProposal` on rehydration (F5), kept here as just the id since the
    * button/card logic only needs to match it against card.proposalId. */
   pendingProposalId: number | null
-  /** Furo 3B: the target locale the resume-screen language picker asked to switch to, or null.
-   * ChatPanel consumes it into a translate turn (reusing the chat refine path) and clears it. */
+  /** The target locale the resume-screen language picker asked to switch to, or null. ChatPanel
+   * consumes it into a translate turn (reusing the chat refine path) and clears it. */
   pendingTranslation: string | null
   appendUserMessage: (content: string) => ChatMessage
   appendAssistantMessage: (content: string, card?: ChatCard, options?: { animate?: boolean }) => ChatMessage
@@ -129,9 +129,9 @@ interface ChatState {
   setSessionId: (sessionId: number) => void
   /** Sets or clears the session's Pending Proposal id (v4, F3). */
   setPendingProposalId: (pendingProposalId: number | null) => void
-  /** Furo 3B: the resume-screen language picker asks for a switch; ChatPanel turns it into a
-   * translate turn. Kept in the chat store (not the resume store) because only ChatPanel owns
-   * the `send` that can run it, and it must survive across the two sibling panels. */
+  /** The resume-screen language picker asks for a switch; ChatPanel turns it into a translate
+   * turn. Kept in the chat store (not the resume store) because only ChatPanel owns the `send`
+   * that can run it, and it must survive across the two sibling panels. */
   requestTranslation: (locale: string) => void
   clearPendingTranslation: () => void
 }

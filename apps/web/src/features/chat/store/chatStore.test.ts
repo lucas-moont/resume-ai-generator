@@ -15,7 +15,7 @@ describe('chatStore', () => {
     expect(state.pendingTranslation).toBeNull()
   })
 
-  it('requestTranslation queues a target locale, clearPendingTranslation clears it (Furo 3B)', () => {
+  it('requestTranslation queues a target locale, clearPendingTranslation clears it', () => {
     useChatStore.getState().requestTranslation('en')
     expect(useChatStore.getState().pendingTranslation).toBe('en')
 

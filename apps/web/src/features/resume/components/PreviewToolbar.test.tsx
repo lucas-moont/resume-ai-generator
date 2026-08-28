@@ -106,7 +106,7 @@ describe('PreviewToolbar — non-blocking validation warning', () => {
   })
 })
 
-describe('PreviewToolbar — language picker (Furo 3B)', () => {
+describe('PreviewToolbar — language picker', () => {
   it('reflects the document\'s own language, not a request preference', () => {
     reset({ locale: 'en' })
     render(<PreviewToolbar />)

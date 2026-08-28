@@ -56,7 +56,7 @@ describe('ProposalCard', () => {
     expect(screen.queryByRole('button', { name: /aprovar e gerar/i })).not.toBeInTheDocument()
   })
 
-  it('pre-fills the language picker with the proposal\'s detected locale (Furo 3A)', () => {
+  it('pre-fills the language picker with the proposal\'s detected locale', () => {
     // The approval step confirms "Vou gerar em [...]", pre-filled with the language detected
     // from the posting, so an English-title/Portuguese-body posting stops silently generating
     // in the wrong language.

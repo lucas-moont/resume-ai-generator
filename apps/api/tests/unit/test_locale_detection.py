@@ -195,7 +195,7 @@ class WrongLanguageIssueTests(unittest.TestCase):
         self.assertIn("pt-BR", issues[0])
 
     def test_a_single_section_in_the_wrong_language_is_reported(self) -> None:
-        # The core bug (ADR-0001): an English summary sitting above Portuguese bullets. Judged
+        # The core bug: an English summary sitting above Portuguese bullets. Judged
         # as one aggregate the document nets out as Portuguese -- the bullets dominate -- and the
         # mix ships ("RESUMO" in pt with an English summary under it). Each section is detected
         # on its own so the drifted summary cannot hide behind the correct bullets.

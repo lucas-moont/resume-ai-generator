@@ -520,7 +520,7 @@ class TestChatMessageStreamRefineIntent:
     async def test_a_refine_that_drifts_the_language_is_caught_and_rewritten(
         self, client, fake_llm, parse_sse, test_db_engine, write_profile
     ):
-        # Furo 4 / ADR-0001: a refine had no language gate of its own, so a non-language edit
+        # A refine had no language gate of its own, so a non-language edit
         # that let a section slip into the other language shipped with only its `locale` label
         # corrected, never its words. It now runs the same per-section language check and
         # translate-in-place fix the generation flow already has.
@@ -678,7 +678,7 @@ class TestChatMessageStreamRefineSimSimHomemFix:
     ):
         write_profile(make_profile())
         # A genuinely Portuguese resume (content AND locale), so the refine's own per-section
-        # language check (Furo 4) stays a no-op and only the projects change is exercised. The
+        # language check stays a no-op and only the projects change is exercised. The
         # summary/experience are shared with ``updated`` so the diff names ONLY projects.
         pt_summary = (
             "Engenheira de back-end sênior com mais de sete anos construindo serviços "

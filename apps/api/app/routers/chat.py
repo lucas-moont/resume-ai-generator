@@ -111,7 +111,7 @@ def _proposal_dict(session: Session, row: ImprovementProposal) -> dict:
     {proposalId, status, revision, items, detectedLocale}), built from a live
     ``ImprovementProposal`` row. Items go through `proposal_repo.get_items` (pydantic-validated)
     then `model_dump()`, same treatment as PatchOp over SourceDocument.proposed_patch.
-    ``detectedLocale`` (Furo 3A) is recomputed from the row so a reload rehydrates the approval
+    ``detectedLocale`` is recomputed from the row so a reload rehydrates the approval
     picker's pre-fill just like the live ``proposal`` SSE event carries it."""
     return {
         "proposalId": row.id,

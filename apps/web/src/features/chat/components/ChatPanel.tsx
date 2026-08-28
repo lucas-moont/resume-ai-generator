@@ -110,7 +110,7 @@ export function ChatPanel() {
     void send('Aprovar e gerar', { proposalAction: 'approve' })
   }, [send])
 
-  // Furo 3B: the resume-screen language picker sets `pendingTranslation` (it cannot call `send`
+  // The resume-screen language picker sets `pendingTranslation` (it cannot call `send`
   // itself — only this panel owns it). Consume it into a translate turn, once, when nothing is
   // already streaming, then clear it so it never re-fires.
   const pendingTranslation = useChatStore((s) => s.pendingTranslation)

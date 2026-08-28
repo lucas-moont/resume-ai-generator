@@ -548,7 +548,7 @@ async def _handle_generate_turn(
 
 def proposal_detected_locale(session: Session, proposal: ImprovementProposal) -> str:
     """The output language detected from a proposal's posting, for the approval picker's
-    pre-fill (Furo 3A). Recomputed from the stored ``job_description`` (no persisted column, so
+    pre-fill. Recomputed from the stored ``job_description`` (no persisted column, so
     no migration): a Target Brief carries no language of its own, so its signal is blanked
     exactly as generation does (``is_target_brief``). Live turns emit the already-resolved locale
     directly; this is the reload path.
@@ -666,7 +666,7 @@ async def _handle_propose_turn(
         "status": proposal_row.status,
         "revision": proposal_row.revision,
         "items": [item.model_dump() for item in parsed.items],
-        # Furo 3A: the language the approval picker pre-fills "Vou gerar em [...]" with. This is
+        # The language the approval picker pre-fills "Vou gerar em [...]" with. This is
         # the already-resolved locale (honours an explicit request override and the baseline's
         # own signal); the reload path recomputes a best-effort equivalent in the router.
         "detectedLocale": resolved_locale,

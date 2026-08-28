@@ -101,7 +101,7 @@ describe('ChatPanel — Improvement Proposal approve button (v4, F4)', () => {
   })
 })
 
-describe('ChatPanel — language translation (Furo 3B)', () => {
+describe('ChatPanel — language translation', () => {
   it('consumes a queued translation into a translate-instruction turn and clears it', async () => {
     let sentMessage: string | undefined
     server.use(

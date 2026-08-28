@@ -45,7 +45,7 @@ export function ProposalCard({
   onApprove: () => void
 }) {
   const streaming = useChatStore((s) => s.streaming)
-  // Furo 3A: the language the resume will be generated in. The store's `locale` is the request
+  // The language the resume will be generated in. The store's `locale` is the request
   // preference (`auto` by default) that the approve turn already sends; when it is `auto` the
   // picker shows the language DETECTED from the posting, so the user confirms it before generating
   // instead of the server silently guessing. Changing it pins the choice for the approve turn.

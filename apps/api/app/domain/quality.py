@@ -78,7 +78,7 @@ def _resume_language_sections(resume: ResumeDocument) -> list[str]:
     identical in both languages and would dilute the signal toward English) and the contact
     fields (proper nouns and addresses, no language content at all).
 
-    Grouped, NOT glued into one blob (ADR-0001): judged as a single aggregate, one section
+    Grouped, NOT glued into one blob: judged as a single aggregate, one section
     drifting to the other language (an English summary above Portuguese bullets) nets out as the
     majority language and ships. Each section is detected on its own so a drifted one is visible.
     Sections are kept large enough to clear the per-section floor -- the experience block carries
@@ -120,7 +120,7 @@ def wrong_language_issue(resume: ResumeDocument, expected_locale: str | None) ->
 
     Detection runs on the generated prose, NOT on the ``locale`` field: since v6 that field is
     pinned by the server, so it always says the right thing and can no longer reveal the drift.
-    It runs per section (ADR-0001) so a single drifted section cannot hide behind the correct
+    It runs per section so a single drifted section cannot hide behind the correct
     ones -- an English summary over Portuguese bullets no longer nets out as Portuguese.
     """
     if not expected_locale:

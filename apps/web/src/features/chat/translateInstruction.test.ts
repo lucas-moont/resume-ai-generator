@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { translateInstruction } from './translateInstruction'
 
-describe('translateInstruction (Furo 3B)', () => {
+describe('translateInstruction', () => {
   it('asks for a pure translation into the target language', () => {
     expect(translateInstruction('en')).toMatch(/traduza.*inglês/i)
     expect(translateInstruction('pt-BR')).toMatch(/traduza.*português/i)
   })
 
-  it('keeps the facts identical -- only the language changes (Q7)', () => {
+  it('keeps the facts identical -- only the language changes', () => {
     expect(translateInstruction('en')).toMatch(/idêntico/i)
   })
 

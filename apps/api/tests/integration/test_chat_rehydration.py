@@ -95,7 +95,7 @@ class TestChatSessionRehydratesProposal:
             "status": "proposed",
             "revision": 1,
             "items": SAMPLE_ITEMS_REHYDRATED,
-            # Furo 3A: recomputed from the (English) GENERIC_JOB_DESCRIPTION for the approval
+            # Recomputed from the (English) GENERIC_JOB_DESCRIPTION for the approval
             # picker's pre-fill; no profile is written in this test, so detection reads the posting.
             "detectedLocale": "en",
         }
