@@ -152,6 +152,34 @@ describe('useChatStream — session + message routing', () => {
     expect(messages[1].card).toBeUndefined()
   })
 
+  it('a converse turn (stage → message → done, no card) renders a plain assistant bubble and never touches the resume', async () => {
+    // The read-only conversation lane emits only a heartbeat stage, one message bubble, and a
+    // card-less done — no resume/proposal event ever attaches, so the reply is a plain bubble
+    // and the resume store is untouched.
+    mockSessionCreation()
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', () =>
+        sseResponse([
+          { event: 'stage', data: { step: 'analyzing_job', progress: 50, message: 'Thinking about your message... (1s)' } },
+          { event: 'message', data: { content: 'O resumo enfatiza backend porque a vaga pede Python.' } },
+          { event: 'done', data: { progress: 100, messageId: 9, resumeVersionId: null } },
+        ]),
+      ),
+    )
+
+    const { result } = renderChatStream()
+    await result.current.send('por que o resumo está assim?')
+
+    expect(useResumeStore.getState().resume).toBeNull()
+    const messages = useChatStore.getState().messages
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'O resumo enfatiza backend porque a vaga pede Python.',
+    })
+    expect(messages[1].card).toBeUndefined()
+    expect(useChatStore.getState().streaming).toBeNull()
+  })
+
   it('reports the stage progress on the store while streaming', async () => {
     mockSessionCreation()
     const resume = makeResume()
