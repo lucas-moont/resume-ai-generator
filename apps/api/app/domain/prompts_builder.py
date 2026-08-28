@@ -178,6 +178,55 @@ Target locale for "reply" and any item's "proposed"/"rationale": {locale}
 Return the classification as JSON only, following the schema in the system prompt."""
 
 
+def build_converse_user_msg(
+    *,
+    resume: ResumeDocument | None,
+    profile: ResumeDocument,
+    job_description: str | None,
+    proposal_items: list[ProposalItem] | None,
+    history_text: str,
+    message: str,
+    locale: str,
+) -> str:
+    """Compose the read-only conversation turn's user message: the current resume (or an explicit
+    statement that none exists yet), the authoritative profile, the job the resume targets and the
+    improvement plan behind it when known, recent chat history (already formatted by the caller,
+    e.g. ``chat_service._format_history``), the user's message, and locale.
+
+    Every context block after the profile is optional and omitted cleanly when absent -- a converse
+    turn can happen before any resume, job, or plan exists (a first "oi"), and an empty document
+    the model might hallucinate around is worse than saying outright there is none. Sections are
+    joined by a single blank line, so an omitted block never leaves a widening gap."""
+    resume_block = (
+        "Current resume (the document the user is looking at — discuss it, but you NEVER edit it "
+        f"here):\n{resume.model_dump_json(indent=2)}"
+        if resume is not None
+        else "Current resume: the user has no resume generated yet."
+    )
+    sections: list[str] = [
+        resume_block,
+        f"Candidate profile (authoritative JSON):\n{profile.model_dump_json(indent=2)}",
+    ]
+    if job_description and job_description.strip():
+        sections.append(
+            "Active job description (what the current resume targets):\n---\n"
+            f"{job_description.strip()}\n---"
+        )
+    if proposal_items:
+        items_json = json.dumps(
+            [item.model_dump() for item in proposal_items], ensure_ascii=False, indent=2
+        )
+        sections.append(f"Improvement plan behind the current resume:\n{items_json}")
+    if history_text.strip():
+        sections.append(history_text.strip())
+    sections.append(f"User's message:\n{message.strip()}")
+    sections.append(
+        f'Target locale for "reply": {locale}\n'
+        "Return your reply as JSON only, following the schema in the system prompt."
+    )
+    return "\n\n".join(sections)
+
+
 def build_analysis_user_msg(
     *,
     message: str,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.config import PROMPTS_DIR
 from app.prompt_loader import (
+    load_converse_system_prompt,
     load_generate_system_prompt,
     load_linkedin_analysis_system_prompt,
     load_propose_improvements_system_prompt,
@@ -77,6 +78,25 @@ class TestLoadRefineSystemPrompt:
 
         with pytest.raises(FileNotFoundError):
             load_refine_system_prompt(tmp_path)
+
+
+class TestLoadConverseSystemPrompt:
+    def test_composes_the_converse_prompt_with_the_humanizer_block(self) -> None:
+        text = load_converse_system_prompt(PROMPTS_DIR)
+        # the read-only contract and its single output field
+        assert '"reply"' in text
+        assert "never" in text.lower()  # it must state it never edits the resume
+        # the ask-instead-of-guessing valve for an edit-shaped request
+        assert "aplique" in text.lower()
+        # humanizer skill block, composed on (conversational prose)
+        assert "Human voice" in text
+        assert "\n\n---\n\n" in text
+
+    def test_missing_file_raises_file_not_found(self, tmp_path) -> None:
+        import pytest
+
+        with pytest.raises(FileNotFoundError):
+            load_converse_system_prompt(tmp_path)
 
 
 class TestLoadLinkedinAnalysisSystemPrompt:

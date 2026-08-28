@@ -68,6 +68,19 @@ def load_proposal_turn_system_prompt(prompts_dir: Path) -> str:
     return load_prompt("system/proposal_turn.md", prompts_dir)
 
 
+def load_converse_system_prompt(prompts_dir: Path) -> str:
+    """The read-only conversation turn's system prompt. Composed with the humanizer block like
+    generate/refine, because this lane authors prose the user reads (an answer, a qualification
+    summary, a cover letter) and it must not drift into chatbot wording. Not composed with
+    resume-craft: it never emits the resume JSON that block exists to shape."""
+    return "\n\n---\n\n".join(
+        [
+            load_prompt("system/converse.md", prompts_dir),
+            load_prompt("skills/humanizer.md", prompts_dir),
+        ]
+    )
+
+
 def load_job_fit_system_prompt(prompts_dir: Path) -> str:
     """v7 (Job Monitor): stage 2 of the Fit Score -- Profile x Job Listing, one number out.
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from app.domain.prompts_builder import (
     build_analysis_user_msg,
+    build_converse_user_msg,
     build_generation_user_msg,
     build_proposal_analysis_user_msg,
     build_proposal_turn_user_msg,
@@ -280,6 +281,77 @@ class TestBuildAnalysisUserMsg:
     def test_blank_pdf_block_is_omitted_cleanly(self) -> None:
         out = build_analysis_user_msg(message="oi", locale="en", linkedin_pdf_block="   ")
         assert "LinkedIn profile (extracted" not in out
+
+
+_CONVERSE_RESUME = ResumeDocument(
+    fullName="Ana Souza",
+    headline="Backend Developer",
+    summary="A distinctive summary only the active resume carries.",
+    locale="pt-BR",
+)
+
+_CONVERSE_ITEMS = [
+    ProposalItem(
+        id=1,
+        section="headline",
+        op="rewrite",
+        current="Backend Developer",
+        proposed="Backend Engineer especializado em Python",
+        targets=[],
+        rationale="A vaga pede Python.",
+    )
+]
+
+
+class TestBuildConverseUserMsg:
+    def test_includes_resume_profile_job_history_message_and_locale(self) -> None:
+        out = build_converse_user_msg(
+            resume=_CONVERSE_RESUME,
+            profile=_PROFILE,
+            job_description="  We need a backend engineer.  ",
+            proposal_items=_CONVERSE_ITEMS,
+            history_text="Conversation so far:\nUser: oi\nAssistant: ola",
+            message="por que o resumo está assim?",
+            locale="pt-BR",
+        )
+        assert "A distinctive summary only the active resume carries." in out
+        assert _PROFILE.model_dump_json(indent=2) in out
+        assert "We need a backend engineer." in out
+        assert "Backend Engineer especializado em Python" in out
+        assert "Conversation so far:\nUser: oi\nAssistant: ola" in out
+        assert "por que o resumo está assim?" in out
+        assert "pt-BR" in out
+
+    def test_no_active_resume_is_stated_not_left_blank(self) -> None:
+        # A converse turn can happen before any resume exists (a first "oi"); the prompt must say
+        # so rather than embed an empty/None document the model might hallucinate around.
+        out = build_converse_user_msg(
+            resume=None,
+            profile=_PROFILE,
+            job_description=None,
+            proposal_items=None,
+            history_text="",
+            message="o que você acha do meu perfil?",
+            locale="pt-BR",
+        )
+        assert "o que você acha do meu perfil?" in out
+        assert "no resume" in out.lower()
+        # nothing job/plan-shaped leaks in when there is none
+        assert "Active job" not in out
+        assert "improvement plan" not in out.lower()
+
+    def test_empty_history_omits_the_block_cleanly(self) -> None:
+        out = build_converse_user_msg(
+            resume=_CONVERSE_RESUME,
+            profile=_PROFILE,
+            job_description=None,
+            proposal_items=None,
+            history_text="",
+            message="me manda um qualification summary",
+            locale="en",
+        )
+        assert "me manda um qualification summary" in out
+        assert "\n\n\n" not in out
 
 
 _SUBTRACTION_ITEMS = [
