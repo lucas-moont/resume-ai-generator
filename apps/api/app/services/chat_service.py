@@ -550,11 +550,18 @@ def proposal_detected_locale(session: Session, proposal: ImprovementProposal) ->
     """The output language detected from a proposal's posting, for the approval picker's
     pre-fill (Furo 3A). Recomputed from the stored ``job_description`` (no persisted column, so
     no migration): a Target Brief carries no language of its own, so its signal is blanked
-    exactly as generation does (``is_target_brief``) and resolution falls through to the profile
-    locale. Live turns emit the already-resolved locale directly; this is the reload path."""
-    profile = resolve_active_profile(session).profile
+    exactly as generation does (``is_target_brief``). Live turns emit the already-resolved locale
+    directly; this is the reload path.
+
+    Detection reads the POSTING; the profile locale is only the last-resort fallback for an
+    inconclusive one, so a missing or unloadable profile must never break a read -- fall back to
+    no profile locale and let ``resolve_locale`` reach its own default."""
     signal = "" if is_target_brief(proposal.job_description) else proposal.job_description
-    return resolve_locale(None, signal, profile.locale)
+    try:
+        profile_locale: str | None = resolve_active_profile(session).profile.locale
+    except Exception:
+        profile_locale = None
+    return resolve_locale(None, signal, profile_locale)
 
 
 async def _handle_propose_turn(
