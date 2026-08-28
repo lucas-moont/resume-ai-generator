@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useChatStream } from '../hooks/useChatStream'
 import { useChatStore, type ProfileUpdatedCard } from '../store/chatStore'
+import { translateInstruction } from '../translateInstruction'
 import { useFileUpload, type SettledUpload } from '../../upload/useFileUpload'
 import { applySourceDocument, rejectSourceDocument } from '../../../lib/api/endpoints'
 import { ProfileDocumentConflictError, toSettleError } from '../profileDocumentConflict'
@@ -108,6 +109,19 @@ export function ChatPanel() {
   const handleApproveProposal = useCallback(() => {
     void send('Aprovar e gerar', { proposalAction: 'approve' })
   }, [send])
+
+  // Furo 3B: the resume-screen language picker sets `pendingTranslation` (it cannot call `send`
+  // itself — only this panel owns it). Consume it into a translate turn, once, when nothing is
+  // already streaming, then clear it so it never re-fires.
+  const pendingTranslation = useChatStore((s) => s.pendingTranslation)
+  const isStreaming = useChatStore((s) => s.streaming !== null)
+  const clearPendingTranslation = useChatStore((s) => s.clearPendingTranslation)
+  useEffect(() => {
+    if (!pendingTranslation || isStreaming) return
+    const target = pendingTranslation
+    clearPendingTranslation()
+    void send(translateInstruction(target))
+  }, [pendingTranslation, isStreaming, clearPendingTranslation, send])
 
   return (
     <div className="flex h-full min-h-0 flex-col">

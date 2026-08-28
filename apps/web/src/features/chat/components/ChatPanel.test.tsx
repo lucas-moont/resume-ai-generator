@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -98,5 +98,25 @@ describe('ChatPanel — Improvement Proposal approve button (v4, F4)', () => {
     await waitFor(() => {
       expect(capturedBody?.proposalAction).toBe('approve')
     })
+  })
+})
+
+describe('ChatPanel — language translation (Furo 3B)', () => {
+  it('consumes a queued translation into a translate-instruction turn and clears it', async () => {
+    let sentMessage: string | undefined
+    server.use(
+      http.post('/api/chat/sessions/1/messages/stream', async ({ request }) => {
+        sentMessage = ((await request.json()) as { message?: string }).message
+        return sseResponse(makeChatTurnEvents(makeResume({ locale: 'en' })))
+      }),
+    )
+    renderApp(<ChatPanel />)
+
+    act(() => {
+      useChatStore.getState().requestTranslation('en')
+    })
+
+    await waitFor(() => expect(sentMessage).toMatch(/traduza.*inglês/i))
+    expect(useChatStore.getState().pendingTranslation).toBeNull()
   })
 })

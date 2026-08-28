@@ -14,7 +14,7 @@ function reset(resumeOverrides: Record<string, unknown> | null = {}) {
   })
   useResumeStore.temporal.getState().clear()
   useEditModeStore.setState({ isEditing: false })
-  useChatStore.setState({ streaming: null })
+  useChatStore.setState({ streaming: null, pendingTranslation: null })
 }
 
 describe('PreviewToolbar — pencil toggle', () => {
@@ -103,5 +103,35 @@ describe('PreviewToolbar — non-blocking validation warning', () => {
     expect(screen.getByRole('status')).toBeInTheDocument()
     // Non-blocking: the (invalid) resume is still there.
     expect(useResumeStore.getState().resume?.fullName).toBe('')
+  })
+})
+
+describe('PreviewToolbar — language picker (Furo 3B)', () => {
+  it('reflects the document\'s own language, not a request preference', () => {
+    reset({ locale: 'en' })
+    render(<PreviewToolbar />)
+    expect(screen.getByRole('combobox', { name: /idioma/i })).toHaveValue('en')
+  })
+
+  it('shows Portuguese for a pt-BR document', () => {
+    reset({ locale: 'pt-BR' })
+    render(<PreviewToolbar />)
+    expect(screen.getByRole('combobox', { name: /idioma/i })).toHaveValue('pt-BR')
+  })
+
+  it('switching the language queues a translation for that locale', async () => {
+    const user = userEvent.setup()
+    reset({ locale: 'pt-BR' })
+    render(<PreviewToolbar />)
+
+    await user.selectOptions(screen.getByRole('combobox', { name: /idioma/i }), 'en')
+
+    expect(useChatStore.getState().pendingTranslation).toBe('en')
+  })
+
+  it('has no language picker before a resume exists (language is chosen at approval instead)', () => {
+    reset(null)
+    render(<PreviewToolbar />)
+    expect(screen.queryByRole('combobox', { name: /idioma/i })).not.toBeInTheDocument()
   })
 })

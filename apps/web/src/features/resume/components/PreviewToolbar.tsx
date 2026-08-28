@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ApiError } from '../../../lib/api/endpoints'
 import { downloadResumePdf } from '../downloadResumePdf'
-import { useLocale, useResume, useResumeStore, useResumeTemporal, useTemplate, useValidationIssues } from '../store/resumeStore'
+import { useResume, useResumeStore, useResumeTemporal, useTemplate, useValidationIssues } from '../store/resumeStore'
 import { useEditModeStore, useIsEditing } from '../store/editModeStore'
 import { useUndoRedoShortcuts } from '../editing/undoRedoKeyboard'
 import { useChatStore } from '../../chat/store/chatStore'
@@ -17,9 +17,11 @@ const iconBtnBase =
 export function PreviewToolbar() {
   const resume = useResume()
   const template = useTemplate()
-  const locale = useLocale()
   const setTemplate = useResumeStore((s) => s.setTemplate)
-  const setLocale = useResumeStore((s) => s.setLocale)
+  const requestTranslation = useChatStore((s) => s.requestTranslation)
+  // Furo 3B: the picker shows the DOCUMENT's own language (the labels follow `resume.locale`),
+  // not the request preference. Switching it asks ChatPanel for a translate turn (Q13-A).
+  const currentLocale = (resume?.locale || '').toLowerCase().startsWith('pt') ? 'pt-BR' : 'en'
   const validationIssues = useValidationIssues()
   const [pdfLoading, setPdfLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -48,24 +50,29 @@ export function PreviewToolbar() {
     <div className="no-print flex flex-wrap items-end justify-between gap-3 border-b border-stone-200 bg-white/60 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/40 sm:px-6">
       <div className="flex flex-wrap items-end gap-3">
         <TemplatePicker value={template} onChange={setTemplate} />
-        <div>
-          <label
-            htmlFor="locale-picker"
-            className="mb-1 block text-[0.6875rem] font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-500"
-          >
-            Locale
-          </label>
-          <select
-            id="locale-picker"
-            value={locale}
-            onChange={(e) => setLocale(e.target.value)}
-            className="rounded-lg border border-stone-200 bg-white py-1.5 pl-2.5 pr-8 text-sm text-stone-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-zinc-500"
-          >
-            <option value="auto">Auto</option>
-            <option value="pt-BR">pt-BR</option>
-            <option value="en">en</option>
-          </select>
-        </div>
+        {resume && (
+          <div>
+            <label
+              htmlFor="locale-picker"
+              className="mb-1 block text-[0.6875rem] font-semibold uppercase tracking-wider text-stone-500 dark:text-zinc-500"
+            >
+              Idioma
+            </label>
+            <select
+              id="locale-picker"
+              aria-label="Idioma do currículo"
+              value={currentLocale}
+              disabled={isStreaming}
+              onChange={(e) => {
+                if (e.target.value !== currentLocale) requestTranslation(e.target.value)
+              }}
+              className="rounded-lg border border-stone-200 bg-white py-1.5 pl-2.5 pr-8 text-sm text-stone-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-zinc-500"
+            >
+              <option value="pt-BR">Português</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <Tooltip label="Undo (Ctrl+Z)" placement="bottom">

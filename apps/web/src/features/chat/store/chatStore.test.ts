@@ -12,6 +12,21 @@ describe('chatStore', () => {
     expect(state.sessionId).toBeNull()
     expect(state.messages).toEqual([])
     expect(state.streaming).toBeNull()
+    expect(state.pendingTranslation).toBeNull()
+  })
+
+  it('requestTranslation queues a target locale, clearPendingTranslation clears it (Furo 3B)', () => {
+    useChatStore.getState().requestTranslation('en')
+    expect(useChatStore.getState().pendingTranslation).toBe('en')
+
+    useChatStore.getState().clearPendingTranslation()
+    expect(useChatStore.getState().pendingTranslation).toBeNull()
+  })
+
+  it('reset clears a queued translation', () => {
+    useChatStore.getState().requestTranslation('pt-BR')
+    useChatStore.getState().reset()
+    expect(useChatStore.getState().pendingTranslation).toBeNull()
   })
 
   it('appendUserMessage adds a user message and returns it', () => {
