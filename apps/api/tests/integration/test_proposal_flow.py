@@ -175,6 +175,34 @@ class TestAnalysisTurnHappyPath:
             meta = json.loads(assistant_msg.meta)
             assert meta["proposalId"] == proposal_event["proposalId"]
 
+    async def test_the_proposal_carries_the_detected_locale_on_the_event_and_on_reload(
+        self, client, fake_llm, write_profile, parse_sse
+    ):
+        # Furo 3A / ADR-0001: the approval step shows "Vou gerar em [pt-BR ...]" pre-filled with
+        # the language detected from the posting, so the detected locale must reach the client --
+        # live on the `proposal` event, and after a reload on `pendingProposal`. The profile is
+        # locale "en", but a Portuguese posting must still be detected as pt-BR (detection wins).
+        pt_jd = (
+            "Estamos contratando uma pessoa desenvolvedora back-end sênior para o time de "
+            "plataforma. Você vai projetar e construir APIs escaláveis em Python, cuidar da nossa "
+            "camada de dados em PostgreSQL e orientar pessoas desenvolvedoras juniores. "
+            "Requisitos: experiência sólida com Docker e boa comunicação escrita."
+        )
+        write_profile(make_profile())
+        fake_llm.queue(_proposal_llm_response())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": pt_jd},
+        )
+        events = parse_sse(resp.text)
+        proposal_event = next(data for e, data in events if e == "proposal")
+        assert proposal_event["detectedLocale"] == "pt-BR"
+
+        detail = (await client.get(f"/api/chat/sessions/{created['id']}")).json()
+        assert detail["pendingProposal"]["detectedLocale"] == "pt-BR"
+
     async def test_does_not_write_job_description_onto_the_chat_session(
         self, client, fake_llm, write_profile, test_db_engine
     ):

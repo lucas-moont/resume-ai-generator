@@ -62,6 +62,9 @@ export interface ProposalCard {
   status: 'proposed' | 'approved' | 'superseded'
   revision: number
   itemsCount: number
+  /** Furo 3A: the language detected from the posting, pre-filling the approval step's language
+   * picker. Optional — a card rehydrated from a proposal persisted before this may lack it. */
+  detectedLocale?: string
 }
 
 export type ChatCard =

@@ -120,6 +120,7 @@ function toProposalCard(proposal: ChatMessageProposalDto): ProposalCard {
     status: toProposalCardStatus(proposal.status),
     revision: proposal.revision,
     itemsCount: proposal.items.length,
+    detectedLocale: proposal.detectedLocale,
   }
 }
 

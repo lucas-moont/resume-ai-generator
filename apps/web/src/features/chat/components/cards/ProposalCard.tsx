@@ -1,5 +1,6 @@
 import { useChatStore } from '../../store/chatStore'
 import type { ProposalCard as ProposalCardData } from '../../store/chatStore'
+import { useResumeStore } from '../../../resume/store/resumeStore'
 
 const NEUTRAL_PALETTE =
   'border-stone-200 bg-stone-50 text-stone-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400'
@@ -44,6 +45,14 @@ export function ProposalCard({
   onApprove: () => void
 }) {
   const streaming = useChatStore((s) => s.streaming)
+  // Furo 3A: the language the resume will be generated in. The store's `locale` is the request
+  // preference (`auto` by default) that the approve turn already sends; when it is `auto` the
+  // picker shows the language DETECTED from the posting, so the user confirms it before generating
+  // instead of the server silently guessing. Changing it pins the choice for the approve turn.
+  const localePref = useResumeStore((s) => s.locale)
+  const setLocale = useResumeStore((s) => s.setLocale)
+  const detectedLocale = card.detectedLocale === 'en' ? 'en' : 'pt-BR'
+  const pickerValue = localePref === 'en' || localePref === 'pt-BR' ? localePref : detectedLocale
 
   return (
     <div className={`mt-2 rounded-xl border px-3 py-2.5 text-sm ${statusPalette(card.status)}`}>
@@ -53,7 +62,20 @@ export function ProposalCard({
       </div>
 
       {card.status === 'proposed' && showApproveButton && (
-        <div className="mt-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 text-xs opacity-90">
+            Gerar em
+            <select
+              aria-label="Idioma do currículo"
+              value={pickerValue}
+              onChange={(e) => setLocale(e.target.value)}
+              disabled={streaming !== null}
+              className="rounded-md border border-amber-300 bg-transparent px-1.5 py-1 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:pointer-events-none disabled:opacity-50 dark:border-amber-800"
+            >
+              <option value="pt-BR">Português</option>
+              <option value="en">English</option>
+            </select>
+          </span>
           <button
             type="button"
             onClick={onApprove}

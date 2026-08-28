@@ -10,7 +10,7 @@ from app.domain.schemas import ChatMessageRequest, CreateChatSessionRequest, Ren
 from app.repositories import chat_repo, proposal_repo, resume_repo, source_document_repo
 from app.routers.deps import get_session, resolve_requested_model
 from app.services.analysis_service import analysis_turn_events
-from app.services.chat_service import handle_chat_turn
+from app.services.chat_service import handle_chat_turn, proposal_detected_locale
 from app.services.errors import http_error
 from app.services.generation_service import ExtractionError
 from app.services.llm_client import llm_backend_label
@@ -105,17 +105,20 @@ def _source_document_link_dict(session: Session, meta_raw: str | None) -> dict |
     }
 
 
-def _proposal_dict(row: ImprovementProposal) -> dict:
+def _proposal_dict(session: Session, row: ImprovementProposal) -> dict:
     """v4 ticket B6: the wire shape shared by ChatMessageDto.proposal and
     ChatSessionDetailResponse.pendingProposal (dto.ts's ``ChatMessageProposalDto`` --
-    {proposalId, status, revision, items}), built from a live ``ImprovementProposal`` row.
-    Items go through `proposal_repo.get_items` (pydantic-validated) then `model_dump()`,
-    same treatment as PatchOp over SourceDocument.proposed_patch."""
+    {proposalId, status, revision, items, detectedLocale}), built from a live
+    ``ImprovementProposal`` row. Items go through `proposal_repo.get_items` (pydantic-validated)
+    then `model_dump()`, same treatment as PatchOp over SourceDocument.proposed_patch.
+    ``detectedLocale`` (Furo 3A) is recomputed from the row so a reload rehydrates the approval
+    picker's pre-fill just like the live ``proposal`` SSE event carries it."""
     return {
         "proposalId": row.id,
         "status": row.status,
         "revision": row.revision,
         "items": [item.model_dump() for item in proposal_repo.get_items(row)],
+        "detectedLocale": proposal_detected_locale(session, row),
     }
 
 
@@ -140,7 +143,7 @@ def _proposal_link_dict(session: Session, meta_raw: str | None) -> dict | None:
     row = proposal_repo.get(session, proposal_id)
     if row is None:
         return None
-    return _proposal_dict(row)
+    return _proposal_dict(session, row)
 
 
 def _analysis_link_dict(meta_raw: str | None) -> dict | None:
@@ -193,7 +196,9 @@ async def get_chat_session(session_id: int, session: Session = Depends(get_sessi
             for m in messages
         ],
         "activeResume": active_resume,
-        "pendingProposal": _proposal_dict(pending_proposal) if pending_proposal is not None else None,
+        "pendingProposal": (
+            _proposal_dict(session, pending_proposal) if pending_proposal is not None else None
+        ),
     }
 
 

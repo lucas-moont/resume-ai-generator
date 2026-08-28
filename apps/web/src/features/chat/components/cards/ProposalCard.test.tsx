@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProposalCard } from './ProposalCard'
 import { useChatStore, type ProposalCard as ProposalCardData } from '../../store/chatStore'
+import { useResumeStore } from '../../../resume/store/resumeStore'
 
 function makeCard(overrides: Partial<ProposalCardData> = {}): ProposalCardData {
   return { type: 'proposal', proposalId: 1, status: 'proposed', revision: 1, itemsCount: 3, ...overrides }
@@ -10,6 +11,7 @@ function makeCard(overrides: Partial<ProposalCardData> = {}): ProposalCardData {
 
 beforeEach(() => {
   useChatStore.getState().reset()
+  useResumeStore.getState().setLocale('auto')
 })
 
 describe('ProposalCard', () => {
@@ -52,6 +54,28 @@ describe('ProposalCard', () => {
 
     expect(screen.getByText(/substituída/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /aprovar e gerar/i })).not.toBeInTheDocument()
+  })
+
+  it('pre-fills the language picker with the proposal\'s detected locale (Furo 3A)', () => {
+    // The approval step confirms "Vou gerar em [...]", pre-filled with the language detected
+    // from the posting, so an English-title/Portuguese-body posting stops silently generating
+    // in the wrong language.
+    render(<ProposalCard card={makeCard({ detectedLocale: 'en' })} showApproveButton onApprove={vi.fn()} />)
+    expect(screen.getByRole('combobox', { name: /idioma/i })).toHaveValue('en')
+  })
+
+  it('writes the chosen language to the resume store so the approve turn generates in it', async () => {
+    const user = userEvent.setup()
+    render(<ProposalCard card={makeCard({ detectedLocale: 'pt-BR' })} showApproveButton onApprove={vi.fn()} />)
+
+    await user.selectOptions(screen.getByRole('combobox', { name: /idioma/i }), 'en')
+
+    expect(useResumeStore.getState().locale).toBe('en')
+  })
+
+  it('has no language picker when the approve button is hidden', () => {
+    render(<ProposalCard card={makeCard({ detectedLocale: 'en' })} showApproveButton={false} onApprove={vi.fn()} />)
+    expect(screen.queryByRole('combobox', { name: /idioma/i })).not.toBeInTheDocument()
   })
 
   it('shows the revision number only when revision > 1', () => {

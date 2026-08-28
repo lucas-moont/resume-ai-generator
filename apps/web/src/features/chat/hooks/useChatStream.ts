@@ -306,6 +306,7 @@ async function runTurn(
           status: toProposalCardStatus(payload.status),
           revision: payload.revision,
           itemsCount: payload.items.length,
+          detectedLocale: payload.detectedLocale,
         }
       } else if (event === 'message') {
         const content = (data as ChatMessageEventPayload).content
