@@ -35,6 +35,7 @@ Intent = Literal[
     "profile_update",
     "proposal_turn",
     "clarify_scope",
+    "converse",
     "question",
 ]
 
@@ -207,7 +208,8 @@ _REFINE_IMPERATIVE_OPENERS = frozenset(
         "troca", "troque", "trocar", "altera", "altere", "alterar", "adiciona", "adicione",
         "adicionar", "acrescenta", "acrescente", "inclui", "inclua", "incluir", "reescreve",
         "reescreva", "reescrever", "deixa", "deixe", "deixar", "coloca", "coloque", "colocar",
-        "poe", "ponha", "ajusta", "ajuste", "ajustar", "melhora", "melhore", "melhorar",
+        "poe", "ponha", "ajusta", "ajuste", "ajustar", "aplica", "aplique", "aplicar",
+        "atualiza", "atualize", "atualizar", "melhora", "melhore", "melhorar",
         "encurta", "encurte", "encurtar", "resume", "resuma", "resumir", "traduz", "traduza",
         "traduzir", "corrige", "corrija", "corrigir", "destaca", "destaque", "destacar",
         "reordena", "reordene", "reordenar", "foca", "foque", "focar", "usa", "use", "usar",
@@ -379,6 +381,17 @@ def classify_intent(
     written); the inverse misroute permanently corrupts profile data outside the negotiation the
     user is actually having. A user who wants to fix a profile fact mid-negotiation gets the
     conversational turn instead and can make the edit after approving or discarding the proposal.
+
+    The two catch-all buckets are ``converse``, not the old ``question`` (a canned no-LLM reply)
+    and ``refine`` (a silent edit). The default now assumes the user wants to TALK, not to edit:
+    a turn only refines when it carries an explicit edit verb (``looks_like_refine_instruction``).
+    Everything else with a resume open -- a real question, a soft "podia puxar mais pro backend",
+    an off-schema "me manda um qualification summary" -- is a read-only conversation that never
+    mutates the resume. This closes the reported bug where a question fell to the refine default
+    and produced an unwanted diff. A genuinely edit-shaped but verb-less turn is not disambiguated
+    here: it converses, and the conversation LLM (which reads the resume) is what asks "quer que
+    eu aplique isso no currículo?" -- deterministic code cannot separate that from a plain
+    question about the resume, so it routes to the non-mutating lane and lets the model decide.
     """
     if has_pending_proposal:
         return "proposal_turn"
@@ -390,7 +403,7 @@ def classify_intent(
         # states the precedence rather than relying on that).
         if looks_like_baseline_resume_request(message):
             return "generate_baseline"
-        return "generate" if looks_like_job_description(message) else "question"
+        return "generate" if looks_like_job_description(message) else "converse"
     # An active resume no longer wins unconditionally (v6, Second Posting). Order matters and is
     # the whole safety argument -- see the block comment above ``looks_like_new_job_posting``.
     #
@@ -406,4 +419,5 @@ def classify_intent(
         return "generate"
     if looks_like_job_description(message):
         return "clarify_scope"
-    return "refine"
+    # No explicit edit verb, not a posting -- assume conversation, never a silent edit.
+    return "converse"

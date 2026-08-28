@@ -2,12 +2,15 @@
 
 ``TestV1PinnedRouting`` characterizes the v1 3-way routing (generate/refine/question) as it
 lived inline in ``chat_service.handle_chat_turn`` before this module existed -- originally
-proving the extraction was a pure move rather than a rewrite. ONE of its assertions was
-deliberately flipped by v6 (see
-``test_a_job_description_pasted_with_an_active_resume_is_now_generate``, which documents why in
-place of the old expectation); every other line still pins v1 behavior unchanged.
+proving the extraction was a pure move rather than a rewrite. Two of its assertions have since
+been deliberately flipped: v6 turned a pasted posting into ``generate`` (see
+``test_a_job_description_pasted_with_an_active_resume_is_now_generate``), and the conversation
+intent turned the two catch-all buckets -- the no-resume ``question`` fallback and the
+active-resume ``refine`` default -- into ``converse``. Each flipped assertion documents why in
+place of the old expectation; every other line still pins v1 behavior unchanged.
 ``TestProfileUpdateVsRefineBoundary`` documents the 4th intent added on top in the same module,
-and ``TestSecondPostingRouting`` the v6 routing.
+``TestSecondPostingRouting`` the v6 routing, and ``TestConversationRouting`` the read-only
+conversation lane that now wins whenever a turn is not an explicit edit.
 """
 
 from __future__ import annotations
@@ -33,10 +36,11 @@ GENERIC_JOB_DESCRIPTION = (
 
 class TestV1PinnedRouting:
     """Pins chat_service.py's pre-extraction inline logic (lines ~125-130): a long/keyword-dense
-    job description with no active resume routes to generate; ANY message at all routes to
-    refine once a resume is active (there is no session-level way back to question/generate
-    without clearing the active resume first -- this is the riskiest, most surprising v1
-    behavior per ticket 02/04's own architecture notes); anything else is a plain reply."""
+    job description with no active resume routes to generate; an explicit edit instruction with a
+    resume active routes to refine. The two v1 catch-all buckets -- everything else with no
+    resume, and everything else with a resume -- used to be ``question`` (canned) and ``refine``
+    (a silent edit) respectively; both are now ``converse`` (see the flipped tests below and
+    ``TestConversationRouting``)."""
 
     def test_pasted_job_description_with_no_active_resume_is_generate(self) -> None:
         assert classify_intent(message=GENERIC_JOB_DESCRIPTION, has_active_resume=False) == "generate"
@@ -50,15 +54,19 @@ class TestV1PinnedRouting:
         )
         assert classify_intent(message=weak_signal_jd, has_active_resume=False) == "generate"
 
-    def test_greeting_with_no_active_resume_is_question(self) -> None:
-        assert classify_intent(message="hi there", has_active_resume=False) == "question"
+    def test_greeting_with_no_active_resume_is_now_converse(self) -> None:
+        # Was "question" (a canned no-LLM reply). A greeting now opens the conversation lane like
+        # any other non-posting turn: one contract, no heuristic guessing whether "hi" is trivial.
+        assert classify_intent(message="hi there", has_active_resume=False) == "converse"
 
-    def test_short_ambiguous_instruction_with_no_active_resume_is_question(self) -> None:
-        # Doesn't look like a JD (too short, no tech-keyword density) and there is nothing
-        # active to refine -- v1's fallback bucket.
-        assert classify_intent(message="Make the summary punchier.", has_active_resume=False) == "question"
+    def test_short_ambiguous_instruction_with_no_active_resume_is_now_converse(self) -> None:
+        # Was "question". With nothing to refine and no posting to generate from, this is a plain
+        # conversational turn -- the agent answers (or asks) instead of returning canned text.
+        assert classify_intent(message="Make the summary punchier.", has_active_resume=False) == "converse"
 
-    def test_any_message_with_an_active_resume_is_refine(self) -> None:
+    def test_an_explicit_edit_with_an_active_resume_is_refine(self) -> None:
+        # "make" is an imperative opener, so this stays an edit -- the tightened refine still
+        # fires on a clear edit verb even though the catch-all default is now converse.
         assert classify_intent(message="Make the summary punchier.", has_active_resume=True) == "refine"
 
     def test_a_job_description_pasted_with_an_active_resume_is_now_generate(self) -> None:
@@ -77,11 +85,13 @@ class TestV1PinnedRouting:
     def test_translate_instruction_with_active_resume_is_refine(self) -> None:
         assert classify_intent(message="Translate the resume to English.", has_active_resume=True) == "refine"
 
-    def test_short_nonsense_with_active_resume_is_refine(self) -> None:
-        # The v1 risk boundary called out in ticket 05: a short, ambiguous message with an
-        # active resume has no bucket other than refine -- pinned explicitly.
-        assert classify_intent(message="ok", has_active_resume=True) == "refine"
-        assert classify_intent(message="hmm sure", has_active_resume=True) == "refine"
+    def test_short_nonsense_with_active_resume_is_now_converse(self) -> None:
+        # The v1 risk boundary called out in ticket 05 is exactly what the conversation lane
+        # closes: a short, ambiguous message with an active resume used to fall to the refine
+        # DEFAULT and silently edit the document. With no edit verb it is now a conversational
+        # turn -- nothing is mutated.
+        assert classify_intent(message="ok", has_active_resume=True) == "converse"
+        assert classify_intent(message="hmm sure", has_active_resume=True) == "converse"
 
 
 class TestLooksLikeJobDescriptionUnchanged:
@@ -137,8 +147,14 @@ class TestProfileUpdateVsRefineBoundary:
     # -- The spec's refine counter-examples: these name the RESUME/document itself, not a
     # profile fact, and must stay refine when a resume is active.
 
-    def test_shorter_summary_request_stays_refine(self) -> None:
-        assert classify_intent(message="resumo mais curto", has_active_resume=True) == "refine"
+    def test_a_verbless_summary_request_now_converses(self) -> None:
+        # "resumo mais curto" names the document but carries no edit VERB, so it no longer trips
+        # the tightened refine (which used to catch it only via the removed catch-all default).
+        # It routes to conversation, where the agent recognizes the elliptic edit and asks
+        # "quer que eu aplique isso no currículo?" instead of guessing. "deixa o resumo mais
+        # curto" (imperative opener) still refines directly.
+        assert classify_intent(message="resumo mais curto", has_active_resume=True) == "converse"
+        assert classify_intent(message="deixa o resumo mais curto", has_active_resume=True) == "refine"
 
     def test_translate_request_stays_refine(self) -> None:
         assert classify_intent(message="traduz pra ingles", has_active_resume=True) == "refine"
@@ -215,7 +231,8 @@ class TestProposalTurnRouting:
         )
 
     def test_has_pending_proposal_defaults_to_false(self) -> None:
-        assert classify_intent(message="hi there", has_active_resume=False) == "question"
+        # No proposal, no resume, not a posting -> the conversation lane (was "question").
+        assert classify_intent(message="hi there", has_active_resume=False) == "converse"
 
 
 class TestProfileUpdateVsProposalTurnBoundary:
@@ -360,9 +377,10 @@ class TestSecondPostingRouting:
         )
         assert classify_intent(message=blurb, has_active_resume=False) == "generate"
 
-    def test_a_short_message_with_an_active_resume_is_still_refine(self) -> None:
-        # Unchanged from v1: nothing JD-shaped, so the active resume still wins.
-        assert classify_intent(message="ok", has_active_resume=True) == "refine"
+    def test_a_short_non_edit_message_with_an_active_resume_now_converses(self) -> None:
+        # "ok" carries no edit verb, so it no longer falls to the removed refine default -- it
+        # converses. "deixa mais curto" opens with an imperative, so it stays a refine.
+        assert classify_intent(message="ok", has_active_resume=True) == "converse"
         assert classify_intent(message="deixa mais curto", has_active_resume=True) == "refine"
 
     def test_a_pending_proposal_still_wins_over_a_pasted_posting(self) -> None:
@@ -535,3 +553,46 @@ class TestBaselineBrief:
         assert has_career_target(self._profile()) is True
         assert has_career_target(self._profile(headline="")) is False
         assert has_career_target(self._profile(headline="   ")) is False
+
+
+class TestConversationRouting:
+    """The read-only conversation lane. It wins whenever a turn is NOT an explicit edit, a
+    posting, a baseline request, or a profile fact -- flipping the default from "assume the user
+    wants an edit" (the old refine catch-all, which silently edited on a mere question) to
+    "assume the user wants to talk". A turn routed here is answered by an LLM that reads the
+    resume/profile/active proposal and never mutates anything; a genuinely edit-shaped but
+    verb-less turn is where that LLM asks "quer que eu aplique?" -- which is why no deterministic
+    gate tries to separate a soft edit suggestion from a plain question (both name the resume
+    with no imperative and are indistinguishable without reading them)."""
+
+    def test_a_real_question_about_the_resume_no_longer_edits_it(self) -> None:
+        # The flagship bug: this fell to the refine default and produced an unwanted resume diff.
+        assert classify_intent(message="por que o resumo está assim?", has_active_resume=True) == "converse"
+        assert classify_intent(message="why is the summary written like this?", has_active_resume=True) == "converse"
+
+    def test_an_off_schema_artifact_request_does_not_hijack_the_resume(self) -> None:
+        # "give me a qualification summary for another form" is not an edit to THIS resume -- it
+        # comes out of the conversation lane as chat text, saved to nothing.
+        msg = "me manda um qualification summary pra colar em outro formulário"
+        assert classify_intent(message=msg, has_active_resume=True) == "converse"
+        assert classify_intent(message="write me a short cover letter for this role", has_active_resume=True) == "converse"
+
+    def test_a_conversational_turn_needs_no_active_resume(self) -> None:
+        assert classify_intent(message="o que você acha do meu perfil?", has_active_resume=False) == "converse"
+
+    def test_a_clear_edit_verb_still_refines(self) -> None:
+        # The verbs the tightened refine must keep catching, including two added for this lane
+        # ("aplica"/"atualiza") that previously had no opener entry.
+        assert classify_intent(message="aplica isso no currículo", has_active_resume=True) == "refine"
+        assert classify_intent(message="atualiza o resumo com meu cargo novo", has_active_resume=True) == "refine"
+        assert classify_intent(message="troca o título por Engenheiro de Software", has_active_resume=True) == "refine"
+
+    def test_a_pending_proposal_still_wins_over_a_conversational_turn(self) -> None:
+        # The v4 unconditional rule is untouched: mid-negotiation even a plain question is a
+        # proposal turn (the LLM there answers it without leaving the negotiation).
+        assert (
+            classify_intent(
+                message="por que o resumo está assim?", has_active_resume=True, has_pending_proposal=True
+            )
+            == "proposal_turn"
+        )

@@ -144,6 +144,20 @@ _REPLY_TEXT = {
             "quer mudar em um currículo já existente."
         ),
     },
+    # The conversation lane's placeholder reply. A turn classified `converse` is a real question
+    # or an off-schema request that must never silently edit the resume; until it answers with an
+    # LLM that reads the resume/profile/proposal, it acknowledges non-destructively and invites
+    # both a question and an explicit edit.
+    "converse": {
+        "en": (
+            "I can talk through your resume, profile, or a job — ask me anything, or tell me a "
+            "specific change and I'll apply it to the resume."
+        ),
+        "pt-BR": (
+            "Posso conversar sobre seu currículo, seu perfil ou uma vaga — pergunte o que quiser, "
+            "ou me diga uma mudança específica que eu aplico no currículo."
+        ),
+    },
     # v6 (Second Posting): the gray zone between "this is a new job" and "this is an edit to the
     # resume I already have". Asking costs one turn; guessing wrong costs either a discarded
     # refine session or -- the bug this exists for -- a second posting silently treated as an
@@ -1340,7 +1354,7 @@ async def handle_chat_turn(
         has_pending_proposal=pending_proposal is not None,
     )
 
-    if intent in ("question", "clarify_scope"):
+    if intent in ("question", "clarify_scope", "converse"):
         async for event, data in _handle_question_turn(
             session=session,
             chat_session=chat_session,

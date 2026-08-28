@@ -633,6 +633,11 @@ class TestChatMessageStreamRefineSimSimHomemFix:
     and threads local project notes + on-demand GitHub context into its own prompt -- see
     ``chat_service._diff_resume_sections``/``_handle_refine_turn`` and
     ``refine_service.refine_resume_events``.
+
+    The GitHub trigger below is phrased as an imperative ("Atualiza meu currículo ...") on
+    purpose: an advisory question ("Pode conferir meus repositórios e sugerir melhorias?") no
+    longer refines -- it opens the read-only conversation lane -- so it would never reach the
+    GitHub-in-refine path this test exercises.
     """
 
     @pytest.fixture(autouse=True)
@@ -799,7 +804,7 @@ class TestChatMessageStreamRefineSimSimHomemFix:
 
         resp = await client.post(
             f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": "Pode conferir meus repositórios do GitHub e sugerir melhorias?"},
+            json={"message": "Atualiza meu currículo com base nos meus repositórios do GitHub."},
         )
 
         assert resp.status_code == 200
@@ -839,7 +844,7 @@ class TestChatMessageStreamRefineSimSimHomemFix:
 
         resp = await client.post(
             f"/api/chat/sessions/{created['id']}/messages/stream",
-            json={"message": "Pode conferir meus repositórios do GitHub e sugerir melhorias?"},
+            json={"message": "Atualiza meu currículo com base nos meus repositórios do GitHub."},
         )
 
         assert resp.status_code == 200
