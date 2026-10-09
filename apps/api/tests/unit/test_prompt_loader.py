@@ -76,6 +76,17 @@ class TestLoadRefineSystemPrompt:
             assert "process counts" in text
             assert "adepto de" in text
 
+    def test_skills_hold_technologies_only_in_both_prompts(self) -> None:
+        # The parser filters the obvious principles either way; the prompt is what keeps out the
+        # long tail it does not list, and what sets the order the parser preserves.
+        for text in (
+            load_generate_system_prompt(PROMPTS_DIR),
+            load_refine_system_prompt(PROMPTS_DIR),
+        ):
+            assert "`SOLID`" in text
+            assert "grouped by kind" in text
+            assert "`Arquitetura Multi-tenant`" in text
+
     def test_missing_file_raises_file_not_found(self, tmp_path) -> None:
         import pytest
 

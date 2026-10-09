@@ -12,7 +12,7 @@ Behavior aligned with [tailored-resume-generator](https://skills.sh/composiohq/a
 
 4. **Bullets** — Prefer **action + what + how (tool/process) + outcome** when the inputs supply numbers or scale; otherwise stay concrete and avoid filler.
 
-5. **Skills** — Order with job-critical technologies the candidate actually has first; mirror job spelling when it matches the profile (e.g. `Next.js`, `PostgreSQL`).
+5. **Skills** — Technologies only, never principles or methodologies (see the base system prompt's `skills` rule). Order with job-critical technologies the candidate actually has first, then the rest grouped by kind; mirror job spelling when it matches the profile (e.g. `Next.js`, `PostgreSQL`).
 
 6. **ATS** — Clear section roles via the fixed schema. Weave important keywords naturally in `summary`, `headline`, and bullets—no stuffing. In narrative fields you may once pair acronym and plain meaning if both fit naturally (e.g. API, CI/CD) without breaking the allowed HTML rules from the base prompt.
 
