@@ -56,6 +56,13 @@ STALE_CROWDED = {
 }
 
 
+@pytest.fixture
+def test_db_engine(file_db_engine):
+    """Listings are produced by a background Scan writing while the request's session closes, so
+    this module needs real per-session connections (see ``file_db_engine``)."""
+    return file_db_engine
+
+
 @pytest.fixture(autouse=True)
 def isolated_runner(monkeypatch) -> ScanRunner:
     runner = ScanRunner()

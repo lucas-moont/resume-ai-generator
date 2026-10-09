@@ -202,6 +202,21 @@ def test_db_engine():
 
 
 @pytest.fixture
+def file_db_engine(tmp_path):
+    """A fresh SQLite FILE per test, one connection per session as in production.
+
+    For tests where a background task writes while a request session is still open. Under the
+    in-memory StaticPool engine every session shares ONE connection, and FastAPI closes a sync
+    dependency's session in a worker thread: that close rolls back the shared connection in the
+    middle of the background task's transaction, so its freshly flushed row vanishes. A module
+    opts in by overriding ``test_db_engine`` to return this one."""
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
+    init_db(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
 async def client(test_db_engine):
     """Builds a fresh app per test (not the module-level ``app.main.app`` singleton) and
     overrides ``deps.get_session`` to yield from an in-memory engine (B5). The legacy

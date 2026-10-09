@@ -47,6 +47,13 @@ class BlockingBoard:
         return BoardResult(items=[], status="ok")
 
 
+@pytest.fixture
+def test_db_engine(file_db_engine):
+    """The Immediate Scan writes from a background task while the request's session closes, so
+    this module needs real per-session connections (see ``file_db_engine``)."""
+    return file_db_engine
+
+
 @pytest.fixture(autouse=True)
 def isolated_runner(monkeypatch) -> ScanRunner:
     """A fresh single-flight lock per test. ``scan_service.default_runner`` is process-wide on
