@@ -50,7 +50,15 @@ surviving one.
 
 **headline** — One concise line: seniority + role + 1–2 signature specializations. Example shape: `Senior Full Stack Developer | React, Node.js & Cloud`. No sentences, no period, no dash as separator.
 
-**summary** — 2 to 4 sentences (about 40–75 words). Open with seniority + role + years/scope of experience + primary domain, then the candidate's strongest, most job-relevant value. Weave in the top keywords from the job description naturally (no stuffing). No first-person pronouns ("I", "my"). Concrete, not generic ("passionate hard worker" is banned).
+**summary** — A short positioning statement, not a story: 3 to 4 sentences, 50–80 words (never over 90). In order: role + seniority + years of experience → specialization or domain → core stack, weaving in the job's top keywords the profile supports (no stuffing) → optionally ONE proof → the value the candidate brings. A recruiter should know who this is in one read.
+- **Voice: implied first person.** Open with a noun phrase (`Desenvolvedor Full Stack com 6 anos de experiência em...`). Never a pronoun (`eu`, `meu`, `I`, `my`), never a self-description verb (`sou`, `tenho`, `gosto`, `busco`, `acredito`, `atuo`, `I am`), never the candidate's name or the third person (`Lucas é...`, `Atuou...`). The optional proof may use a past action verb without a pronoun, like the bullets (`Liderei a migração...`).
+- **Leave to the experience bullets**: project anecdotes and worked examples (`como a migração que dividi em...`), how work was broken down, and process counts (PRs, commits, repositories, tickets: they measure activity, not impact).
+- **At most one metric**, and only an impact metric already in the inputs (users, revenue, latency, cost, scale). None is fine.
+- **No unproven self-labels**: `adepto de <metodologia>`, `apaixonado por`, `proativo`, `passionate`. A methodology earns a mention only as a keyword the job asks for.
+- The Profile's own `summary` is raw material, not a template: it is often a LinkedIn "About" written in first person. Take facts from it; never its voice, its length, or its anecdotes.
+
+Bad (pronoun-less but still personal, anecdotal, process count): `Sou adepto de spec driven design, separando tarefas complexas em pequenas tarefas, como a migração complexa que dividi em 13 PRs.`
+Good: `Desenvolvedor Full Stack com 6 anos de experiência em React, Next.js e TypeScript, com foco em produtos web com IA. Experiência com Node.js, NestJS, Python e PostgreSQL em arquiteturas multi-tenant e processamento assíncrono. Foco em interfaces complexas, performance e UX, de ponta a ponta.`
 
 **experience.highlights** — This is what recruiters read. For each role write 3–5 bullets (most recent roles get the most; older roles 1–3):
 - Start every bullet with a strong action verb (see **Voice** below for the person to use per language). Use past tense for finished roles and present tense for the current role. Never start with "Responsible for", "Worked on", "Helped with", or a subject pronoun.
@@ -86,7 +94,7 @@ surviving one.
 - Never use explicit subject pronouns (`I`, `my`, `eu`, `meu`, `minha`).
 - In languages that inflect the verb for person (e.g. Portuguese, Spanish), write `highlights` in the **first-person singular** — past for finished roles, present for the current role (`Desenvolvi`, `Liderei`, `Colaborei`, `Desenvolvo`). This reads as the candidate speaking. Do **not** use the third person (`Desenvolveu`, `Liderou`), which reads as someone else describing them.
 - In English, keep the standard **person-neutral** action-verb style (`Led`, `Built`, `Integrated`) — do not add `I`.
-- `summary` stays an impersonal noun-phrase (no pronoun, no first/third-person verb about the candidate), e.g. `Desenvolvedor full stack com 4 anos de experiência...`.
+- `summary` is implied first person: it opens with a noun phrase (`Desenvolvedor full stack com 4 anos de experiência...`), with no pronoun, no self-description verb (`sou`, `tenho`, `gosto`) and no third person. See **summary** above.
 
 ## Human voice (anti-slop)
 

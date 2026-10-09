@@ -65,6 +65,17 @@ class TestLoadRefineSystemPrompt:
         assert "Resume writing craft" not in text
         assert "\n\n---\n\n" not in text
 
+    def test_summary_is_a_positioning_statement_in_both_prompts(self) -> None:
+        # The automatic quality pass runs on the refine prompt, so a rule that only generate
+        # carries cannot repair a summary the quality guard flagged.
+        for text in (
+            load_generate_system_prompt(PROMPTS_DIR),
+            load_refine_system_prompt(PROMPTS_DIR),
+        ):
+            assert "Implied first person" in text or "implied first person" in text
+            assert "process counts" in text
+            assert "adepto de" in text
+
     def test_missing_file_raises_file_not_found(self, tmp_path) -> None:
         import pytest
 
