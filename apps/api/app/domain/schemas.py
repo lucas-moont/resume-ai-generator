@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Literal
 
@@ -230,11 +231,28 @@ class AnalysisQuestion(BaseModel):
 ChatSessionKind = Literal["resume", "profile_analysis"]
 
 
+# Half of a UTF-16 surrogate pair. JSON lets one through as a "\udXXX" escape, typically when a
+# client cuts a string by UTF-16 length in the middle of an emoji or a styled letter (the bold
+# letters LinkedIn posts use). SQLite cannot encode it, so the insert fails with a 500. A valid
+# character above U+FFFF is one code point in Python, so any surrogate left in a ``str`` is a
+# broken half and carries no text.
+_LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
+
+
+def _drop_lone_surrogates(value: str | None) -> str | None:
+    return _LONE_SURROGATE.sub("", value) if value is not None else None
+
+
 class CreateChatSessionRequest(BaseModel):
     title: str | None = None
     # v5 (ticket b1): create a Profile Analysis conversation instead of a resume chat. Default
     # 'resume' keeps every pre-v5 caller (which never sent this field) byte-identical.
     kind: ChatSessionKind = "resume"
+
+    @field_validator("title")
+    @classmethod
+    def _clean_title(cls, v: str | None) -> str | None:
+        return _drop_lone_surrogates(v)
 
 
 class ChatMessageRequest(BaseModel):
@@ -254,6 +272,11 @@ class ChatMessageRequest(BaseModel):
     # then routed normally). See docs/v4-improvement-proposal.md #3.1.
     proposalAction: Literal["approve"] | None = None
 
+    @field_validator("message", "jobDescription")
+    @classmethod
+    def _clean_text(cls, v: str | None) -> str | None:
+        return _drop_lone_surrogates(v)
+
 
 class RevertProfileRequest(BaseModel):
     toVersion: int
@@ -270,7 +293,7 @@ class RenameChatSessionRequest(BaseModel):
     @field_validator("title")
     @classmethod
     def _trim_and_validate(cls, v: str) -> str:
-        trimmed = v.strip()
+        trimmed = (_drop_lone_surrogates(v) or "").strip()
         if not (1 <= len(trimmed) <= 120):
             raise ValueError("title must be 1..120 characters after trimming")
         return trimmed

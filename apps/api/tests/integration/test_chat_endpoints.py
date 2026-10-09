@@ -84,6 +84,29 @@ class TestChatSessionCrud:
         assert body["title"] == "My resume chat"
         assert "createdAt" in body
 
+    async def test_create_session_drops_a_half_of_a_split_emoji_or_styled_letter(self, client):
+        # A title cut by UTF-16 length can end on half of a surrogate pair (styled letters like
+        # LinkedIn's bold text). SQLite cannot store a lone surrogate, so it must not reach it.
+        raw = b'{"title": "Senior Engineer \\ud835\\udc01old \\ud835"}'
+        resp = await client.post(
+            "/api/chat/sessions", content=raw, headers={"Content-Type": "application/json"}
+        )
+
+        assert resp.status_code == 201
+        assert resp.json()["title"] == "Senior Engineer \U0001d401old "
+
+    async def test_rename_session_drops_a_lone_surrogate(self, client):
+        session_id = (await client.post("/api/chat/sessions", json={})).json()["id"]
+        raw = b'{"title": "Vaga \\ud835"}'
+        resp = await client.patch(
+            f"/api/chat/sessions/{session_id}",
+            content=raw,
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "Vaga"
+
     async def test_create_session_without_title(self, client):
         resp = await client.post("/api/chat/sessions", json={})
 
