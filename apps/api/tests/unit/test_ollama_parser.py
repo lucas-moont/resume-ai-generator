@@ -172,8 +172,9 @@ class OllamaParserTests(unittest.TestCase):
         self.assertEqual(parsed.location, "São Paulo, BR")
         self.assertIn("GitHub", [l.label for l in parsed.links])
         self.assertIn("Portfolio", [l.label for l in parsed.links])
-        # Profile already lists skills, so only its own skills survive (React matches, reordered
-        # first); a skill the model invents ("Node.js") is dropped, and languages are filtered.
+        # Profile already lists skills, so only its own skills survive (React matches, first; the
+        # thin selection is topped up from the profile); a skill the model invents ("Node.js") is
+        # dropped, and languages are filtered.
         self.assertEqual(parsed.skills[0], "React")
         self.assertIn("TypeScript", parsed.skills)
         self.assertIn("Tailwind", parsed.skills)
@@ -468,15 +469,15 @@ class AnchorAgreedImprovementsTests(unittest.TestCase):
 
 
 class AnchorRelevanceFilterTests(unittest.TestCase):
-    """v6 (Relevance Filter): an approved ``op="drop"`` item is the ONLY thing that lets the
-    anchor shrink the profile's own set of skills/projects.
+    """v6 (Relevance Filter): an approved ``op="drop"`` item is a veto over the profile's own
+    set of skills/projects that outranks the LLM's selection.
 
     Before v6 the anchor was no-drop by construction -- its skill tail pass re-appended every
     profile skill the LLM left out, and its project loop iterated the profile's set -- so a
     resume tailored for a backend job still carried the candidate's whole analytics stack no
-    matter what the LLM decided. Every test here that passes ``agreed_improvements`` also asserts
-    the SAME patch with the argument omitted keeps the pre-v6 behavior, so "never invent" and
-    "never omit" stay separable rather than re-fused by a later change.
+    matter what the LLM decided. Both have since become plain selections (ProjectSelectionTests,
+    SkillSelectionTests), so the tests here pin what the drop adds on top: it removes a target
+    even when the LLM selects it.
     """
 
     def _profile(self) -> ResumeDocument:
@@ -522,11 +523,11 @@ class AnchorRelevanceFilterTests(unittest.TestCase):
         self.assertNotIn("Google Analytics", parsed.skills)
         self.assertNotIn("Power BI", parsed.skills)
         self.assertIn("Python", parsed.skills)
-        self.assertIn("Docker", parsed.skills)  # untargeted profile skill still returns
+        self.assertIn("FastAPI", parsed.skills)
 
-    def test_approved_skill_drop_survives_the_tail_pass_when_the_llm_omitted_it(self) -> None:
-        # The regression that made the bug invisible: the LLM does the right thing, and the tail
-        # pass silently undoes it.
+    def test_an_omitted_skill_stays_out_with_or_without_a_plan(self) -> None:
+        # The regression that once made the bug invisible: the LLM does the right thing, and a
+        # tail pass silently undid it. With the tail pass gone, the omission holds on its own.
         fallback = self._profile()
         raw = json.dumps({"skills": ["Python", "FastAPI", "PostgreSQL", "Docker"]})
         agreed = self._drop_skills("Google Analytics", "Power BI")
@@ -535,7 +536,7 @@ class AnchorRelevanceFilterTests(unittest.TestCase):
         self.assertNotIn("Google Analytics", parsed.skills)
 
         parsed_without_plan = parse_resume_json(raw, fallback, refine=False)
-        self.assertIn("Google Analytics", parsed_without_plan.skills)
+        self.assertNotIn("Google Analytics", parsed_without_plan.skills)
 
     def test_drop_matches_the_exact_label_not_a_substring_of_it(self) -> None:
         # "Analytics" must survive a drop aimed at "Google Analytics": the target set is matched
@@ -547,7 +548,7 @@ class AnchorRelevanceFilterTests(unittest.TestCase):
             skills=["Python", "FastAPI", "PostgreSQL", "React", "Analytics", "Google Analytics"],
             locale="en",
         )
-        raw = json.dumps({"skills": ["Python", "FastAPI"]})
+        raw = json.dumps({"skills": ["Python", "FastAPI", "Analytics", "Google Analytics"]})
 
         parsed = parse_resume_json(
             raw, fallback, refine=False, agreed_improvements=self._drop_skills("Google Analytics")
@@ -703,7 +704,7 @@ class AnchorRelevanceFilterTests(unittest.TestCase):
         # Only `op == "drop"` subtracts. A rewrite that happens to carry targets (or a pre-v6
         # item, which decodes to a rewrite with none) leaves the set alone.
         fallback = self._profile()
-        raw = json.dumps({"skills": ["Python", "FastAPI"]})
+        raw = json.dumps({"skills": ["Python", "FastAPI", "Google Analytics"]})
         agreed = [
             ProposalItem(
                 id=1,
@@ -1118,3 +1119,172 @@ class KeyTechnologiesAnchorTests(unittest.TestCase):
         )
         parsed = parse_resume_json(raw, seed, refine=False)
         self.assertEqual(["Go", "Kafka"], parsed.experience[0].keyTechnologies)
+
+
+class SkillSelectionTests(unittest.TestCase):
+    """The skills list the model returns is the list that ships, the same rule projects follow.
+
+    The anchor still blocks anything the candidate never claimed. What it no longer does is append
+    every profile skill the model left out: that tail pass turned a 10-entry selection into the
+    whole 40-entry inventory, and it is what put the profile's Portuguese entries at the end of an
+    English resume (the model's translation has no profile match, so it was discarded and the
+    original came back through the tail)."""
+
+    def _profile(self, skills: list[str]) -> ResumeDocument:
+        return ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=skills,
+            locale="pt-BR",
+        )
+
+    def test_a_skill_the_model_left_out_stays_out(self) -> None:
+        fallback = self._profile(
+            ["Python", "FastAPI", "PostgreSQL", "React", "Docker", "Google Analytics", "WordPress"]
+        )
+        raw = json.dumps({"skills": ["React", "PostgreSQL", "Python", "FastAPI"]})
+
+        parsed = parse_resume_json(raw, fallback, refine=False)
+
+        self.assertEqual(["React", "PostgreSQL", "Python", "FastAPI"], parsed.skills)
+
+    def test_an_english_resume_carries_no_portuguese_profile_entries(self) -> None:
+        fallback = self._profile(
+            [
+                "TypeScript",
+                "React",
+                "Node.js",
+                "PostgreSQL",
+                "Clean Architecture",
+                "SOLID",
+                "Arquitetura Orientada a Eventos",
+                "Arquitetura Multi-tenant",
+                "IA Generativa (LLMs)",
+                "Redis",
+            ]
+        )
+        raw = json.dumps(
+            {
+                "locale": "en",
+                "skills": [
+                    "TypeScript",
+                    "React",
+                    "Node.js",
+                    "PostgreSQL",
+                    "Multi-tenant Architecture",
+                    "Redis",
+                ],
+            }
+        )
+
+        parsed = parse_resume_json(raw, fallback, refine=False, expected_locale="en")
+
+        self.assertEqual(["TypeScript", "React", "Node.js", "PostgreSQL", "Redis"], parsed.skills)
+
+    def test_principles_and_methodologies_never_reach_the_skills_list(self) -> None:
+        fallback = self._profile(
+            [
+                "Python",
+                "FastAPI",
+                "SOLID",
+                "Clean Architecture",
+                "Arquitetura Hexagonal",
+                "DDD (Domain-Driven Design)",
+                "Scrum",
+                "REST APIs",
+                "CI/CD",
+                "Microservices",
+            ]
+        )
+        raw = json.dumps(
+            {
+                "skills": [
+                    "Python",
+                    "SOLID",
+                    "FastAPI",
+                    "Clean Architecture",
+                    "Arquitetura Hexagonal",
+                    "DDD (Domain-Driven Design)",
+                    "Scrum",
+                    "REST APIs",
+                    "CI/CD",
+                    "Microservices",
+                ]
+            }
+        )
+
+        parsed = parse_resume_json(raw, fallback, refine=False)
+
+        self.assertEqual(
+            ["Python", "FastAPI", "REST APIs", "CI/CD", "Microservices"], parsed.skills
+        )
+
+    def test_principles_never_reach_a_key_technologies_line(self) -> None:
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=["NestJS", "PostgreSQL", "SOLID", "Clean Architecture"],
+            experience=[
+                {
+                    "company": "SmartHow",
+                    "title": "Full Stack Developer",
+                    "start": "2025",
+                    "highlights": ["Built the billing service."],
+                    "keyTechnologies": ["NestJS", "SOLID"],
+                }
+            ],
+            locale="en",
+        )
+        raw = json.dumps(
+            {
+                "skills": ["NestJS", "PostgreSQL"],
+                "experience": [
+                    {
+                        "company": "SmartHow",
+                        "title": "Full Stack Developer",
+                        "start": "2025",
+                        "highlights": ["Built the billing service in NestJS."],
+                        "keyTechnologies": ["NestJS", "Clean Architecture", "PostgreSQL"],
+                    }
+                ],
+            }
+        )
+
+        parsed = parse_resume_json(raw, fallback, refine=False)
+
+        self.assertEqual(["NestJS", "PostgreSQL"], parsed.experience[0].keyTechnologies)
+
+    def test_a_refine_cannot_put_a_principle_back(self) -> None:
+        fallback = self._profile(["Python", "FastAPI", "PostgreSQL", "React"])
+        raw = json.dumps({"skills": ["Python", "SOLID", "FastAPI", "Clean Code"]})
+
+        parsed = parse_resume_json(raw, fallback, refine=True)
+
+        self.assertEqual(["Python", "FastAPI"], parsed.skills)
+
+    def test_no_match_at_all_keeps_the_profile_list(self) -> None:
+        # The model ignored the candidate (or returned nothing): that is not a selection, so the
+        # profile's own list ships rather than an empty section.
+        fallback = self._profile(["Python", "FastAPI", "SOLID", "PostgreSQL", "React"])
+        for raw in (json.dumps({"skills": []}), json.dumps({"skills": ["Cobol", "Fortran"]})):
+            parsed = parse_resume_json(raw, fallback, refine=False)
+            self.assertEqual(["Python", "FastAPI", "PostgreSQL", "React"], parsed.skills)
+
+    def test_a_selection_below_the_floor_is_topped_up_from_the_profile(self) -> None:
+        fallback = self._profile(["Python", "SOLID", "FastAPI", "PostgreSQL", "React", "Docker"])
+        raw = json.dumps({"skills": ["React", "Docker"]})
+
+        parsed = parse_resume_json(raw, fallback, refine=False)
+
+        self.assertEqual(["React", "Docker", "Python", "FastAPI"], parsed.skills)
+
+    def test_the_list_is_capped_keeping_the_models_order(self) -> None:
+        many = [f"Tool{i}" for i in range(25)]
+        fallback = self._profile(many)
+        raw = json.dumps({"skills": list(reversed(many))})
+
+        parsed = parse_resume_json(raw, fallback, refine=False)
+
+        self.assertEqual(list(reversed(many))[:16], parsed.skills)

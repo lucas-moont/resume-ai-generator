@@ -66,6 +66,56 @@ _NON_TECH_SKILLS = frozenset(
         "liderança",
     }
 )
+# Principles, methodologies and code-design patterns: real expertise, but not technologies, so
+# they never go on the skills list or a Key Technologies line. A bullet is where they show.
+# Matched against the whole entry (lowercased, hyphens as spaces, a trailing "(...)" removed),
+# never as a substring, so "Clean Architecture" goes and "Agile CRM" stays. Kept to the
+# unambiguous ones: architecture styles a posting may ask for by name (microservices,
+# event-driven) are left to the prompt.
+_PRACTICE_SKILLS = re.compile(
+    "^(?:"
+    + "|".join(
+        (
+            r"solid(?: principles)?",
+            r"princ[ií]pios solid",
+            r"clean (?:code|architecture)",
+            r"c[oó]digo limpo",
+            r"arquitetura limpa",
+            r"(?:arquitetura )?hexagonal(?: architecture)?",
+            r"ports (?:and|&) adapters",
+            r"ddd",
+            r"domain driven design",
+            r"tdd",
+            r"test driven development",
+            r"bdd",
+            r"behaviou?r driven development",
+            r"design patterns",
+            r"padr[õo]es de projeto",
+            r"agile",
+            r"scrum",
+            r"kanban",
+            r"metodologias? [áa]geis?",
+            r"spec driven (?:design|development)",
+            r"kiss",
+            r"dry",
+            r"yagni",
+            r"boas pr[áa]ticas",
+            r"best practices",
+        )
+    )
+    + ")$"
+)
+
+
+def is_non_technology(label: str) -> bool:
+    """True for an entry that does not belong on a technology list: a spoken language, a soft
+    skill, or a principle/methodology (``_PRACTICE_SKILLS``)."""
+    text = (label or "").strip().lower()
+    if not text or text in _NON_TECH_SKILLS:
+        return True
+    text = re.sub(r"\s*\([^)]*\)\s*$", "", text)
+    text = re.sub(r"[\s-]+", " ", text).strip()
+    return bool(_PRACTICE_SKILLS.match(text))
 
 
 def _pick_str(d: dict, *keys: str) -> str | None:
@@ -103,14 +153,21 @@ def _clean_technology_chip(label: str) -> str:
 
 
 def filter_skills_non_tech_inplace(data: dict) -> None:
+    """Remove non-technologies (``is_non_technology``) from ``skills`` and from every role's
+    ``keyTechnologies``. Runs last on every parse and on PDF export, so a resume stored before a
+    rule existed is cleaned too."""
     skills = data.get("skills")
-    if not isinstance(skills, list):
-        return
-    data["skills"] = [
-        s
-        for s in skills
-        if isinstance(s, str) and s.strip() and s.strip().lower() not in _NON_TECH_SKILLS
-    ]
+    if isinstance(skills, list):
+        data["skills"] = [
+            s for s in skills if isinstance(s, str) and s.strip() and not is_non_technology(s)
+        ]
+    for role in data.get("experience") or []:
+        if isinstance(role, dict) and isinstance(role.get("keyTechnologies"), list):
+            role["keyTechnologies"] = [
+                t
+                for t in role["keyTechnologies"]
+                if isinstance(t, str) and t.strip() and not is_non_technology(t)
+            ]
 
 
 # The key names models reach for instead of ``keyTechnologies`` (v7). ``technologies``/``stack``
@@ -135,8 +192,9 @@ def _normalize_key_technologies_inplace(entry: dict) -> None:
     Accepts a list (of strings or ``{name: ...}`` objects) or the single comma/slash-separated
     STRING models frequently emit for this field ("React, TypeScript, Docker"), since the
     template renders it as one line and the prompt describes it as one. Entries are cleaned with
-    the same ``_clean_technology_chip``/``_NON_TECH_SKILLS`` rules as ``skills`` -- this is a
-    technology keyword line, so a spoken language or a soft skill does not belong on it.
+    the same ``_clean_technology_chip``/``is_non_technology`` rules as ``skills`` -- this is a
+    technology keyword line, so a spoken language, a soft skill or a principle does not belong
+    on it.
     """
     raw: object = None
     for alias in _KEY_TECH_ALIASES:
@@ -166,7 +224,7 @@ def _normalize_key_technologies_inplace(entry: dict) -> None:
     seen: set[str] = set()
     for candidate in candidates:
         chip = _clean_technology_chip(candidate)
-        if not chip or chip.lower() in _NON_TECH_SKILLS:
+        if not chip or is_non_technology(chip):
             continue
         token = skill_token(chip)
         if not token or token in seen:
@@ -230,7 +288,7 @@ def _normalize_resume_dict(d: dict) -> dict:
                 skill_name = _pick_str(s, "skill", "name", "title", "label")
                 if skill_name:
                     normalized_skills.append(skill_name)
-        d["skills"] = [s for s in normalized_skills if s.strip().lower() not in _NON_TECH_SKILLS]
+        d["skills"] = [s for s in normalized_skills if not is_non_technology(s)]
 
     exp = d.get("experience")
     if isinstance(exp, list):
@@ -365,6 +423,10 @@ def _agreed_skills_text(agreed_improvements: list[ProposalItem] | None) -> str:
 # all-or-nothing fallback, deliberately chosen over a partial one because "which of the approved
 # drops did we silently ignore?" is not a question the user can answer from the rendered resume.
 MIN_SKILLS_AFTER_DROPS = 4
+# The same number also floors the model's own selection: a selection under it is topped up from
+# the profile's order. The ceiling matches the prompt's 8-16 range; past it, the model's order
+# decides what stays.
+MAX_SKILLS = 16
 
 
 def _dropped_targets(
@@ -490,8 +552,10 @@ def _anchor_generate_to_profile(
     model left out, and the project loop iterated the profile's own set, so a tailored resume
     always carried the candidate's whole inventory no matter how little of it the job asked
     for. "Never invent" and "never omit" had been implemented as one rule; they are now two.
-    An approved ``op == "drop"`` item (and ONLY an approved one -- with no plan this function
-    stays no-drop, exactly as before) prunes its ``targets`` from:
+    Projects and skills have since become plain selections: what the model leaves out stays
+    out (each with a floor for when it matched nothing). On top of that, an approved
+    ``op == "drop"`` item is a veto that outranks the model's selection, pruning its
+    ``targets`` from:
       - ``skills``, unless honoring every drop would leave fewer than
         ``MIN_SKILLS_AFTER_DROPS`` (then none is applied);
       - ``projects``, with no floor -- a resume with no Projects section is a valid outcome.
@@ -551,7 +615,13 @@ def _anchor_generate_to_profile(
     # ``keyTechnologies`` line (v7). A technology the user approved dropping must not survive by
     # reappearing under a job -- and the all-or-nothing floor decision below has to be the SAME
     # decision in both places, which two independent computations could not guarantee.
-    profile_skills = [s for s in (out.get("skills") or []) if isinstance(s, str) and s.strip()]
+    # A principle stored in the profile ("SOLID") is filtered here too, not only at the end, so
+    # it never counts toward the floors below or comes back through the top-up.
+    profile_skills = [
+        s
+        for s in (out.get("skills") or [])
+        if isinstance(s, str) and s.strip() and not is_non_technology(s)
+    ]
     dropped_skills = _dropped_targets(agreed_improvements, section="skills", normalizer=skill_token)
     # Guard the floor BEFORE pruning anything, so the decision is all-or-nothing (see
     # MIN_SKILLS_AFTER_DROPS): count what would survive, and abandon the whole drop set if that
@@ -718,44 +788,54 @@ def _anchor_generate_to_profile(
         if isinstance(pe, list):
             out["education"] = pe
 
-    # Skills: restrict to the profile's real skills (LLM only reorders); pass through if empty.
+    # Skills: the model SELECTS from the profile's real skills, the same rule as projects. Its
+    # list, in its order, is the list that ships; anything with no profile match is discarded.
     # With an agreed "skills" item, ALSO admit a patch skill outside the profile when its own
     # token is literally named in that item's approved text (QA-04) -- a skill the user never
     # approved (anywhere in the plan) is still a fabrication and stays discarded.
     # ``profile_skills``/``profile_skill_lookup``/``dropped_skills`` were resolved above the
     # experience block so each role's Key Technologies line honors the identical drop decision.
-    base_skills = profile_skills
+    #
+    # This used to end with a tail pass that appended every profile skill the model left out, so
+    # a focused selection always shipped as the whole inventory. It also defeated translation: a
+    # profile entry stored in Portuguese ("Arquitetura Multi-tenant") that the model rendered in
+    # English has no profile match, was discarded, and came back untranslated through the tail.
+    base_skills = [s for s in profile_skills if skill_token(s) not in dropped_skills]
     patch_skills = [s for s in (patch.get("skills") or []) if isinstance(s, str) and s.strip()]
-    if base_skills:
+    if profile_skills:
         lookup = profile_skill_lookup
         agreed_skills_text = _agreed_skills_text(agreed_improvements)
         dropped = dropped_skills
         ordered: list[str] = []
         admitted_tokens: set[str] = set()
+        matched_any = False
         for s in patch_skills:
             tok = skill_token(s)
             if tok in dropped:
                 continue
             canon = lookup.get(tok)
             if canon:
+                matched_any = True
                 if canon not in ordered:
                     ordered.append(canon)
                 continue
             if tok and agreed_skills_text and tok in agreed_skills_text and tok not in admitted_tokens:
                 cleaned = s.strip()
-                if cleaned:
+                if cleaned and not is_non_technology(cleaned):
                     ordered.append(cleaned)
                     admitted_tokens.add(tok)
-        # The tail pass is what makes the anchor no-drop by default: every profile skill the
-        # model left out is appended back. An approved drop is the ONE thing that exempts a
-        # skill from it -- without this filter the user's approved subtraction was undone here,
-        # silently, on every generation.
-        for s in base_skills:
-            if skill_token(s) in dropped:
-                continue
-            if s not in ordered:
-                ordered.append(s)
-        out["skills"] = ordered
+        if not matched_any:
+            # No profile match at all means the model ignored the candidate (or returned no
+            # list), not that it chose nothing: ship the profile's own list, as projects do.
+            ordered = [*ordered, *(s for s in base_skills if s not in ordered)]
+        else:
+            # A real selection that came back too thin is topped up from the profile's order.
+            for s in base_skills:
+                if len(ordered) >= MIN_SKILLS_AFTER_DROPS:
+                    break
+                if s not in ordered:
+                    ordered.append(s)
+        out["skills"] = ordered[:MAX_SKILLS]
     else:
         out["skills"] = patch_skills
     return out
@@ -815,7 +895,7 @@ def _merge_llm_patch_into_profile(
                 for s in [*out.get("skills", []), *val]:
                     if isinstance(s, str) and s.strip():
                         ss = s.strip()
-                        if ss.lower() in _NON_TECH_SKILLS:
+                        if is_non_technology(ss):
                             continue
                         if ss not in merged:
                             merged.append(ss)
