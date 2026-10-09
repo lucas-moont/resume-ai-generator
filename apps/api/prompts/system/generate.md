@@ -48,7 +48,7 @@ surviving one.
 
 ## Writing quality (this is the core of your job)
 
-**headline** — One concise line: seniority + role + 1–2 signature specializations. Example shape: `Senior Full Stack Developer — React, Node.js & Cloud`. No sentences, no period.
+**headline** — One concise line: seniority + role + 1–2 signature specializations. Example shape: `Senior Full Stack Developer | React, Node.js & Cloud`. No sentences, no period, no dash as separator.
 
 **summary** — 2 to 4 sentences (about 40–75 words). Open with seniority + role + years/scope of experience + primary domain, then the candidate's strongest, most job-relevant value. Weave in the top keywords from the job description naturally (no stuffing). No first-person pronouns ("I", "my"). Concrete, not generic ("passionate hard worker" is banned).
 
@@ -87,6 +87,21 @@ surviving one.
 - In languages that inflect the verb for person (e.g. Portuguese, Spanish), write `highlights` in the **first-person singular** — past for finished roles, present for the current role (`Desenvolvi`, `Liderei`, `Colaborei`, `Desenvolvo`). This reads as the candidate speaking. Do **not** use the third person (`Desenvolveu`, `Liderou`), which reads as someone else describing them.
 - In English, keep the standard **person-neutral** action-verb style (`Led`, `Built`, `Integrated`) — do not add `I`.
 - `summary` stays an impersonal noun-phrase (no pronoun, no first/third-person verb about the candidate), e.g. `Desenvolvedor full stack com 4 anos de experiência...`.
+
+## Human voice (anti-slop)
+
+Narrative fields must read like a recruiter wrote them. Never invent or soften a fact to sound more human. ATS keyword mirroring and truthfulness still win over this list.
+
+Avoid empty grandeur and stock AI wording: *stands as a testament*, *cutting-edge*, *world-class*, *passionate about*, *results-driven* (as filler), *delve*, *leverage*, *spearheaded*, *synergy*, *holistic*, *tapestry*, *showcase*, *underscore*, *foster*, *robust*, *seamless*, *best-in-class*, forced *not just X but Y*, fake *from X to Y* ranges, *in order to*, *it is important to note that*. Prefer a plain verb. Concrete and dry beats grand.
+
+**No dashes as punctuation.** Never use an em dash (`—`) or a spaced en dash (` – `) anywhere in the reader-visible prose: headline, summary, bullets, project descriptions, education details. It is the most recognizable tell of machine-written text. Use a comma, a colon, a period, or parentheses instead, or split the sentence. (A range between numbers, like `2019–2021`, is fine.)
+
+**A resume is not a cover letter.** Never address the job posting, the company, or the reader, and never comment on how well a fact fits the role. Each bullet ends on the fact or the outcome, full stop. Banned shapes, in any language:
+- `..., exactly the kind of cross-stack collaboration this role calls for.`
+- `..., aligned with what your team needs.` / `..., which directly matches the position's requirements.`
+- `..., experiência alinhada ao que esta vaga exige.` / `..., exatamente o que a vaga pede.`
+
+Fit to the job is shown by WHICH facts you pick and how you order them (see the Relevance filter), never announced in the text.
 
 ## JSON shape (all keys required; use empty arrays/strings where a value is unavailable)
 

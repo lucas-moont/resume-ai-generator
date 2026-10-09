@@ -45,8 +45,8 @@ from app.config import LLM_TIMEOUT_SECONDS, PROJECTS_DIR, PROMPTS_DIR
 from app.domain.baseline_brief import is_target_brief
 from app.domain.keywords import normalize_token
 from app.domain.locale import resolve_locale
-from app.domain.prompts_builder import build_generation_user_msg
-from app.domain.quality import allows_lean_skills, quality_issues
+from app.domain.prompts_builder import build_generation_user_msg, dump_prompt_json
+from app.domain.quality import allows_lean_skills, compressed_companies, quality_issues
 from app.domain.schemas import GitHubRepoInfo, ProposalItem, ResumeDocument
 from app.prompt_loader import load_generate_system_prompt, load_refine_system_prompt
 from app.services import llm_client, streaming
@@ -182,13 +182,14 @@ async def auto_improve_if_needed(
         resume,
         job_description,
         allow_lean_skills=allows_lean_skills(agreed_improvements),
+        compressed_companies=compressed_companies(agreed_improvements),
         expected_locale=expected_locale,
     )
     if not issues:
         return resume
     system = load_refine_system_prompt(PROMPTS_DIR)
     user_msg = f"""Current resume JSON:
-{resume.model_dump_json(indent=2)}
+{dump_prompt_json(resume)}
 
 Quality issues to fix:
 - {"\n- ".join(issues)}
@@ -277,7 +278,10 @@ async def generate_resume_events(
     projects_unified = merge_github_with_markdown(md_entries, repos)
 
     pdf_block = ""
-    if pdf_text and pdf_path is not None:
+    # Profile.pdf is wording-only and duplicates the Living Profile JSON. Attach it only
+    # when this turn is extracting from the PDF (no real Profile yet). A DB-backed profile
+    # already holds the facts; resending the excerpt pays for them twice.
+    if resolved_profile.needs_extraction and pdf_text and pdf_path is not None:
         pdf_block = format_profile_pdf_prompt_block(pdf_text, pdf_path.name)
 
     system = load_generate_system_prompt(PROMPTS_DIR)
@@ -334,6 +338,7 @@ async def generate_resume_events(
         resume,
         job_description,
         allow_lean_skills=allows_lean_skills(agreed_improvements),
+        compressed_companies=compressed_companies(agreed_improvements),
         expected_locale=resolved_locale,
     )
     if issues:

@@ -18,8 +18,9 @@ a generation-time style guard adapted to the product's contract:
 |---|---|
 | `humanizer/SKILL.md` (35 patterns + truthfulness + false-positive guards) | `../humanizer.md` |
 
-`../humanizer.md` is composed onto the generation, refine, and LinkedIn-analysis system prompts
-(see `app/prompt_loader.py`).
+`../humanizer.md` is composed onto the converse and LinkedIn-analysis system prompts
+(see `app/prompt_loader.py`). Generation and refine carry a short anti-slop section in
+their own system files instead, so those calls do not pay for the full skill block.
 
 ## Do not
 

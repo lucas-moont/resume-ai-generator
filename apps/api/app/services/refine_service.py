@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 
 from app.config import LLM_TIMEOUT_SECONDS, PROJECTS_DIR, PROMPTS_DIR
 from app.domain.locale import mentions_language_change, normalize_locale
-from app.domain.prompts_builder import build_refine_user_msg
+from app.domain.prompts_builder import build_refine_user_msg, dump_prompt_json
 from app.domain.quality import wrong_language_issue
 from app.domain.schemas import GitHubRepoInfo, ProfileMaster, ResumeDocument
 from app.prompt_loader import load_refine_system_prompt
@@ -22,7 +22,7 @@ from app.services import llm_client, streaming
 from app.services.github_client import fetch_user_repos
 from app.services.llm.resume_json_parser import parse_resume_json, try_parse_refine_question
 from app.services.merge_projects import merge_github_with_markdown
-from app.services.profile_pdf import format_profile_pdf_prompt_block, load_profile_pdf_excerpt
+from app.services.profile_pdf import load_profile_pdf_excerpt
 from app.services.profile_resolution import ProfileValidationError
 from app.services.projects_loader import load_project_markdown_files
 from app.services.streaming import run_with_heartbeat
@@ -59,7 +59,7 @@ async def _enforce_resume_locale(
         return resume
     system = load_refine_system_prompt(PROMPTS_DIR)
     user_msg = f"""Current resume JSON:
-{resume.model_dump_json(indent=2)}
+{dump_prompt_json(resume)}
 
 Quality issue to fix:
 - {issue}
@@ -82,14 +82,12 @@ async def refine_resume_events(
         "progress": 20,
         "message": "Preparing refinement context",
     }
-    pdf_text, pdf_path, pdf_err = load_profile_pdf_excerpt()
+    _, pdf_path, pdf_err = load_profile_pdf_excerpt()
     if pdf_err and pdf_path is not None:
         raise ProfileValidationError(
             f"Profile PDF found at {pdf_path} but text extraction failed: {pdf_err}"
         )
     pdf_block = ""
-    if pdf_text and pdf_path is not None:
-        pdf_block = format_profile_pdf_prompt_block(pdf_text, pdf_path.name)
 
     md_entries = load_project_markdown_files(PROJECTS_DIR)
     mentions_github = bool(_GITHUB_MENTION_RE.search(message))

@@ -40,19 +40,16 @@ class TestLoadProposalTurnSystemPrompt:
 
 
 class TestLoadGenerateSystemPrompt:
-    def test_composes_base_craft_and_tailoring_blocks(self) -> None:
+    def test_loads_the_generate_contract_without_vendor_skill_blocks(self) -> None:
         text = load_generate_system_prompt(PROMPTS_DIR)
-        # base system prompt
         assert "You output ONLY valid JSON" in text
-        # resume-craft skill block (distilled ResumeSkills)
-        assert "Resume writing craft" in text
-        assert "Honest quantification" in text
-        # tailoring workflow skill block
-        assert "Tailored resume generator" in text
-        # humanizer skill block (distilled blader/humanizer)
+        assert "NEVER invent" in text
         assert "Human voice" in text
-        # composed with the section separator
-        assert "\n\n---\n\n" in text
+        # Distilled skill files stay on disk as reference; composing them doubled the
+        # generate system prompt (~6k tokens) with rules generate.md already states.
+        assert "Resume writing craft" not in text
+        assert "Tailored resume generator" not in text
+        assert "\n\n---\n\n" not in text
 
     def test_missing_file_raises_file_not_found(self, tmp_path) -> None:
         import pytest
@@ -62,16 +59,11 @@ class TestLoadGenerateSystemPrompt:
 
 
 class TestLoadRefineSystemPrompt:
-    def test_composes_refine_with_craft_block(self) -> None:
+    def test_loads_refine_without_repeating_generate_craft_blocks(self) -> None:
         text = load_refine_system_prompt(PROMPTS_DIR)
-        # refine-specific base prompt
         assert "revise an existing resume" in text
-        # shared resume-craft skill block
-        assert "Resume writing craft" in text
-        assert "surface, never estimate" in text
-        # humanizer skill block
-        assert "Human voice" in text
-        assert "\n\n---\n\n" in text
+        assert "Resume writing craft" not in text
+        assert "\n\n---\n\n" not in text
 
     def test_missing_file_raises_file_not_found(self, tmp_path) -> None:
         import pytest

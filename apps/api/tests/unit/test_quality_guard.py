@@ -1,7 +1,9 @@
 import unittest
 
 from app.domain.keywords import extract_jd_keywords as _extract_jd_keywords
+from app.domain.keywords import normalize_token
 from app.domain.quality import allows_lean_skills as _allows_lean_skills
+from app.domain.quality import compressed_companies as _compressed_companies
 from app.domain.quality import quality_issues as _quality_issues
 from app.domain.schemas import ProposalItem as _ProposalItem
 from app.models import ResumeDocument
@@ -11,7 +13,7 @@ from app.services.generation_service import enrich_projects_from_sources as _enr
 def _strong_resume() -> ResumeDocument:
     return ResumeDocument(
         fullName="Kevvan",
-        headline="Senior Fullstack Developer — React & Node.js",
+        headline="Senior Fullstack Developer | React & Node.js",
         summary=(
             "Senior fullstack developer with over six years building scalable web "
             "products across React front-ends and Node.js services, focused on clean "
@@ -81,6 +83,43 @@ class QualityGuardTests(unittest.TestCase):
         jd = "Node.js TypeScript React Next.js MongoDB AWS Docker"
         issues = _quality_issues(resume, jd)
         self.assertTrue(any("weak openers" in i for i in issues))
+
+    def test_flags_em_dashes_in_the_prose(self) -> None:
+        resume = _strong_resume()
+        resume.experience[0].highlights[0] = (
+            "Led migration of the checkout service to Node.js — cutting deploy friction"
+        )
+        issues = _quality_issues(resume, "Node.js React")
+        self.assertTrue(any("dash" in i for i in issues), issues)
+
+    def test_flags_a_spaced_en_dash_but_not_a_date_range(self) -> None:
+        resume = _strong_resume()
+        resume.summary = resume.summary + " Worked across 2019–2021 platform rewrites."
+        self.assertFalse(any("dash" in i for i in _quality_issues(resume, "Node.js React")))
+        resume.summary = resume.summary + " Built tooling – mostly internal."
+        self.assertTrue(any("dash" in i for i in _quality_issues(resume, "Node.js React")))
+
+    def test_flags_cover_letter_clauses_that_address_the_posting(self) -> None:
+        for tail in (
+            "exactly the kind of cross-stack collaboration this role calls for.",
+            "aligned with what your team needs.",
+            "experiência alinhada ao que esta vaga exige.",
+            "exatamente o tipo de colaboração que a vaga pede.",
+        ):
+            resume = _strong_resume()
+            resume.experience[0].highlights[1] = (
+                "Built a React and Next.js dashboard consumed by internal teams, " + tail
+            )
+            issues = _quality_issues(resume, "Node.js React")
+            self.assertTrue(any("cover letter" in i for i in issues), (tail, issues))
+
+    def test_does_not_mistake_ordinary_bullets_for_posting_references(self) -> None:
+        resume = _strong_resume()
+        resume.experience[0].highlights[0] = (
+            "Reduced API calls for the checkout page and was promoted to the role of Tech Lead"
+        )
+        issues = _quality_issues(resume, "Node.js React")
+        self.assertFalse(any("cover letter" in i for i in issues), issues)
 
     def test_passes_for_a_strong_tailored_resume(self) -> None:
         jd = "Node.js TypeScript React Next.js MongoDB AWS Docker"
@@ -160,3 +199,60 @@ class LeanSkillsTests(unittest.TestCase):
         )
         self.assertFalse(_allows_lean_skills(None))
         self.assertFalse(_allows_lean_skills([]))
+
+
+class CompressedRoleQualityTests(unittest.TestCase):
+    """A COMPRESS item licenses one short factual bullet. The thin-bullet / 'add 3-5
+    highlights' checks exist to catch a lazy draft of a *relevant* role; firing them on the
+    compressed one spends a whole extra LLM call re-inflating what the user asked to shrink.
+    """
+
+    def _compress_item(self) -> _ProposalItem:
+        return _ProposalItem(
+            id=1,
+            section="experience",
+            op="compress",
+            current="Agência XYZ",
+            proposed="Reduzir a experiência na Agência XYZ a um bullet.",
+            targets=["Agência XYZ"],
+            rationale="A vaga é de backend; o trabalho lá foi de marketing digital.",
+        )
+
+    def _resume_with_compressed_role(self) -> ResumeDocument:
+        data = _strong_resume().model_dump()
+        data["experience"].append(
+            {
+                "company": "Agência XYZ",
+                "title": "Marketing intern",
+                "start": "2018",
+                "end": "2019",
+                "highlights": ["Supported campaign reporting."],
+            }
+        )
+        return ResumeDocument.model_validate(data)
+
+    def test_compressed_companies_reads_experience_compress_targets(self) -> None:
+        keys = _compressed_companies([self._compress_item()])
+        self.assertEqual(keys, frozenset({normalize_token("Agência XYZ")}))
+        self.assertEqual(_compressed_companies(None), frozenset())
+        self.assertEqual(_compressed_companies([]), frozenset())
+
+    def test_a_short_bullet_on_an_uncompressed_role_is_still_an_issue(self) -> None:
+        resume = _strong_resume()
+        resume.experience[0].highlights = [
+            "Led checkout.",
+            "Built a React and Next.js dashboard consumed by internal teams",
+            "Designed MongoDB schemas and AWS infrastructure for new features",
+        ]
+        jd = "Node.js TypeScript React Next.js MongoDB AWS Docker"
+        issues = _quality_issues(resume, jd)
+        self.assertTrue(any("thin experience bullets" in issue for issue in issues))
+
+    def test_a_short_bullet_on_a_compressed_role_is_not_an_issue(self) -> None:
+        resume = self._resume_with_compressed_role()
+        jd = "Node.js TypeScript React Next.js MongoDB AWS Docker"
+        issues = _quality_issues(
+            resume, jd, compressed_companies=_compressed_companies([self._compress_item()])
+        )
+        self.assertFalse(any("thin experience bullets" in issue for issue in issues))
+        self.assertFalse(any("most recent role" in issue for issue in issues))

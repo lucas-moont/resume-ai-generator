@@ -50,7 +50,7 @@ Tailor a resume for the candidate described in the CANDIDATE PROFILE below. Hard
 - If the profile lacks something the job wants, omit it — never fabricate it.
 
 CANDIDATE PROFILE (authoritative JSON — the single source of truth):
-{profile.model_dump_json(indent=2)}{sources_block}
+{profile.model_dump_json()}{sources_block}
 
 Target locale for labels and prose: {locale}
 Return the tailored resume as JSON only, using the same schema as the profile."""
@@ -215,7 +215,7 @@ class TestBuildProposalAnalysisUserMsg:
             locale="pt-BR",
         )
         assert "We need a backend engineer." in out
-        assert _PROFILE.model_dump_json(indent=2) in out
+        assert _PROFILE.model_dump_json() in out
         assert "pt-BR" in out
 
     def test_does_not_mention_projects_or_github_context(self) -> None:
@@ -315,7 +315,7 @@ class TestBuildConverseUserMsg:
             locale="pt-BR",
         )
         assert "A distinctive summary only the active resume carries." in out
-        assert _PROFILE.model_dump_json(indent=2) in out
+        assert _PROFILE.model_dump_json() in out
         assert "We need a backend engineer." in out
         assert "Backend Engineer especializado em Python" in out
         assert "Conversation so far:\nUser: oi\nAssistant: ola" in out

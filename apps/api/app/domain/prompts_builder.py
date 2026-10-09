@@ -10,6 +10,12 @@ import json
 from app.domain.schemas import ProposalItem, ResumeDocument
 
 
+def dump_prompt_json(model: ResumeDocument) -> str:
+    """Compact JSON for LLM user messages. Pretty-print indent is for humans; the model
+    does not need it, and on a full Profile it is hundreds of wasted tokens per call."""
+    return model.model_dump_json()
+
+
 def _format_agreed_improvements_block(items: list[ProposalItem]) -> str:
     """Renders the APPROVED IMPROVEMENT PLAN block (docs/v4-improvement-proposal.md §4.3).
     Strings are ``json.dumps``-quoted (not just wrapped in literal quotes) so a ``proposed``/
@@ -126,7 +132,7 @@ def build_generation_user_msg(
 - If the profile lacks something the job wants, omit it — never fabricate it.
 
 CANDIDATE PROFILE (authoritative JSON — the single source of truth):
-{profile.model_dump_json(indent=2)}{sources_block}
+{dump_prompt_json(profile)}{sources_block}
 
 Target locale for labels and prose: {locale}
 Return the tailored resume as JSON only, using the same schema as the profile."""
@@ -143,7 +149,7 @@ def build_proposal_analysis_user_msg(
     ``build_generation_user_msg``'s ``sources_block``, since the Analysis only needs to compare
     the profile against the job, not author a full resume."""
     return f"""Candidate profile (authoritative JSON):
-{profile.model_dump_json(indent=2)}
+{dump_prompt_json(profile)}
 
 Job description:
 ---
@@ -166,7 +172,7 @@ def build_proposal_turn_user_msg(
     (items + revision), recent chat history (already formatted by the caller, e.g.
     ``chat_service._format_history`` -- this builder does not know how history is assembled),
     the user's message, and locale."""
-    items_json = json.dumps([item.model_dump() for item in items], ensure_ascii=False, indent=2)
+    items_json = json.dumps([item.model_dump() for item in items], ensure_ascii=False)
     history_block = f"\n\n{history_text}" if history_text.strip() else ""
     return f"""Current Improvement Proposal (revision {revision}):
 {items_json}{history_block}
@@ -199,13 +205,13 @@ def build_converse_user_msg(
     joined by a single blank line, so an omitted block never leaves a widening gap."""
     resume_block = (
         "Current resume (the document the user is looking at — discuss it, but you NEVER edit it "
-        f"here):\n{resume.model_dump_json(indent=2)}"
+        f"here):\n{dump_prompt_json(resume)}"
         if resume is not None
         else "Current resume: the user has no resume generated yet."
     )
     sections: list[str] = [
         resume_block,
-        f"Candidate profile (authoritative JSON):\n{profile.model_dump_json(indent=2)}",
+        f"Candidate profile (authoritative JSON):\n{dump_prompt_json(profile)}",
     ]
     if job_description and job_description.strip():
         sections.append(
@@ -214,7 +220,7 @@ def build_converse_user_msg(
         )
     if proposal_items:
         items_json = json.dumps(
-            [item.model_dump() for item in proposal_items], ensure_ascii=False, indent=2
+            [item.model_dump() for item in proposal_items], ensure_ascii=False
         )
         sections.append(f"Improvement plan behind the current resume:\n{items_json}")
     if history_text.strip():
@@ -289,7 +295,7 @@ def build_refine_user_msg(
             "part of the document."
         )
     return f"""Current resume JSON:
-{resume.model_dump_json(indent=2)}
+{dump_prompt_json(resume)}
 
 {pdf_block}User instruction:
 {message.strip()}{sources_block}{locale_line}

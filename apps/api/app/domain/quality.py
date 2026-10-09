@@ -54,6 +54,68 @@ def has_weak_bullets(resume: ResumeDocument) -> bool:
     return False
 
 
+# An em dash anywhere, or an en dash with spaces around it, used as sentence punctuation. A bare
+# en dash between digits (2019–2021) is a range, not a tell, and is left alone.
+_DASH_PUNCTUATION = re.compile(r"—|\s–\s")
+
+# Clauses that talk to the posting or the reader ("exactly the kind of collaboration this role
+# calls for"). That is cover-letter voice: a resume shows fit through the facts it lists and never
+# announces it. Kept narrow on purpose -- "the role of Tech Lead" or "API calls for" are ordinary.
+_POSTING_REFERENCE = re.compile(
+    r"\b(?:this|the target) (?:role|position|job|posting|opportunity)\b"
+    r"|\byour (?:team|company|organization|needs)\b"
+    r"|\bexactly the kind of\b"
+    r"|\b(?:esta|essa|nesta|nessa|desta|dessa|a|à|na|da|para a) vaga\b"
+    r"|\b(?:esta|essa|nesta|nessa) (?:posição|função|oportunidade)\b"
+    r"|\bexatamente o tipo de\b",
+    re.IGNORECASE,
+)
+
+
+def _prose_fields(resume: ResumeDocument) -> list[str]:
+    """Reader-visible prose the LLM wrote, HTML stripped. Skills and keyTechnologies are
+    technology names, not prose, so they are not included."""
+    parts: list[str] = [resume.headline or "", resume.summary or ""]
+    for e in resume.experience:
+        parts.extend(e.highlights or [])
+    for p in resume.projects:
+        parts.append(p.description or "")
+    for e in resume.education:
+        parts.append(e.details or "")
+    return [re.sub(r"<[^>]+>", "", p) for p in parts if p]
+
+
+def has_dash_punctuation(resume: ResumeDocument) -> bool:
+    return any(_DASH_PUNCTUATION.search(p) for p in _prose_fields(resume))
+
+
+def has_posting_reference(resume: ResumeDocument) -> bool:
+    return any(_POSTING_REFERENCE.search(p) for p in _prose_fields(resume))
+
+
+def compressed_companies(agreed_improvements: list[ProposalItem] | None) -> frozenset[str]:
+    """Employer keys an approved COMPRESS item named.
+
+    The thin-bullet / 'add 3-5 highlights to the most recent role' checks exist to catch a
+    lazy draft of a relevant role. A compressed role is *supposed* to be one short factual
+    bullet — treating that as a defect spends a second LLM call re-inflating it. Keys use
+    ``normalize_token`` so they match the same way Drop Targets do.
+    """
+    if not agreed_improvements:
+        return frozenset()
+    keys: set[str] = set()
+    for item in agreed_improvements:
+        if getattr(item, "section", None) != "experience":
+            continue
+        if getattr(item, "op", None) != "compress":
+            continue
+        for target in getattr(item, "targets", None) or []:
+            token = normalize_token(str(target).strip())
+            if token:
+                keys.add(token)
+    return frozenset(keys)
+
+
 def allows_lean_skills(agreed_improvements: list[ProposalItem] | None) -> bool:
     """Whether an approved plan deliberately shortened the skills list (v6, Relevance Filter).
 
@@ -145,9 +207,11 @@ def quality_issues(
     job_description: str,
     *,
     allow_lean_skills: bool = False,
+    compressed_companies: frozenset[str] | None = None,
     expected_locale: str | None = None,
 ) -> list[str]:
     issues: list[str] = []
+    compressed = compressed_companies or frozenset()
 
     # First, because it is the only issue that invalidates the whole document: a resume in the
     # wrong language fails the reader no matter how good its bullets are.
@@ -164,7 +228,8 @@ def quality_issues(
 
     if resume.experience:
         first = resume.experience[0]
-        if len(first.highlights or []) < 3:
+        first_compressed = normalize_token(first.company or "") in compressed
+        if len(first.highlights or []) < 3 and not first_compressed:
             issues.append(
                 "Add 3-5 achievement bullets to the most recent role "
                 "(action verb + what + how + outcome)."
@@ -172,6 +237,7 @@ def quality_issues(
         short_bullets = any(
             len(re.sub(r"<[^>]+>", "", h or "").strip()) < 30
             for e in resume.experience
+            if normalize_token(e.company or "") not in compressed
             for h in (e.highlights or [])
         )
         if short_bullets:
@@ -181,6 +247,20 @@ def quality_issues(
         issues.append(
             "Rewrite bullets that start with weak openers (e.g. 'Responsible for', "
             "'Worked on', pronouns) using strong action verbs."
+        )
+
+    if has_dash_punctuation(resume):
+        issues.append(
+            "Remove every em dash (—) and spaced en dash ( – ) from the prose: rewrite with a "
+            "comma, colon, period or parentheses. Dashes used as punctuation read as "
+            "machine-written."
+        )
+
+    if has_posting_reference(resume):
+        issues.append(
+            "Cut clauses that address the job posting or the reader (e.g. 'exactly the kind of "
+            "collaboration this role calls for', 'o que esta vaga exige'). That is cover letter "
+            "voice: end each bullet on the fact or outcome and let it show the fit on its own."
         )
 
     if len(resume.skills) < 6 and not allow_lean_skills:
