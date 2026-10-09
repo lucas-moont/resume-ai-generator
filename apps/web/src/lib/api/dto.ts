@@ -231,6 +231,9 @@ export interface ChatProposalEventPayload {
   status: ProposalStatus
   revision: number
   items: ProposalItemDto[]
+  /** The output language detected from the posting (`pt-BR`/`en`), pre-filling the
+   * approval step's language picker. Optional — a proposal persisted before this may lack it. */
+  detectedLocale?: string
 }
 
 /** Shape of ChatMessageDto's `proposal` field and ChatSessionDetailResponse's
