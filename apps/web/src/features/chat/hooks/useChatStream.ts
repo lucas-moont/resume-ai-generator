@@ -18,6 +18,7 @@ import type {
   StreamErrorPayload,
   StreamStagePayload,
 } from '../../../lib/api/dto'
+import { titlePreview } from '../../../lib/titlePreview'
 import { diffResumeSections } from '../../resume/diffResumeSections'
 import { diffResume } from '../../resume/resumeDiff'
 import { downloadResumePdf } from '../../resume/downloadResumePdf'
@@ -55,8 +56,6 @@ export interface UseChatStreamResult {
   retry: (message: string, options?: SendOptions) => Promise<void>
   stop: () => void
 }
-
-const TITLE_PREVIEW_MAX_LENGTH = 60
 
 type CreateSessionFn = (title?: string) => Promise<CreateChatSessionResponse>
 
@@ -164,12 +163,6 @@ function markProposalCards(
 
 function isAbortError(e: unknown): boolean {
   return e instanceof DOMException && e.name === 'AbortError'
-}
-
-function titlePreview(message: string): string {
-  return message.length > TITLE_PREVIEW_MAX_LENGTH
-    ? `${message.slice(0, TITLE_PREVIEW_MAX_LENGTH - 1)}…`
-    : message
 }
 
 /** Returns the active session id, creating one (titled from this message) if this is a fresh chat. */

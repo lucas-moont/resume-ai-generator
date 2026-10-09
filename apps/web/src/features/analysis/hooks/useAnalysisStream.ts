@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { ApiError, analysisPdfStream, chatMessageStream } from '../../../lib/api/endpoints'
+import { titlePreview } from '../../../lib/titlePreview'
 import type {
   ChatAnalysisEventPayload,
   ChatMessageEventPayload,
@@ -25,15 +26,7 @@ export interface UseAnalysisStreamResult {
   stop: () => void
 }
 
-const TITLE_PREVIEW_MAX_LENGTH = 60
-
 type CreateSessionFn = (title?: string) => Promise<CreateChatSessionResponse>
-
-function titlePreview(message: string): string {
-  return message.length > TITLE_PREVIEW_MAX_LENGTH
-    ? `${message.slice(0, TITLE_PREVIEW_MAX_LENGTH - 1)}…`
-    : message
-}
 
 function isAbortError(e: unknown): boolean {
   return e instanceof DOMException && e.name === 'AbortError'
