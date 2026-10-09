@@ -174,6 +174,23 @@ class TestBuildGenerationUserMsgWithAgreedImprovements:
             "Tailor a resume for the candidate"
         )
 
+    def test_agreed_improvements_do_not_override_the_voice_rules(self) -> None:
+        # Generation implements a plan almost verbatim, so a first-person summary proposed in the
+        # plan used to win over the system prompt's voice section. The plan decides the content;
+        # voice and summary shape still apply to it.
+        out = build_generation_user_msg(
+            job_description="We need a backend engineer.",
+            profile=_PROFILE,
+            pdf_block="",
+            project_notes="",
+            locale="pt-BR",
+            agreed_improvements=_ITEMS,
+        )
+        form_marker = "The plan decides WHAT changes, not the form"
+        assert form_marker in out
+        assert "summary shape" in out
+        assert out.index(form_marker) < out.index("Tailor a resume for the candidate")
+
     def test_agreed_improvements_includes_final_checklist_instruction(self) -> None:
         out = build_generation_user_msg(
             job_description="We need a backend engineer.",

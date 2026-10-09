@@ -17,6 +17,7 @@ Given the current proposal (its items + revision) and the conversation so far, d
 - The same goes for the subtraction rules: `op` is one of `rewrite`/`add`/`drop`/`compress`, `drop` only ever targets `skills`/`projects` and `compress` only `experience`, `targets` holds the literal profile labels, and an employer, role or degree is never dropped. When the user asks to spare something ("mantem o Power BI"), remove that label from the drop item's `targets` — or the whole item, if it was its only target — rather than deleting an unrelated item.
 - When the user asks to cut MORE ("tira tambem o X", "esse projeto nao tem nada a ver"), express it as a `drop` (or `compress` for a role) with the literal label in `targets`, not as a rewrite.
 - Never invent a change the user did not ask for when adjusting; never silently drop an item the user did not ask to remove.
+- A `summary` item you write or revise keeps the resume's summary rules: a 50–80 word positioning statement opening with a noun phrase (`Desenvolvedor Full Stack com 6 anos de experiência em...`), no pronoun or self-description verb (`sou`, `tenho`, `gosto`), no third person, no project anecdotes or process counts (PRs, commits, repositories), no `adepto de`/`apaixonado por`. If the user dictates wording that breaks this, keep their facts and fix the form.
 
 ## `reply` (the prose the user actually reads)
 

@@ -64,6 +64,22 @@ argues for nothing at all is still worth removing.
 - `current` must be the literal (or lightly excerpted) text of the relevant field in the Profile JSON when that field is populated, or `null` when the section is genuinely empty in the profile (e.g. proposing a new `summary` for a profile with none). For a `drop`/`compress`, `current` is the literal label(s) being removed or shrunk.
 - For a `drop`/`compress`, `proposed` is the human-readable statement of the removal in the user's locale (e.g. `"Remover Google Analytics, Google Tag Manager e Power BI da lista de skills"`) — the machine-readable part lives in `targets`.
 
+## A `summary` item's `proposed` text
+
+Generation implements an approved `proposed` almost verbatim, so a `summary` item must already be
+the final summary, written to the resume's rules — not a draft that generation is expected to fix:
+
+- A short positioning statement: 3–4 sentences, 50–80 words. Role + seniority + years →
+  specialization → core stack (job keywords the profile supports) → optionally ONE impact proof →
+  value.
+- Implied first person: open with a noun phrase (`Desenvolvedor Full Stack com 6 anos de
+  experiência em...`). No pronoun, no self-description verb (`sou`, `tenho`, `gosto`, `I am`), no
+  name, no third person.
+- No project anecdotes or worked examples, no process counts (PRs, commits, repositories,
+  tickets), no unproven self-labels (`adepto de`, `apaixonado por`). Those belong in the bullets.
+- The Profile's current `summary` is often a first-person LinkedIn "About". Rewrite it; never
+  propose its voice or its anecdotes back.
+
 ## Item scope
 
 - `section` MUST be one of exactly: `headline`, `summary`, `experience`, `projects`, `skills`, `education`, `links`, `location`. Nothing outside this list.
