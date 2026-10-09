@@ -20,10 +20,8 @@ from app.services.ingestion import reaper
 
 
 def _set_mtime(path, dt: datetime) -> None:
-    """File mtimes are real UTC epoch seconds -- ``dt`` (this module's ``NOW``-relative, naive)
-    must be interpreted as UTC explicitly, matching reaper.py's own ``_epoch_utc`` convention,
-    or the comparison would silently depend on the host machine's local timezone."""
-    ts = dt.replace(tzinfo=timezone.utc).timestamp()
+    """File mtimes are real UTC epoch seconds; ``dt`` is aware UTC, like ``NOW``."""
+    ts = dt.timestamp()
     os.utime(path, (ts, ts))
 
 
@@ -34,7 +32,7 @@ def engine():
     return eng
 
 
-NOW = datetime(2026, 7, 11, 12, 0, 0)
+NOW = datetime(2026, 7, 11, 12, 0, 0, tzinfo=timezone.utc)
 STALE_AFTER = timedelta(hours=1)
 
 

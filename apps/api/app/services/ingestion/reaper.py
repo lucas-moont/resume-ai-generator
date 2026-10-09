@@ -25,11 +25,11 @@ either caller goes through. ``now``/``stale_after``/``uploads_dir`` are all inje
 (pre-agreed test seam, ticket 04) so tests never depend on the real clock, a real elapsed hour,
 or the real ``data/uploads`` directory.
 
-Timestamps: ``SourceDocument.created_at`` round-trips through SQLite as a naive ``datetime``
-(no tzinfo) -- see ``app.db.tables``'s ``_utcnow()``, which writes UTC but SQLite has no native
-timezone-aware storage. ``now`` here is therefore also naive UTC by convention (never
-timezone-aware) so the two compare directly; ``datetime.now(timezone.utc).replace(tzinfo=None)``
-is what production passes implicitly via the default.
+Timestamps: ``SourceDocument.created_at`` is written as UTC (``app.db.tables._utcnow``), but
+whether it reads back naive or aware depends on the SQLModel version: older releases return a
+naive ``datetime`` from SQLite, newer ones attach UTC (and refuse to write a naive one). Both
+sides of every comparison therefore go through ``domain.recency.as_utc``, which reads a naive
+value as UTC, so ``now`` may be passed either way and the default is aware UTC.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from sqlmodel import Session, select
 
 from app import config as config_module
 from app.db.tables import SourceDocument
+from app.domain.recency import as_utc
 
 logger = logging.getLogger(__name__)
 
@@ -54,29 +55,21 @@ _TRANSIENT_STATUSES = ("stored", "extracted")
 DEFAULT_STALE_AFTER = timedelta(hours=1)
 
 
-def _naive_utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
 def _epoch_utc(dt: datetime) -> float:
-    """``datetime.timestamp()`` on a NAIVE datetime assumes it is in the system's LOCAL
-    timezone, not UTC -- a footgun here since ``now``/``created_at`` are naive-but-UTC by this
-    module's convention (see module docstring) while file mtimes (``Path.stat().st_mtime``) are
-    real UTC epoch seconds. Explicitly attaching ``timezone.utc`` before converting is what
-    makes the two comparable regardless of the host machine's local timezone."""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.timestamp()
+    """``datetime.timestamp()`` on a NAIVE datetime assumes the system's LOCAL timezone, while
+    file mtimes (``Path.stat().st_mtime``) are real UTC epoch seconds. Going through ``as_utc``
+    first keeps the two comparable regardless of the host machine's local timezone."""
+    return as_utc(dt).timestamp()
 
 
 def _reap_stale_transient_rows(session: Session, *, now: datetime, stale_after: timedelta) -> int:
-    cutoff = now - stale_after
+    cutoff = as_utc(now) - stale_after
     rows = session.exec(
         select(SourceDocument).where(SourceDocument.status.in_(_TRANSIENT_STATUSES))
     ).all()
     reaped = 0
     for row in rows:
-        if row.created_at > cutoff:
+        if as_utc(row.created_at) > cutoff:
             continue
         reason = (
             f"Reaped: stuck in '{row.status}' since {row.created_at.isoformat()} "
@@ -125,7 +118,7 @@ def reconcile(
     (``app.config.resolve_uploads_dir()`` by default, read the same way ``storage.py`` does).
     Returns ``{"reapedRows": int, "sweptFiles": int}``, mainly for logging/tests -- neither
     caller (startup, or a manual invocation) needs to branch on it."""
-    resolved_now = now if now is not None else _naive_utc_now()
+    resolved_now = now if now is not None else datetime.now(timezone.utc)
     resolved_uploads_dir = (
         uploads_dir if uploads_dir is not None else config_module.resolve_uploads_dir()
     )

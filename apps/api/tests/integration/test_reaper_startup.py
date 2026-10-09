@@ -52,7 +52,7 @@ async def test_a_row_stuck_transient_from_a_previous_boot_is_reaped_on_the_next_
         # during THIS boot's in-flight upload -- the NEXT boot's reconcile() must catch it.
         with Session(app.state.db_engine) as session:
             row = source_document_repo.get(session, row_id)
-            row.created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=2)
+            row.created_at = datetime.now(timezone.utc) - timedelta(hours=2)
             session.add(row)
             session.commit()
 
