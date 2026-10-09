@@ -72,6 +72,46 @@ _POSTING_REFERENCE = re.compile(
 )
 
 
+# The summary speaks in implied first person: it opens with a noun phrase ("Desenvolvedor Full
+# Stack com 6 anos...") and never refers to the candidate with a pronoun or a self-description
+# verb. Those are what make a summary read like a LinkedIn "About" pasted in. A past action verb
+# without a pronoun ("Liderei a migração...") is allowed, same as the experience bullets, so verbs
+# like "desenvolvi" are deliberately absent. "trabalho" is left out because it is mostly a noun.
+_SUMMARY_FIRST_PERSON = re.compile(
+    r"\b(?:eu|meu|minha|meus|minhas|me|sou|tenho|gosto|adoro|busco|acredito|atuo)\b"
+    r"|\b(?:my|me|i'm|i've|i'd)\b",
+    re.IGNORECASE,
+)
+# English "I" is matched case-sensitively and not inside "I/O" or "CI/CD".
+_SUMMARY_PRONOUN_I = re.compile(r"(?<![\w/])I(?![\w/'])")
+
+# Content that belongs in the experience bullets, not in a positioning statement: process counts
+# (how many PRs or commits says nothing about impact), worked examples, and unproven
+# self-labels ("adepto de", "apaixonado por").
+_SUMMARY_ANECDOTE = re.compile(
+    r"\b\d+\s*(?:PRs?|pull requests?|commits?|tickets?|reposit[óo]rios?|repos?)\b"
+    r"|\bpor exemplo\b|\bfor (?:example|instance)\b"
+    r"|\badept[oa]s? (?:de|do|da|dos|das)\b|\bapaixonad[oa]s? (?:por|pela|pelo)\b"
+    r"|\bpassionate about\b",
+    re.IGNORECASE,
+)
+_SUMMARY_MAX_WORDS = 90
+
+
+def _plain_summary(resume: ResumeDocument) -> str:
+    return re.sub(r"<[^>]+>", "", resume.summary or "")
+
+
+def has_personal_summary(resume: ResumeDocument) -> bool:
+    summary = _plain_summary(resume)
+    return bool(_SUMMARY_FIRST_PERSON.search(summary) or _SUMMARY_PRONOUN_I.search(summary))
+
+
+def has_summary_anecdote(resume: ResumeDocument) -> bool:
+    summary = _plain_summary(resume)
+    return bool(_SUMMARY_ANECDOTE.search(summary)) or len(summary.split()) > _SUMMARY_MAX_WORDS
+
+
 def _prose_fields(resume: ResumeDocument) -> list[str]:
     """Reader-visible prose the LLM wrote, HTML stripped. Skills and keyTechnologies are
     technology names, not prose, so they are not included."""
@@ -224,6 +264,22 @@ def quality_issues(
         issues.append(
             "Write a stronger 2-4 sentence professional summary (role, seniority, "
             "domain, and top job-relevant strengths)."
+        )
+
+    if has_personal_summary(resume):
+        issues.append(
+            "Rewrite the summary without first-person pronouns or self-description verbs "
+            "('sou', 'tenho', 'gosto', 'I', 'my'): open with a noun phrase (role + seniority + "
+            "years + specialization + core stack), e.g. 'Desenvolvedor Full Stack com 6 anos de "
+            "experiência em...'. Never third person or the candidate's name either."
+        )
+
+    if has_summary_anecdote(resume):
+        issues.append(
+            "Trim the summary to a 3-4 sentence positioning statement (50-80 words): no project "
+            "anecdote or worked example, no process counts (PRs, commits, repositories, tickets), "
+            "no unproven self-labels ('adepto de', 'apaixonado por'). At most one impact metric "
+            "already in the profile; the specifics belong in the experience bullets."
         )
 
     if resume.experience:

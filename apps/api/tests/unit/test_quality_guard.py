@@ -256,3 +256,105 @@ class CompressedRoleQualityTests(unittest.TestCase):
         )
         self.assertFalse(any("thin experience bullets" in issue for issue in issues))
         self.assertFalse(any("most recent role" in issue for issue in issues))
+
+
+_JD = "Node.js TypeScript React Next.js MongoDB AWS Docker"
+
+
+def _with_summary(summary: str) -> ResumeDocument:
+    resume = _strong_resume()
+    resume.summary = summary
+    return resume
+
+
+class SummaryVoiceTests(unittest.TestCase):
+    """The summary is a short positioning statement in implied first person: it opens with a noun
+    phrase, never talks about the candidate with a pronoun or a self-description verb, and leaves
+    project anecdotes to the experience bullets."""
+
+    _GOOD_PT = (
+        "Desenvolvedor Full Stack com 6 anos de experiência em React, Next.js e TypeScript, com "
+        "foco em produtos web com IA. Experiência com Node.js, NestJS, Python e PostgreSQL em "
+        "arquiteturas multi-tenant, processamento assíncrono e integrações com cloud."
+    )
+
+    def _voice_issue(self, resume: ResumeDocument) -> bool:
+        return any("first-person" in i for i in _quality_issues(resume, _JD))
+
+    def _anecdote_issue(self, resume: ResumeDocument) -> bool:
+        return any("anecdote" in i for i in _quality_issues(resume, _JD))
+
+    def test_flags_the_self_described_methodology_with_a_pr_count(self) -> None:
+        resume = _with_summary(
+            "Desenvolvedor Full Stack com 6 anos de experiência em React e Node.js. Sou adepto de "
+            "spec driven design, separando tarefas complexas em pequenas tarefas, como a migração "
+            "complexa que dividi em 13 PRs."
+        )
+        self.assertTrue(self._voice_issue(resume))
+        self.assertTrue(self._anecdote_issue(resume))
+
+    def test_flags_a_linkedin_about_copied_into_the_summary(self) -> None:
+        resume = _with_summary(
+            "Desenvolvedor Full Stack com mais de 6 anos de experiência em React e Node.js. Ao "
+            "longo da minha experiência, construí aplicações altamente interativas e APIs. Gosto "
+            "de transformar problemas complexos em software simples de usar."
+        )
+        self.assertTrue(self._voice_issue(resume))
+
+    def test_flags_english_first_person(self) -> None:
+        for summary in (
+            "Full stack developer with six years of React and Node.js experience. I build "
+            "scalable products and care about clean architecture and reliable delivery.",
+            "Full stack developer with six years of React and Node.js experience. My focus is "
+            "scalable products, clean architecture and reliable delivery in the cloud.",
+            "Full stack developer with six years of React and Node.js experience. I'm focused on "
+            "scalable products, clean architecture and reliable delivery in the cloud.",
+        ):
+            self.assertTrue(self._voice_issue(_with_summary(summary)), summary)
+
+    def test_a_noun_phrase_summary_passes(self) -> None:
+        resume = _with_summary(self._GOOD_PT)
+        self.assertFalse(self._voice_issue(resume))
+        self.assertFalse(self._anecdote_issue(resume))
+
+    def test_a_past_action_verb_proof_and_an_impact_metric_pass(self) -> None:
+        resume = _with_summary(
+            self._GOOD_PT + " Liderei a migração da plataforma de pagamentos para eventos, "
+            "reduzindo a latência p95 em 40% para mais de 1M usuários."
+        )
+        self.assertFalse(self._voice_issue(resume))
+        self.assertFalse(self._anecdote_issue(resume))
+
+    def test_io_and_ci_cd_are_not_the_pronoun_i(self) -> None:
+        resume = _with_summary(
+            "Backend engineer with six years building I/O heavy services in Node.js and Go, "
+            "owning CI/CD pipelines, observability and AWS infrastructure for payment products."
+        )
+        self.assertFalse(self._voice_issue(resume))
+
+    def test_flags_process_counts(self) -> None:
+        for count in ("13 PRs", "200 commits", "3 repositórios", "40 tickets", "12 pull requests"):
+            resume = _with_summary(self._GOOD_PT + f" Entregou a versão 6 em {count}.")
+            self.assertTrue(self._anecdote_issue(resume), count)
+
+    def test_flags_filler_claims_and_worked_examples(self) -> None:
+        for tail in (
+            " Adepto de clean code e arquitetura hexagonal.",
+            " Apaixonado por tecnologia e inovação.",
+            " Passionate about developer experience.",
+            " Por exemplo, o editor de vídeo construído com Remotion.",
+        ):
+            resume = _with_summary(self._GOOD_PT + tail)
+            self.assertTrue(self._anecdote_issue(resume), tail)
+
+    def test_flags_a_summary_over_ninety_words(self) -> None:
+        long_summary = " ".join([self._GOOD_PT] * 3)
+        self.assertGreater(len(long_summary.split()), 90)
+        self.assertTrue(self._anecdote_issue(_with_summary(long_summary)))
+
+    def test_html_emphasis_does_not_hide_a_pronoun(self) -> None:
+        resume = _with_summary(
+            "Desenvolvedor Full Stack com 6 anos de experiência em React e Node.js, com foco em "
+            "produtos web. <strong>Sou</strong> especialista em interfaces complexas e performance."
+        )
+        self.assertTrue(self._voice_issue(resume))
