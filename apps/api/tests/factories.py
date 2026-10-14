@@ -39,6 +39,9 @@ def make_profile(**overrides: Any) -> dict[str, Any]:
                     "Designed a PostgreSQL schema and caching layer that cut p95 latency by 40 percent",
                     "Mentored three engineers and ran the on-call rotation for the payments team",
                 ],
+                # Every profile skill is shown somewhere, so a resume built from this profile
+                # does not trip the unevidenced-skills quality check and spend an extra LLM call.
+                "keyTechnologies": ["Python", "FastAPI", "PostgreSQL", "Docker", "AWS", "Redis", "Kubernetes"],
             }
         ],
         "projects": [

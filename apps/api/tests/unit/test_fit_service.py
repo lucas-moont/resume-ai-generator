@@ -43,7 +43,14 @@ FRONTEND_POSTING = (
 
 
 def profile(**overrides) -> ProfileMaster:
-    return ProfileMaster.model_validate(make_profile(**overrides))
+    # These tests decide the candidate's technologies through ``skills`` (or an explicit
+    # ``experience``), so the factory's default per-role Key Technologies, which the keyword
+    # pass also reads, are cleared unless the test supplied its own roles.
+    data = make_profile(**overrides)
+    if "experience" not in overrides:
+        for role in data.get("experience") or []:
+            role["keyTechnologies"] = []
+    return ProfileMaster.model_validate(data)
 
 
 def fit(value: int) -> str:

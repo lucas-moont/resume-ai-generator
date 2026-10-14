@@ -5,6 +5,8 @@ from app.domain.keywords import normalize_token
 from app.domain.quality import allows_lean_skills as _allows_lean_skills
 from app.domain.quality import compressed_companies as _compressed_companies
 from app.domain.quality import quality_issues as _quality_issues
+from app.domain.quality import unevidenced_skills as _unevidenced_skills
+from app.domain.schemas import ProjectItem as _ProjectItem
 from app.domain.schemas import ProposalItem as _ProposalItem
 from app.models import ResumeDocument
 from app.services.generation_service import enrich_projects_from_sources as _enrich_projects_from_sources
@@ -35,6 +37,7 @@ def _strong_resume() -> ResumeDocument:
                     "Built a React and Next.js dashboard consumed by internal teams",
                     "Designed MongoDB schemas and AWS infrastructure for new features",
                 ],
+                "keyTechnologies": ["Node.js", "TypeScript", "React", "Next.js", "MongoDB", "AWS", "Docker", "Jest"],
             }
         ],
     )
@@ -358,3 +361,95 @@ class SummaryVoiceTests(unittest.TestCase):
             "produtos web. <strong>Sou</strong> especialista em interfaces complexas e performance."
         )
         self.assertTrue(self._voice_issue(resume))
+
+
+class CeilingChecksTests(unittest.TestCase):
+    """The checks that push DOWN: before them, a resume with eight bullets per role, every
+    project in the profile, a nine-segment headline and a 40-skill inventory passed clean."""
+
+    def test_the_strong_resume_trips_none_of_the_ceiling_checks(self) -> None:
+        issues = " ".join(_quality_issues(_strong_resume(), "Node.js React"))
+        for phrase in ("Cut bullets", "at most 4 projects", "Shorten the headline", "listed but never shown"):
+            self.assertNotIn(phrase, issues)
+
+    def test_flags_too_many_bullets_on_the_most_recent_role(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.experience[0].highlights = [f"Built feature number {i} with React and Node.js" for i in range(6)]
+        issues = _quality_issues(resume, "")
+        self.assertTrue(any("Cut bullets" in i and "Acme" in i for i in issues), issues)
+
+    def test_five_bullets_on_the_most_recent_role_is_fine(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.experience[0].highlights = [f"Built feature number {i} with React and Node.js" for i in range(5)]
+        self.assertFalse(any("Cut bullets" in i for i in _quality_issues(resume, "")))
+
+    def test_an_earlier_role_has_a_lower_ceiling(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        older = resume.experience[0].model_copy(deep=True)
+        older.company = "Globex"
+        older.start = "2018"
+        older.end = "2021"
+        older.highlights = [f"Maintained module number {i} in TypeScript and React" for i in range(5)]
+        resume.experience.append(older)
+        issues = _quality_issues(resume, "")
+        self.assertTrue(any("Cut bullets" in i and "Globex" in i for i in issues), issues)
+
+    def test_a_compressed_role_is_exempt_from_the_bullet_ceiling(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.experience[0].highlights = [f"Built feature number {i} with React and Node.js" for i in range(7)]
+        issues = _quality_issues(resume, "", compressed_companies=frozenset({normalize_token("Acme")}))
+        self.assertFalse(any("Cut bullets" in i for i in issues))
+
+    def test_flags_more_than_four_projects(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.projects = [
+            _ProjectItem(name=f"Project {i}", description="A React and Node.js app used by internal teams daily.")
+            for i in range(5)
+        ]
+        self.assertTrue(any("at most 4 projects" in i for i in _quality_issues(resume, "")))
+
+    def test_flags_a_headline_that_is_a_technology_list(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.headline = "Senior FullStack Developer | Software Engineer | React | Next.js | TypeScript"
+        self.assertTrue(any("Shorten the headline" in i for i in _quality_issues(resume, "")))
+
+    def test_three_headline_segments_are_fine(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.headline = "Senior Front-End Developer | React & Next.js | Design Systems"
+        self.assertFalse(any("Shorten the headline" in i for i in _quality_issues(resume, "")))
+
+    def test_flags_skills_that_appear_nowhere_but_the_skills_list(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.experience[0].keyTechnologies = []
+        resume.skills = [*resume.skills, "Kubernetes", "GraphQL", "Terraform"]
+        issues = [i for i in _quality_issues(resume, "") if "listed but never shown" in i]
+        self.assertEqual(len(issues), 1)
+        for skill in ("Kubernetes", "GraphQL", "Terraform", "Docker", "Jest"):
+            self.assertIn(skill, issues[0])
+        self.assertNotIn("TypeScript", issues[0])
+
+    def test_two_unevidenced_skills_are_tolerated(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.experience[0].keyTechnologies = []
+        self.assertEqual(_unevidenced_skills(resume), ["Docker", "Jest"])
+        self.assertFalse(any("listed but never shown" in i for i in _quality_issues(resume, "")))
+
+    def test_evidence_is_matched_by_whole_word_not_substring(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.experience[0].keyTechnologies = []
+        resume.experience[0].highlights = ["Integrated Google Analytics into a React storefront"]
+        resume.skills = ["React", "Go", "C", "R"]
+        self.assertEqual(_unevidenced_skills(resume), ["Go", "C", "R"])
+
+    def test_a_multi_word_skill_needs_every_word(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.experience[0].keyTechnologies = []
+        resume.experience[0].highlights = ["Built a <strong>React/Next.js</strong> app with React Query caching"]
+        resume.skills = ["React Query", "Next.js", "Spring Boot"]
+        self.assertEqual(_unevidenced_skills(resume), ["Spring Boot"])
+
+    def test_project_descriptions_count_as_evidence(self) -> None:
+        resume = _strong_resume().model_copy(deep=True)
+        resume.experience[0].keyTechnologies = []
+        resume.projects = [_ProjectItem(name="infra", description="Deployed with Docker and tested with Jest.")]
+        self.assertEqual(_unevidenced_skills(resume), [])

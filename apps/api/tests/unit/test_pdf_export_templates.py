@@ -214,7 +214,9 @@ class KeyTechnologiesReachThePrintTemplateTests(unittest.TestCase):
     """
 
     def test_an_empty_key_technologies_list_renders_no_line(self) -> None:
-        resume = ResumeDocument(**make_resume_payload())
+        payload = make_resume_payload()
+        payload["experience"][0]["keyTechnologies"] = []
+        resume = ResumeDocument(**payload)
         self.assertEqual([], resume.experience[0].keyTechnologies)
         html = render_resume_html(resume, "latex-ats")
         self.assertNotIn('<div class="exp-tech">', html)

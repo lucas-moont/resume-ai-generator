@@ -133,6 +133,72 @@ def has_posting_reference(resume: ResumeDocument) -> bool:
     return any(_POSTING_REFERENCE.search(p) for p in _prose_fields(resume))
 
 
+# Ceilings the generate prompt already declares. The checks below exist because nothing enforced
+# them: a resume could ship eight bullets per role or every project in the profile and still pass,
+# since every other check here only ever pushed upward ("add more").
+MAX_BULLETS_FIRST_ROLE = 5
+MAX_BULLETS_OTHER_ROLE = 4
+MAX_PROJECTS = 4
+MAX_HEADLINE_SEGMENTS = 3
+# A few unevidenced skills are tolerated (Git, a test runner): the check is after a skills list
+# that is an inventory rather than a summary of what the bullets show.
+UNEVIDENCED_SKILLS_THRESHOLD = 3
+
+_HEADLINE_SEPARATORS = re.compile(r"\s*[|•·]\s*")
+# Word boundaries for the evidence check: anything outside a technology-name alphabet splits, so
+# "React/Next.js" yields "react" and "next.js" and "(LLMs)" yields "llms".
+_EVIDENCE_SPLIT = re.compile(r"[^a-z0-9.+#-]+")
+
+
+def _evidence_words(text: str) -> set[str]:
+    plain = re.sub(r"<[^>]+>", " ", text or "").lower()
+    words = (w.strip(".-") for w in _EVIDENCE_SPLIT.split(plain))
+    return {w for w in words if w}
+
+
+def headline_segments(resume: ResumeDocument) -> int:
+    headline = re.sub(r"<[^>]+>", "", resume.headline or "").strip()
+    if not headline:
+        return 0
+    return len([part for part in _HEADLINE_SEPARATORS.split(headline) if part.strip()])
+
+
+def overlong_roles(resume: ResumeDocument, compressed: frozenset[str] = frozenset()) -> list[str]:
+    """Companies whose bullet list exceeds the prompt's ceiling for its position."""
+    out: list[str] = []
+    for index, role in enumerate(resume.experience):
+        if normalize_token(role.company or "") in compressed:
+            continue
+        limit = MAX_BULLETS_FIRST_ROLE if index == 0 else MAX_BULLETS_OTHER_ROLE
+        if len(role.highlights or []) > limit:
+            out.append(role.company or "?")
+    return out
+
+
+def unevidenced_skills(resume: ResumeDocument) -> list[str]:
+    """Skills the resume lists but never shows: absent from every bullet, every Key Technologies
+    line and every project description.
+
+    Matching is by whole word, never by substring, so a one-letter or two-letter skill ("C",
+    "R", "Go") cannot be "evidenced" by any word that merely contains it. A multi-word skill
+    ("Spring Boot", "React Query") needs every one of its words present. The summary is left out
+    on purpose: naming a technology in the positioning statement is not showing it.
+    """
+    parts: list[str] = []
+    for role in resume.experience:
+        parts.extend(role.highlights or [])
+        parts.extend(role.keyTechnologies or [])
+    for project in resume.projects:
+        parts.append(project.description or "")
+    evidence = _evidence_words(" ".join(parts))
+    missing: list[str] = []
+    for skill in resume.skills:
+        words = _evidence_words(skill)
+        if words and not words <= evidence:
+            missing.append(skill)
+    return missing
+
+
 def compressed_companies(agreed_improvements: list[ProposalItem] | None) -> frozenset[str]:
     """Employer keys an approved COMPRESS item named.
 
@@ -317,6 +383,39 @@ def quality_issues(
             "Cut clauses that address the job posting or the reader (e.g. 'exactly the kind of "
             "collaboration this role calls for', 'o que esta vaga exige'). That is cover letter "
             "voice: end each bullet on the fact or outcome and let it show the fit on its own."
+        )
+
+    roles_over = overlong_roles(resume, compressed)
+    if roles_over:
+        issues.append(
+            "Cut bullets to the strongest ones for this job: at most "
+            f"{MAX_BULLETS_FIRST_ROLE} for the most recent role and {MAX_BULLETS_OTHER_ROLE} for "
+            f"each earlier one. Too many in: {', '.join(roles_over)}. Keep the bullets that "
+            "answer the job's top requirements and drop the rest; do not merge them into longer "
+            "bullets."
+        )
+
+    if len(resume.projects) > MAX_PROJECTS:
+        issues.append(
+            f"Keep at most {MAX_PROJECTS} projects: the ones that argue for this job, strongest "
+            "first. Remove the rest."
+        )
+
+    if headline_segments(resume) > MAX_HEADLINE_SEGMENTS:
+        issues.append(
+            "Shorten the headline to the target role title plus at most two specializations "
+            "(e.g. 'Senior Front-End Developer | React & Next.js'). A list of technologies "
+            "belongs in skills, not in the headline."
+        )
+
+    missing_evidence = unevidenced_skills(resume)
+    if len(missing_evidence) >= UNEVIDENCED_SKILLS_THRESHOLD:
+        issues.append(
+            "Every skill listed must be shown somewhere in the resume (a bullet, a role's key "
+            "technologies or a project). These are listed but never shown: "
+            f"{', '.join(missing_evidence[:12])}. Remove each one that this job does not need; "
+            "for one it does need, show it in a real bullet or key technologies line only if "
+            "the profile supports it."
         )
 
     if len(resume.skills) < 6 and not allow_lean_skills:
