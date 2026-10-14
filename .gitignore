@@ -44,3 +44,6 @@ docs/
 
 # v2: uploaded source documents (personal data)
 data/uploads/
+
+# Local eval runs (real postings and profile copies, personal data)
+data/eval/
