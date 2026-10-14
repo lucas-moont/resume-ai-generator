@@ -140,6 +140,41 @@ class TestGenerateEndpoint:
         assert body["summary"] != "Resumo curto."
         assert len(body["experience"][0]["highlights"]) == 3
 
+    async def test_a_draft_that_ignores_every_role_does_not_ship_the_profile_about_verbatim(
+        self, client, fake_llm, write_profile
+    ):
+        # When the model matches no profile role, the anchor keeps the profile's own summary.
+        # A LinkedIn-style About (long, first person) must then be caught by the quality pass
+        # rather than shipped as the resume summary.
+        linkedin_about = (
+            "Sou desenvolvedor backend e gosto de transformar problemas complexos em software "
+            "simples. " + "Trabalho com Python, FastAPI, PostgreSQL e AWS em produtos reais. " * 12
+        )
+        write_profile(make_profile(summary=linkedin_about))
+        generic_template = make_resume_payload(
+            summary="Generic summary.",
+            experience=[
+                {
+                    "company": "TechCorp",
+                    "title": "Senior Engineer",
+                    "start": "2015",
+                    "end": None,
+                    "highlights": ["Fake bullet that matches no profile role"],
+                }
+            ],
+        )
+        strong_resume = make_resume_payload()
+        fake_llm.queue(json.dumps(generic_template), json.dumps(strong_resume))
+
+        resp = await client.post(
+            "/api/generate", json={"job_description": GENERIC_JOB_DESCRIPTION}
+        )
+
+        assert resp.status_code == 200
+        assert fake_llm.call_count == 2
+        assert "Trim the summary" in fake_llm.calls[1]["user"]
+        assert resp.json()["summary"] == strong_resume["summary"]
+
 
 class TestGenerateStreamEndpoint:
     async def test_happy_path_event_sequence(self, client, fake_llm, write_profile, parse_sse):
