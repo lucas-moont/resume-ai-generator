@@ -361,6 +361,55 @@ class TestListingQueries:
         assert jobs_repo.get_listing(session, 4242) is None
 
 
+class TestListingOrder:
+    """``sort=`` (schemas.ListingSort). Four listings whose fields are chosen so every sort yields
+    a DISTINCT order -- otherwise a sort that silently did nothing (fell back to Visibility) would
+    still pass. Every sort ends with Visibility desc then id as its tiebreaker, and the two edges
+    that need a rule of their own -- a listing with no ``date_posted`` under ``recent`` and an
+    ``unknown`` band under ``applicants`` -- both land LAST."""
+
+    @pytest.fixture
+    def four(self, session):
+        now = datetime.now(timezone.utc)
+        scan = jobs_repo.start_scan(session, trigger="immediate")
+        jobs_repo.replace_listings(
+            session,
+            scan_id=scan.id,
+            listings=[
+                (_listing("a", visibility_score=90.0, date_posted=now - timedelta(days=5),
+                          fit_score=30, applicant_band="<25"), []),
+                (_listing("b", visibility_score=50.0, date_posted=now - timedelta(days=2),
+                          fit_score=95, applicant_band="100+"), []),
+                (_listing("c", visibility_score=10.0, date_posted=now - timedelta(hours=1),
+                          fit_score=60, applicant_band="<50"), []),
+                (_listing("d", visibility_score=5.0, date_posted=None,
+                          fit_score=5, applicant_band="unknown"), []),
+            ],
+        )
+        session.commit()
+        return session
+
+    def _order(self, session, sort: str) -> list[str]:
+        return [row.identity_key for row in jobs_repo.list_listings(session, sort=sort)]
+
+    def test_default_sort_is_visibility_desc(self, four):
+        assert self._order(four, "visibility") == ["a", "b", "c", "d"]
+
+    def test_recent_orders_by_date_posted_desc_with_no_date_last(self, four):
+        assert self._order(four, "recent") == ["c", "b", "a", "d"]
+
+    def test_fit_orders_by_fit_score_desc(self, four):
+        assert self._order(four, "fit") == ["b", "c", "a", "d"]
+
+    def test_applicants_orders_by_band_ascending_with_unknown_last(self, four):
+        assert self._order(four, "applicants") == ["a", "c", "b", "d"]
+
+    def test_an_unrecognized_sort_falls_back_to_visibility(self, four):
+        """The router rejects an off-contract sort with a 422; the repository still must not throw
+        if one reaches it, so an unknown value is the default order, not an error."""
+        assert self._order(four, "surprise") == ["a", "b", "c", "d"]
+
+
 class TestListingMemory:
     def test_first_upsert_creates_the_memory_as_new(self, session):
         row = jobs_repo.upsert_memory(session, "acme|backend engineer")

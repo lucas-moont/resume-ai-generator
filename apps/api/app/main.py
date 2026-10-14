@@ -26,6 +26,7 @@ from app.routers import (
     settings,
 )
 from app.services.ingestion.reaper import reconcile
+from app.services.jobs import scan_service
 from app.services.jobs import scheduler as scan_scheduler
 
 
@@ -44,6 +45,13 @@ async def lifespan(app: FastAPI):
     # behind from a PREVIOUS run before this boot ever serves a request -- see
     # services/ingestion/reaper.py's module docstring for the two crash-window shapes.
     reconcile(engine)
+    # v7 fix round: same idea as the reaper above, for the Job Monitor's Scan -- closes any
+    # ``job_scans`` row a PREVIOUS process left stuck at ``status='running'`` (the single-flight
+    # lock it held only ever existed in that process's memory). Without this, a crashed or
+    # restarted process leaves the web app's "Buscar agora" button reading "Buscando…" forever,
+    # since GET /scans/current keeps finding that row. Must run before the scheduler below ever
+    # takes its first look at "is a Scan running".
+    scan_service.reconcile_orphaned_scans(engine)
     # v7 ticket 07: the Job Monitor's scheduled Scan loop -- an asyncio task on the same seam
     # as the reaper above, but a LIVE one rather than a one-shot: it re-reads the Search
     # Profile's interval every turn, so "off" and a changed interval both take effect without

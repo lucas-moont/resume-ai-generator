@@ -13,10 +13,12 @@ import type {
   BoardListResponse,
   JobListingDto,
   JobListingListResponse,
+  ListingSort,
   ListingStatus,
   ListingStatusUpdateRequest,
   MaxApplicantBand,
   OpenInChatResponse,
+  PostedWithinHours,
   ScanDto,
   SearchProfileDto,
   SearchProfileUpdateRequest,
@@ -117,6 +119,12 @@ export interface ListingFilters {
   maxBand?: MaxApplicantBand
   /** `dismissed` listings are hidden by default — that is the point of dismissing one. */
   includeDismissed?: boolean
+  /** Listings posted (or reposted) longer ago than this many hours are dropped, along with any
+   * listing that carries no `datePosted` at all. */
+  postedWithinHours?: PostedWithinHours
+  /** How to order the list. Omitted (the default) means `'visibility'` — the same server order
+   * the product shipped with — so a clean URL keeps meaning "the ranked list". */
+  sort?: ListingSort
 }
 
 function listingsQuery(filters: ListingFilters): string {
@@ -125,11 +133,17 @@ function listingsQuery(filters: ListingFilters): string {
   if (filters.board) params.set('board', filters.board)
   if (filters.maxBand) params.set('max_band', filters.maxBand)
   if (filters.includeDismissed) params.set('include_dismissed', '1')
+  if (filters.postedWithinHours) {
+    params.set('posted_within_hours', String(filters.postedWithinHours))
+  }
+  // Only the non-default sort travels: the server already defaults to Visibility Score desc.
+  if (filters.sort && filters.sort !== 'visibility') params.set('sort', filters.sort)
   const qs = params.toString()
   return qs ? `?${qs}` : ''
 }
 
-/** The ranked list of the LAST Scan — always ordered by Visibility Score desc, server-side.
+/** The ranked list of the LAST Scan — ordered server-side by Visibility Score desc by default, or
+ * by `filters.sort` (most recent / best Fit / fewest applicants) when one is chosen.
  * `description` is `null` on every item here; only `fetchListing` fills it in. */
 export function fetchListings(filters: ListingFilters = {}): Promise<JobListingListResponse> {
   return requestJson<JobListingListResponse>(`${BASE}/listings${listingsQuery(filters)}`)

@@ -161,6 +161,47 @@ describe('JobsShell', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('filters the list by how recently it was posted, sending posted_within_hours', async () => {
+    const params: (string | null)[] = []
+    server.use(
+      http.get('/api/jobs/listings', ({ request }) => {
+        params.push(new URL(request.url).searchParams.get('posted_within_hours'))
+        return HttpResponse.json({ listings: [] })
+      }),
+    )
+    const user = userEvent.setup()
+    renderApp(<JobsShell />)
+
+    const select = await screen.findByLabelText('Publicada há até', T)
+    expect(select).toHaveValue('')
+    await waitFor(() => expect(params).toContain(null))
+
+    await user.selectOptions(select, '1')
+
+    await waitFor(() => expect(params).toContain('1'))
+  })
+
+  it('lets the user re-sort the list and sends the chosen order to the server', async () => {
+    const sorts: (string | null)[] = []
+    server.use(
+      http.get('/api/jobs/listings', ({ request }) => {
+        sorts.push(new URL(request.url).searchParams.get('sort'))
+        return HttpResponse.json({ listings: [] })
+      }),
+    )
+    const user = userEvent.setup()
+    renderApp(<JobsShell />)
+
+    const select = await screen.findByLabelText('Ordenar por', T)
+    // Defaults to Relevância, and that default never travels — a clean URL still means "ranked".
+    expect(select).toHaveValue('visibility')
+    await waitFor(() => expect(sorts).toContain(null))
+
+    await user.selectOptions(select, 'applicants')
+
+    await waitFor(() => expect(sorts).toContain('applicants'))
+  })
+
   it('mirrors the mobile tab in the URL', async () => {
     const user = userEvent.setup()
     renderApp(<JobsShell />)

@@ -40,6 +40,7 @@ from app.domain.schemas import (
     BoardListOut,
     BoardOut,
     MaxApplicantBand,
+    PostedWithinHours,
     RemotePreference,
     ResumeDocument,
     ScanIntervalHours,
@@ -105,6 +106,7 @@ def default_search_profile() -> SearchProfileOut:
         boards=list(known_board_ids()),
         maxApplicantBand=None,
         intervalHours=None,
+        maxPostingAgeHours=None,
         updatedAt=None,
     )
 
@@ -137,6 +139,7 @@ def _to_out(row: SearchProfile) -> SearchProfileOut:
         boards=[b for b in jobs_repo.get_boards(row) if is_known_board(b)],  # type: ignore[misc]
         maxApplicantBand=row.max_applicant_band,  # type: ignore[arg-type]
         intervalHours=row.interval_hours,  # type: ignore[arg-type]
+        maxPostingAgeHours=row.max_posting_age_hours,  # type: ignore[arg-type]
         updatedAt=row.updated_at,
     )
 
@@ -183,6 +186,7 @@ def put_search_profile(session: Session, incoming: SearchProfileIn) -> SearchPro
         boards=clean.boards,
         max_applicant_band=clean.maxApplicantBand,
         interval_hours=clean.intervalHours,
+        max_posting_age_hours=clean.maxPostingAgeHours,
     )
     return _to_out(row)
 
@@ -204,6 +208,9 @@ def normalize_search_profile(incoming: SearchProfileIn) -> SearchProfileIn:
     interval = _validate_optional_choice(
         getattr(incoming, "intervalHours", None), ScanIntervalHours, "intervalHours"
     )
+    max_posting_age = _validate_optional_choice(
+        getattr(incoming, "maxPostingAgeHours", None), PostedWithinHours, "maxPostingAgeHours"
+    )
     return SearchProfileIn(
         roles=_clean_text_list(getattr(incoming, "roles", []), "roles"),
         locations=_clean_text_list(getattr(incoming, "locations", []), "locations"),
@@ -212,6 +219,7 @@ def normalize_search_profile(incoming: SearchProfileIn) -> SearchProfileIn:
         boards=_clean_boards(getattr(incoming, "boards", [])),
         maxApplicantBand=band,
         intervalHours=interval,
+        maxPostingAgeHours=max_posting_age,
     )
 
 

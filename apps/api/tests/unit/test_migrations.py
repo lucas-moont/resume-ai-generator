@@ -25,6 +25,7 @@ def test_migrations_list_is_ordered_drop_then_add() -> None:
         "_note_job_monitor_tables_added",
         "_rebuild_job_monitor_ephemeral_tables_without_rowid_reuse",
         "_relax_improvement_proposals_session_id_to_nullable",
+        "_add_missing_search_profile_max_posting_age_hours_column",
     ]
 
 

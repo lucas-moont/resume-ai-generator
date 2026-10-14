@@ -11,8 +11,9 @@ import {
 /** v7 ticket 12 — the ranked list of the last Scan, plus the two quick actions on a card.
  *
  * Query keys share the `['jobs', ...]` root with `useSearchProfile.ts` (ticket 14). The filters
- * object is part of the key: the backend does the filtering and the ordering (always Visibility
- * desc), so each filter combination is a distinct server answer, not a client-side slice.
+ * object is part of the key: the backend does the filtering and the ordering (Visibility desc by
+ * default, or the chosen `sort`), so each filters+sort combination is a distinct server answer,
+ * not a client-side slice.
  */
 
 export const LISTINGS_QUERY_ROOT = ['jobs', 'listings'] as const

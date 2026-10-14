@@ -3,6 +3,7 @@ import type {
   BoardDto,
   BoardId,
   MaxApplicantBand,
+  PostedWithinHours,
   RemotePreference,
   ScanIntervalHours,
   SearchProfileDto,
@@ -58,6 +59,11 @@ const MAX_BAND_OPTIONS: MaxApplicantBand[] = ['<10', '<25', '<50', '<100']
 
 const INTERVAL_OPTIONS: ScanIntervalHours[] = [1, 3, 6, 12, 24]
 
+// Same numbers as INTERVAL_OPTIONS -- the two questions share the "how far back" vocabulary in
+// this form, even though they mean different things server-side (this one is a hard write-time
+// ceiling on posting age, that one is how often the Monitor scans at all).
+const MAX_POSTING_AGE_OPTIONS: PostedWithinHours[] = [1, 3, 6, 12, 24]
+
 /** Remotive and Remote OK require naming the source beside each result. Surfaced here, at the
  * moment the user turns the board ON, and again on every Listing Source chip (ticket 12). */
 const ATTRIBUTION_BOARDS: readonly BoardId[] = ['remotive', 'remoteok']
@@ -71,6 +77,7 @@ function toDraft(profile: SearchProfileDto): SearchProfileUpdateRequest {
     boards: [...profile.boards],
     maxApplicantBand: profile.maxApplicantBand,
     intervalHours: profile.intervalHours,
+    maxPostingAgeHours: profile.maxPostingAgeHours,
   }
 }
 
@@ -351,6 +358,36 @@ function SearchProfileFields({ profile, boards }: SearchProfileFieldsProps) {
             </p>
           )
         )}
+      </div>
+
+      <div className="space-y-1">
+        <label htmlFor="search-profile-max-posting-age" className={`block ${LEGEND_CLASS}`}>
+          Idade máxima da vaga
+        </label>
+        <select
+          id="search-profile-max-posting-age"
+          value={draft.maxPostingAgeHours === null ? '' : String(draft.maxPostingAgeHours)}
+          onChange={(event) =>
+            patch({
+              maxPostingAgeHours: event.target.value
+                ? (Number(event.target.value) as PostedWithinHours)
+                : null,
+            })
+          }
+          className={FIELD_CLASS}
+        >
+          {MAX_POSTING_AGE_OPTIONS.map((hours) => (
+            <option key={hours} value={hours}>
+              {hours}h
+            </option>
+          ))}
+          <option value="">qualquer</option>
+        </select>
+        <p className={NOTE_CLASS}>
+          {draft.maxPostingAgeHours === null
+            ? 'Toda varredura traz vaga de qualquer idade.'
+            : `Toda varredura descarta vaga publicada (ou repostada) há mais de ${draft.maxPostingAgeHours}h — nem chega a aparecer na lista.`}
+        </p>
       </div>
 
       {draft.roles.length === 0 && (

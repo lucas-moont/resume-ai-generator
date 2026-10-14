@@ -217,6 +217,25 @@ def _relax_improvement_proposals_session_id_to_nullable(engine: Engine) -> None:
         raw.close()
 
 
+def _add_missing_search_profile_max_posting_age_hours_column(engine: Engine) -> None:
+    """v7 fix round adds ``search_profile.max_posting_age_hours`` (a hard ceiling on how old a
+    posting may be for a Scan to keep it -- see the column's own comment in ``app/db/tables.py``).
+    A ``search_profile`` row created before this change is missing the column outright, the same
+    shape ``_add_missing_source_documents_diff_summary_column`` and
+    ``_add_missing_chat_sessions_kind_column`` already handle for their own tables: ``ADD COLUMN``
+    with no ``DEFAULT`` leaves every existing row ``NULL``, which is exactly "qualquer" -- a
+    saved profile keeps behaving exactly as it did before this column existed.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.connect() as conn:
+        columns = conn.execute(text("PRAGMA table_info(search_profile)")).fetchall()
+        if not columns or any(row[1] == "max_posting_age_hours" for row in columns):
+            return
+        conn.execute(text("ALTER TABLE search_profile ADD COLUMN max_posting_age_hours INTEGER"))
+        conn.commit()
+
+
 # Ordered, append-only -- see module docstring.
 MIGRATIONS: list[Callable[[Engine], None]] = [
     _drop_legacy_resume_versions_template_id_column,
@@ -226,6 +245,7 @@ MIGRATIONS: list[Callable[[Engine], None]] = [
     _note_job_monitor_tables_added,
     _rebuild_job_monitor_ephemeral_tables_without_rowid_reuse,
     _relax_improvement_proposals_session_id_to_nullable,
+    _add_missing_search_profile_max_posting_age_hours_column,
 ]
 
 

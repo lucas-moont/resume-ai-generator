@@ -53,6 +53,7 @@ def _valid_in(**overrides) -> SearchProfileIn:
         boards=["linkedin"],
         maxApplicantBand="<25",
         intervalHours=6,
+        maxPostingAgeHours=3,
     )
     defaults.update(overrides)
     return SearchProfileIn(**defaults)
@@ -69,6 +70,7 @@ class TestDefaults:
         assert out.boards == list(known_board_ids())
         assert out.maxApplicantBand is None  # "qualquer"
         assert out.intervalHours is None  # off
+        assert out.maxPostingAgeHours is None  # "qualquer"
 
     def test_the_default_is_not_persisted(self, session):
         """A GET must not invent a saved Search Profile: ``search_profile`` having no row is
@@ -96,6 +98,7 @@ class TestPutAndGet:
         assert reread.boards == ["linkedin"]
         assert reread.maxApplicantBand == "<25"
         assert reread.intervalHours == 6
+        assert reread.maxPostingAgeHours == 3
         assert reread.updatedAt is not None
         assert saved.model_dump() == reread.model_dump()
 
@@ -115,11 +118,15 @@ class TestPutAndGet:
         assert out.roles == []
 
     def test_none_for_band_and_interval_round_trips_as_any_and_off(self, session):
-        svc.put_search_profile(session, _valid_in(maxApplicantBand=None, intervalHours=None))
+        svc.put_search_profile(
+            session,
+            _valid_in(maxApplicantBand=None, intervalHours=None, maxPostingAgeHours=None),
+        )
 
         out = svc.get_search_profile(session)
         assert out.maxApplicantBand is None
         assert out.intervalHours is None
+        assert out.maxPostingAgeHours is None
 
     def test_a_board_retired_after_the_save_is_dropped_on_read(self, session):
         """``search_profile.boards`` is plain text so an old row still loads; filtering the
@@ -194,6 +201,14 @@ class TestValidation:
 
     def test_an_interval_the_ui_never_offers_is_refused(self, session):
         bad = SearchProfileIn.model_construct(**_valid_in().model_dump() | {"intervalHours": 2})
+
+        with pytest.raises(svc.SearchProfileValidationError):
+            svc.put_search_profile(session, bad)
+
+    def test_a_posting_age_cap_the_ui_never_offers_is_refused(self, session):
+        bad = SearchProfileIn.model_construct(
+            **_valid_in().model_dump() | {"maxPostingAgeHours": 2}
+        )
 
         with pytest.raises(svc.SearchProfileValidationError):
             svc.put_search_profile(session, bad)

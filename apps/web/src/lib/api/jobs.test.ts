@@ -63,6 +63,7 @@ describe('search profile', () => {
       boards: ['remotive'],
       maxApplicantBand: '<25',
       intervalHours: 12,
+      maxPostingAgeHours: 6,
     }
 
     const saved = await updateSearchProfile(payload)
@@ -139,6 +140,23 @@ describe('fetchListings', () => {
     expect(url?.searchParams.get('include_dismissed')).toBe('1')
   })
 
+  it('sends the chosen sort, but omits the default visibility order', async () => {
+    let url: URL | undefined
+    server.use(
+      http.get('/api/jobs/listings', ({ request }) => {
+        url = new URL(request.url)
+        return HttpResponse.json({ listings: [] })
+      }),
+    )
+
+    await fetchListings({ sort: 'applicants' })
+    expect(url?.searchParams.get('sort')).toBe('applicants')
+
+    // 'visibility' is the server default, so a clean URL still means "the ranked list".
+    await fetchListings({ sort: 'visibility' })
+    expect(url?.searchParams.has('sort')).toBe(false)
+  })
+
   it('omits include_dismissed entirely when it is false', async () => {
     let url: URL | undefined
     server.use(
@@ -171,6 +189,28 @@ describe('fetchListings', () => {
 
     // 101 is `<10`; 103 is `unknown` and passes any cap; 102 (`<50`) is over the cap.
     expect(listings.map((l) => l.id)).toEqual([101, 103])
+  })
+
+  it('sends postedWithinHours as posted_within_hours', async () => {
+    let url: URL | undefined
+    server.use(
+      http.get('/api/jobs/listings', ({ request }) => {
+        url = new URL(request.url)
+        return HttpResponse.json({ listings: [] })
+      }),
+    )
+
+    await fetchListings({ postedWithinHours: 6 })
+
+    expect(url?.searchParams.get('posted_within_hours')).toBe('6')
+  })
+
+  it('caps by posting age, against the fixture world\'s own "now" (101: 3h, 102: 24h, 103: ~124h)', async () => {
+    const withinThreeHours = await fetchListings({ postedWithinHours: 3 })
+    expect(withinThreeHours.listings.map((l) => l.id)).toEqual([101])
+
+    const withinADay = await fetchListings({ postedWithinHours: 24 })
+    expect(withinADay.listings.map((l) => l.id)).toEqual([101, 102])
   })
 })
 

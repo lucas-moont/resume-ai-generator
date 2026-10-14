@@ -23,6 +23,7 @@ def _valid_body(**overrides) -> dict:
         "boards": ["linkedin", "indeed"],
         "maxApplicantBand": "<25",
         "intervalHours": 6,
+        "maxPostingAgeHours": 3,
     }
     body.update(overrides)
     return body
@@ -53,6 +54,7 @@ class TestGetSearchProfile:
         assert body["boards"] == list(known_board_ids())
         assert body["maxApplicantBand"] is None
         assert body["intervalHours"] is None
+        assert body["maxPostingAgeHours"] is None
         assert body["updatedAt"] is None
 
     async def test_reading_twice_still_reports_never_saved(self, client) -> None:
@@ -78,6 +80,7 @@ class TestPutSearchProfile:
         assert body["boards"] == ["linkedin", "indeed"]
         assert body["maxApplicantBand"] == "<25"
         assert body["intervalHours"] == 6
+        assert body["maxPostingAgeHours"] == 3
 
     async def test_the_response_is_what_a_later_get_returns(self, client) -> None:
         put = await client.put("/api/jobs/search-profile", json=_valid_body())
@@ -94,12 +97,13 @@ class TestPutSearchProfile:
     async def test_qualquer_and_off_are_sent_as_null(self, client) -> None:
         resp = await client.put(
             "/api/jobs/search-profile",
-            json=_valid_body(maxApplicantBand=None, intervalHours=None),
+            json=_valid_body(maxApplicantBand=None, intervalHours=None, maxPostingAgeHours=None),
         )
 
         assert resp.status_code == 200
         assert resp.json()["maxApplicantBand"] is None
         assert resp.json()["intervalHours"] is None
+        assert resp.json()["maxPostingAgeHours"] is None
 
     @pytest.mark.parametrize(
         "overrides",
@@ -110,6 +114,8 @@ class TestPutSearchProfile:
             {"maxApplicantBand": "unknown"},
             {"intervalHours": 2},
             {"intervalHours": 0},
+            {"maxPostingAgeHours": 2},
+            {"maxPostingAgeHours": 0},
         ],
         ids=[
             "unknown board",
@@ -118,6 +124,8 @@ class TestPutSearchProfile:
             "unknown is not offerable as a cap",
             "an interval the UI never offers",
             "zero is not off -- null is",
+            "a posting age cap the UI never offers",
+            "zero is not a valid posting age cap either",
         ],
     )
     async def test_invalid_values_are_422(self, client, overrides) -> None:

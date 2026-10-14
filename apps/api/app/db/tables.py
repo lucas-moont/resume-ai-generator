@@ -266,6 +266,13 @@ class SearchProfile(SQLModel, table=True):
     max_applicant_band: str | None = None
     # ScanIntervalHours (1 | 3 | 6 | 12 | 24); NULL is off -- Immediate Scans still work.
     interval_hours: int | None = None
+    # PostedWithinHours (1 | 3 | 6 | 12 | 24); NULL is "qualquer" (no cap). Unlike
+    # interval_hours (how OFTEN the Monitor scans) and BoardQuery.hours_old (how far back a
+    # Scan ASKS a board to look, so two Scans still overlap), this is a hard ceiling on how OLD
+    # a posting may be for a Scan to KEEP it at all -- a listing older than this is dropped when
+    # the Scan writes job_listings, the same way max_applicant_band already is. A listing with
+    # no date at all never passes an active cap: silence is not evidence of freshness.
+    max_posting_age_hours: int | None = None
     updated_at: datetime = Field(default_factory=_utcnow)
 
 

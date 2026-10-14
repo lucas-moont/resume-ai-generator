@@ -30,6 +30,7 @@ from app.services.jobs.scan_service import (
     hours_old_for,
     is_repost,
     passes_band_cap,
+    passes_posting_age_cap,
 )
 
 NOW = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
@@ -118,6 +119,24 @@ class TestPassesBandCap:
     def test_unknown_never_excludes_a_listing(self):
         # CONTEXT.md (Applicant Band): an absent number is not evidence of a crowd.
         assert passes_band_cap("unknown", "<10") is True
+
+
+class TestPassesPostingAgeCap:
+    def test_no_cap_passes_everything_including_no_date(self):
+        assert passes_posting_age_cap(ago(0.1), None, now=NOW) is True
+        assert passes_posting_age_cap(ago(1000), None, now=NOW) is True
+        assert passes_posting_age_cap(None, None, now=NOW) is True
+
+    def test_a_cap_keeps_a_posting_at_or_under_the_limit(self):
+        assert passes_posting_age_cap(ago(1), 3, now=NOW) is True
+        assert passes_posting_age_cap(ago(3), 3, now=NOW) is True
+
+    def test_a_cap_excludes_an_older_posting(self):
+        assert passes_posting_age_cap(ago(5), 3, now=NOW) is False
+
+    def test_no_date_never_passes_an_active_cap(self):
+        # The opposite asymmetry from the band cap's 'unknown': silence is not freshness.
+        assert passes_posting_age_cap(None, 24, now=NOW) is False
 
 
 # --- Dedup ---------------------------------------------------------------------------------------

@@ -65,6 +65,7 @@ describe('SearchProfileForm', () => {
     expect(screen.getByRole('checkbox', { name: 'Glassdoor' })).not.toBeChecked()
     expect(screen.getByLabelText('Máximo de candidatos')).toHaveValue('<50')
     expect(screen.getByLabelText('Intervalo de varredura')).toHaveValue('6')
+    expect(screen.getByLabelText('Idade máxima da vaga')).toHaveValue('')
   })
 
   it('shows the loading state and then an alert when the profile cannot be loaded', async () => {
@@ -134,6 +135,7 @@ describe('SearchProfileForm', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Glassdoor' }))
     await user.selectOptions(screen.getByLabelText('Máximo de candidatos'), '<10')
     await user.selectOptions(screen.getByLabelText('Intervalo de varredura'), '3')
+    await user.selectOptions(screen.getByLabelText('Idade máxima da vaga'), '1')
     await user.click(screen.getByRole('button', { name: 'Salvar' }))
 
     await waitFor(() => expect(calls).toHaveLength(1))
@@ -145,25 +147,43 @@ describe('SearchProfileForm', () => {
       boards: ['linkedin', 'indeed', 'remotive', 'glassdoor'],
       maxApplicantBand: '<10',
       intervalHours: 3,
+      maxPostingAgeHours: 1,
     })
     expect(await screen.findByText('Perfil de busca salvo.')).toBeInTheDocument()
   })
 
-  it('sends null for "qualquer" and for the "off" interval', async () => {
+  it('sends null for "qualquer", the "off" interval and "qualquer" posting age', async () => {
     const calls = captureSave()
     const user = await renderForm()
 
     const bandSelect = screen.getByLabelText('Máximo de candidatos')
     const intervalSelect = screen.getByLabelText('Intervalo de varredura')
+    const ageSelect = screen.getByLabelText('Idade máxima da vaga')
     await user.selectOptions(bandSelect, within(bandSelect).getByRole('option', { name: 'qualquer' }))
     await user.selectOptions(intervalSelect, within(intervalSelect).getByRole('option', { name: 'off' }))
+    await user.selectOptions(ageSelect, '1') // pick a cap first, then clear it below
+    await user.selectOptions(ageSelect, within(ageSelect).getByRole('option', { name: 'qualquer' }))
     await user.click(screen.getByRole('button', { name: 'Salvar' }))
 
     await waitFor(() => expect(calls).toHaveLength(1))
     expect(calls[0].maxApplicantBand).toBeNull()
     expect(calls[0].intervalHours).toBeNull()
+    expect(calls[0].maxPostingAgeHours).toBeNull()
     expect(
       screen.getByText('Sem varredura automática — "Buscar agora" continua valendo.'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Toda varredura traz vaga de qualquer idade.')).toBeInTheDocument()
+  })
+
+  it('shows the write-time consequence of a chosen posting age cap', async () => {
+    const user = await renderForm()
+
+    await user.selectOptions(screen.getByLabelText('Idade máxima da vaga'), '6')
+
+    expect(
+      screen.getByText(
+        'Toda varredura descarta vaga publicada (ou repostada) há mais de 6h — nem chega a aparecer na lista.',
+      ),
     ).toBeInTheDocument()
   })
 

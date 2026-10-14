@@ -207,6 +207,7 @@ export const SAMPLE_SEARCH_PROFILE: SearchProfileDto = {
   boards: ['linkedin', 'indeed', 'remotive'],
   maxApplicantBand: '<50',
   intervalHours: 6,
+  maxPostingAgeHours: null,
   updatedAt: '2026-08-24T22:10:00Z',
 }
 
@@ -220,6 +221,7 @@ export const SUGGESTED_SEARCH_PROFILE: SearchProfileDto = {
   boards: ['linkedin', 'indeed', 'remotive', 'weworkremotely', 'remoteok'],
   maxApplicantBand: null,
   intervalHours: 6,
+  maxPostingAgeHours: null,
   updatedAt: null,
 }
 
@@ -229,6 +231,22 @@ export const FAKE_ONE_CLICK_PDF = '%PDF-1.4 fake one-click resume'
 
 const BAND_ORDER: ApplicantBand[] = ['<10', '<25', '<50', '<100', '100+']
 
+// The one fixed "now" every `postedWithinHours` test measures age against — the fixture world's
+// own instant (the finished Scan's `finishedAt` is seconds earlier, its `nextScanAt` an hour
+// later). Wall-clock `Date.now()` would make the fixtures' ages drift as real time passes and
+// silently break this filter's tests months from now, the same trap the real backend's `now`
+// injection seam exists to avoid (`listing_query.list_listings`).
+const MOCK_NOW = new Date('2026-08-25T12:00:00Z').getTime()
+
+/** Age of `datePosted`, in hours, against `MOCK_NOW` -- `null` when there is no date, mirroring
+ * `domain.recency.hours_since`. */
+function ageHours(datePosted: string | null): number | null {
+  if (datePosted === null) return null
+  const posted = Date.parse(datePosted)
+  if (Number.isNaN(posted)) return null
+  return Math.max(0, (MOCK_NOW - posted) / (60 * 60 * 1000))
+}
+
 /** `'unknown'` NEVER excludes a listing from the cap (CONTEXT.md: Applicant Band) — it only
  * scores neutrally. `'100+'` fails every cap, since no cap is offerable above `<100`. */
 function passesBand(band: ApplicantBand, cap: MaxApplicantBand): boolean {
@@ -236,19 +254,52 @@ function passesBand(band: ApplicantBand, cap: MaxApplicantBand): boolean {
   return BAND_ORDER.indexOf(band) <= BAND_ORDER.indexOf(cap)
 }
 
+/** Applicant Band as a sortable rank for `?sort=applicants` (fewest first). `'unknown'` sorts
+ * LAST, mirroring the backend's `_APPLICANT_BAND_RANK` `else_`. */
+function bandRank(band: ApplicantBand): number {
+  const i = BAND_ORDER.indexOf(band)
+  return i === -1 ? BAND_ORDER.length : i
+}
+
+/** The server's ordering, reproduced so component tests can assert what `?sort=` does. Every sort
+ * ends with Visibility Score desc then id, the same stable tiebreaker the backend uses. */
+function sortListings(listings: JobListingDto[], sort: string | null): JobListingDto[] {
+  const tiebreak = (a: JobListingDto, b: JobListingDto) =>
+    b.visibilityScore - a.visibilityScore || a.id - b.id
+  const dateValue = (d: string | null) => (d ? Date.parse(d) : -Infinity) // no date sorts last
+  const sorted = [...listings]
+  if (sort === 'recent') {
+    sorted.sort((a, b) => dateValue(b.datePosted) - dateValue(a.datePosted) || tiebreak(a, b))
+  } else if (sort === 'fit') {
+    sorted.sort((a, b) => b.fitScore - a.fitScore || tiebreak(a, b))
+  } else if (sort === 'applicants') {
+    sorted.sort((a, b) => bandRank(a.applicantBand) - bandRank(b.applicantBand) || tiebreak(a, b))
+  } else {
+    sorted.sort(tiebreak)
+  }
+  return sorted
+}
+
 function filterListings(url: URL): JobListingDto[] {
   const status = url.searchParams.get('status')
   const board = url.searchParams.get('board')
   const maxBand = url.searchParams.get('max_band') as MaxApplicantBand | null
   const includeDismissed = url.searchParams.get('include_dismissed') === '1'
+  const postedWithinHours = url.searchParams.get('posted_within_hours')
+  const maxAgeHours = postedWithinHours ? Number(postedWithinHours) : null
 
-  return SAMPLE_LISTINGS.filter((listing) => {
+  const kept = SAMPLE_LISTINGS.filter((listing) => {
     if (!includeDismissed && listing.status === 'dismissed') return false
     if (status && listing.status !== status) return false
     if (board && !listing.sources.some((source) => source.board === board)) return false
     if (maxBand && !passesBand(listing.applicantBand, maxBand)) return false
+    if (maxAgeHours !== null) {
+      const age = ageHours(listing.datePosted)
+      if (age === null || age > maxAgeHours) return false
+    }
     return true
   })
+  return sortListings(kept, url.searchParams.get('sort'))
 }
 
 /** The list response omits descriptions (fifty full postings is a payload nobody reads); only

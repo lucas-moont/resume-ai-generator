@@ -195,18 +195,65 @@ class TestFilters:
             {"status": "archived"},
             {"max_band": "100+"},
             {"max_band": "unknown"},
+            {"posted_within_hours": "2"},
         ],
         ids=[
             "a board the catalog does not know",
             "a status outside the contract",
             "100+ is not offerable as a cap",
             "unknown is not offerable as a cap",
+            "an hour count outside the offerable set",
         ],
     )
     async def test_a_filter_outside_the_contract_is_422(self, client, scanned, params):
         """A confidently empty list would read as "no jobs match", which is a different and
         wrong answer -- the same 422 the Search Profile gives for the same mistake."""
         assert (await client.get("/api/jobs/listings", params=params)).status_code == 422
+
+    async def test_posted_within_hours_keeps_only_the_recent_ones(self, client, scanned):
+        """The fixture: fresh+uncrowded posted 1h ago, fresh+crowded 12h ago, stale+crowded 6
+        days ago -- three different windows to draw the cap through."""
+        only_freshest = await client.get("/api/jobs/listings", params={"posted_within_hours": 3})
+        assert [item["title"] for item in only_freshest.json()["listings"]] == [
+            "Senior Backend Engineer"
+        ]
+
+        within_a_day = await client.get("/api/jobs/listings", params={"posted_within_hours": 24})
+        assert {item["title"] for item in within_a_day.json()["listings"]} == {
+            "Senior Backend Engineer",
+            "Engenheiro de Software Backend",
+        }
+
+        assert len((await client.get("/api/jobs/listings")).json()["listings"]) == 3
+
+
+class TestSort:
+    """``?sort=`` chooses the order (schemas.ListingSort). The three fixture listings were built so
+    Visibility already ranks them fresh+uncrowded first, so these assert the ORDERING KEY each sort
+    applies rather than a reshuffle; the distinct-order proof is in tests/unit/test_jobs_repo.py."""
+
+    async def test_recent_orders_by_date_posted_descending(self, client, scanned):
+        resp = await client.get("/api/jobs/listings", params={"sort": "recent"})
+        dates = [item["datePosted"] for item in resp.json()["listings"]]
+        assert dates == sorted(dates, reverse=True)
+
+    async def test_fit_orders_by_fit_score_descending(self, client, scanned):
+        resp = await client.get("/api/jobs/listings", params={"sort": "fit"})
+        fits = [item["fitScore"] for item in resp.json()["listings"]]
+        assert fits == sorted(fits, reverse=True)
+
+    async def test_applicants_puts_the_least_crowded_first(self, client, scanned):
+        resp = await client.get("/api/jobs/listings", params={"sort": "applicants"})
+        assert [item["applicantBand"] for item in resp.json()["listings"]] == ["<10", "<50", "100+"]
+
+    async def test_explicit_visibility_matches_the_default_order(self, client, scanned):
+        resp = await client.get("/api/jobs/listings", params={"sort": "visibility"})
+        assert [item["id"] for item in resp.json()["listings"]] == [item["id"] for item in scanned]
+
+    async def test_a_sort_outside_the_contract_is_422(self, client, scanned):
+        assert (
+            await client.get("/api/jobs/listings", params={"sort": "cheapest"})
+        ).status_code == 422
 
 
 class TestDetail:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.engine import Engine
@@ -23,10 +24,12 @@ from app.domain.schemas import (
     BoardListOut,
     JobListingListOut,
     JobListingOut,
+    ListingSort,
     ListingStatus,
     ListingStatusUpdateIn,
     MaxApplicantBand,
     OpenInChatOut,
+    PostedWithinHours,
     ScanOut,
     SearchProfileIn,
     SearchProfileOut,
@@ -47,6 +50,8 @@ from app.services.profile_resolution import ProfileValidationError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/jobs")
+
+_POSTED_WITHIN_HOURS: frozenset[int] = frozenset(get_args(PostedWithinHours))
 
 
 # --- Search Profile ----------------------------------------------------------------------------
@@ -271,19 +276,45 @@ async def list_listings(
     board: BoardId | None = Query(default=None),
     max_band: MaxApplicantBand | None = Query(default=None),
     include_dismissed: bool = Query(default=False),
+    posted_within_hours: int | None = Query(
+        default=None,
+        description="Drop any listing posted or reposted more than this many hours ago.",
+    ),
+    sort: ListingSort = Query(default="visibility"),
     session: Session = Depends(get_session),
 ) -> JobListingListOut:
     """The ranked list of the LAST Scan (CONTEXT.md: Job Listing -- the list IS the last Scan).
 
     Query parameters are snake_case while the bodies are camelCase, as the frozen contract
-    specifies. They are typed with the contract's own ``Literal``s, so an unknown board or a
-    band nobody can pick is a 422 from Pydantic rather than a confidently empty list.
+    specifies. They are typed with the contract's own ``Literal``s, so an unknown board, a band
+    nobody can pick, or a sort that does not exist is a 422 from Pydantic rather than a
+    confidently wrong list.
 
-    Order is not negotiable and not a parameter: Visibility Score descending, id ascending.
-    Every filter rule lives in ``services/jobs/listing_query.py``.
+    ``posted_within_hours`` is the one exception: it is typed plain ``int`` rather than
+    ``PostedWithinHours`` and checked by hand below, because Pydantic v2 does not coerce a
+    numeric QUERY STRING ("3") against an ``int`` ``Literal`` -- it compares the raw string to
+    the literal's members and 422s every value, including the ones the UI itself sends. Every
+    other filter here is a ``str`` ``Literal``, where a query string needs no coercion at all,
+    which is why this is the only one that needed the workaround.
+
+    ``sort`` chooses the order; it defaults to ``"visibility"`` -- Visibility Score descending, id
+    ascending, the order the product shipped with -- and the alternatives (most recent, best Fit,
+    fewest applicants) all keep that as their tiebreaker. Every filter rule lives in
+    ``services/jobs/listing_query.py``; the order itself in ``repositories/jobs_repo.py``.
     """
+    if posted_within_hours is not None and posted_within_hours not in _POSTED_WITHIN_HOURS:
+        raise http_error(
+            422,
+            f"posted_within_hours must be one of {sorted(_POSTED_WITHIN_HOURS)}; "
+            f"got {posted_within_hours!r}",
+        )
     filters = listing_query.ListingFilters(
-        status=status, board=board, max_band=max_band, include_dismissed=include_dismissed
+        status=status,
+        board=board,
+        max_band=max_band,
+        include_dismissed=include_dismissed,
+        posted_within_hours=posted_within_hours,
+        sort=sort,
     )
     return JobListingListOut(listings=listing_query.list_listings(session, filters))
 

@@ -427,6 +427,21 @@ export type MaxApplicantBand = '<10' | '<25' | '<50' | '<100'
  * Memory, so a `'dismissed'` job stays hidden when a later Scan finds it again. */
 export type ListingStatus = 'new' | 'seen' | 'applied' | 'dismissed'
 
+/** How the monitor's list is ordered (`?sort=`). `'visibility'` is the default and the order the
+ * product shipped with (Visibility Score desc); the rest are the "Ordenar por" alternatives, each
+ * keeping Visibility Score as its tiebreaker. Mirrors `schemas.ListingSort` on the backend. */
+export type ListingSort = 'visibility' | 'recent' | 'fit' | 'applicants'
+
+/** `?posted_within_hours=` — drops any listing OLDER than this many hours, and one with no
+ * `datePosted` at all (an absent date is never evidence a job is fresh — the opposite asymmetry
+ * from `MaxApplicantBand`, where an absent band never excludes). Same offerable numbers as
+ * `ScanIntervalHours` (the two questions share the "how far back" vocabulary in the UI), but a
+ * different type: this is a request-time filter, not a Search Profile column. `datePosted`
+ * already carries the newest date across sources, bumped forward the moment a Repost is found,
+ * so this one filter reads as "posted OR reposted within the window". Mirrors
+ * `schemas.PostedWithinHours` on the backend. */
+export type PostedWithinHours = 1 | 3 | 6 | 12 | 24
+
 /** How one Job Board fared in one Scan. A Scan is PARTIAL, never failed, when a board blocks:
  * `'blocked'` = the board refused us, `'error'` = the board or the adapter broke, `'skipped'` =
  * that board's own minimum interval had not elapsed, so it was not called at all. */
@@ -566,6 +581,11 @@ export interface SearchProfileUpdateRequest {
   maxApplicantBand: MaxApplicantBand | null
   /** `null` is off: no scheduled Scan; Immediate Scan still works. */
   intervalHours: ScanIntervalHours | null
+  /** `null` is "qualquer" — no cap. Unlike `intervalHours` (how OFTEN the Monitor scans), this
+   * caps how OLD a posting may be for a Scan to KEEP it — a listing older than this is dropped
+   * every time a Scan writes its result (scheduled or Immediate), not merely hidden by a
+   * request-time filter. A listing with no date at all never passes an active cap. */
+  maxPostingAgeHours: PostedWithinHours | null
 }
 
 /** GET /api/jobs/search-profile, and the body of `POST /search-profile/suggest`.

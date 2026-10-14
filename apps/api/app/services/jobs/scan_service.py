@@ -46,7 +46,7 @@ from app import config as config_module
 from app.db.tables import JobListing, JobScan, ListingMemory, ListingSource, SearchProfile
 from app.domain.listing_identity import identity_key
 from app.domain.locale import DEFAULT_LOCALE, detect_locale
-from app.domain.recency import as_utc, recency_score
+from app.domain.recency import as_utc, hours_since, recency_score
 from app.domain.schemas import BoardQuery, BoardResult, ProfileMaster, RawPosting
 from app.domain.visibility import visibility_score
 from app.repositories import jobs_repo
@@ -163,6 +163,7 @@ class _ScanPlan:
     to_call: tuple[JobBoardProvider, ...]
     skipped: tuple[BoardOutcome, ...]
     max_band: str | None
+    max_posting_age_hours: int | None
 
 
 # --- Message hygiene ---------------------------------------------------------------------------
@@ -271,6 +272,7 @@ def _plan(
         to_call=tuple(to_call),
         skipped=tuple(skipped),
         max_band=row.max_applicant_band,
+        max_posting_age_hours=row.max_posting_age_hours,
     )
 
 
@@ -471,6 +473,23 @@ def passes_band_cap(band: str, max_band: str | None) -> bool:
     if band not in BAND_ORDER or max_band not in BAND_ORDER:
         return True
     return BAND_ORDER.index(band) <= BAND_ORDER.index(max_band)
+
+
+def passes_posting_age_cap(
+    date_posted: datetime | None, max_age_hours: int | None, *, now: datetime
+) -> bool:
+    """The user's ``maxPostingAgeHours`` cap: a group whose newest known posting date is older
+    than this many hours is dropped when the Scan writes ``job_listings`` (CONTEXT.md: a group's
+    ``date_posted`` is already the NEWEST across every source, bumped forward the moment a
+    Repost is detected -- ``group_postings``' ``_newer`` -- so this reads as "posted OR reposted
+    within the window", the same way ``listing_query._within_age`` reuses it for the request-time
+    filter). ``None`` is "qualquer" -- no cap. A listing with no date at all never passes an
+    ACTIVE cap: silence is not evidence of freshness, the opposite asymmetry from
+    ``passes_band_cap``'s ``unknown`` (there, silence never excludes)."""
+    if max_age_hours is None:
+        return True
+    age = hours_since(date_posted, now)
+    return age is not None and age <= max_age_hours
 
 
 def _build_listing(
@@ -701,6 +720,7 @@ class ScanRunner:
                 outcomes=outcomes,
                 any_called=bool(called),
                 max_band=plan.max_band,
+                max_posting_age_hours=plan.max_posting_age_hours,
                 now=instant,
                 clock=clock,
             )
@@ -725,6 +745,7 @@ class ScanRunner:
         outcomes: dict[str, BoardOutcome],
         any_called: bool,
         max_band: str | None,
+        max_posting_age_hours: int | None = None,
         now: datetime,
         clock: Callable[[], datetime] = _utcnow,
     ) -> ScanOutcome:
@@ -754,6 +775,9 @@ class ScanRunner:
                     hidden += 1
                     continue
                 if not passes_band_cap(listing.applicant_band, max_band):
+                    hidden += 1
+                    continue
+                if not passes_posting_age_cap(listing.date_posted, max_posting_age_hours, now=now):
                     hidden += 1
                     continue
                 pairs.append((listing, group.sources))
@@ -950,6 +974,49 @@ def _ordered_statuses(outcomes: dict[str, BoardOutcome]) -> dict[str, dict]:
     for board, outcome in outcomes.items():
         ordered.setdefault(board, outcome.as_dict())
     return ordered
+
+
+def reconcile_orphaned_scans(engine: Engine) -> int:
+    """Closes any ``job_scans`` row still ``running`` from a PREVIOUS process.
+
+    The single-flight lock (``ScanRunner._lock``) lives only in process memory, never on disk --
+    so if that process crashes, loses power, or is just restarted mid-scan (a dev-server
+    reload, a laptop sleep) while a Scan holds it, the row it opened at ``start_scan`` stays
+    ``status='running'`` forever: nothing else ever revisits it, because the code path that
+    would close it (``ScanRunner._run``'s ``finally``) died with the process that ran it.
+
+    Left alone, that row is what ``GET /scans/current`` (and therefore the web app's "Buscar
+    agora" button) keeps polling and finding "running" -- the button never leaves "Buscando…"
+    and the Board Status list never fills in, because nothing is actually running any more.
+
+    Called once at startup (``app.main``'s lifespan), the same seam and the same idea as
+    ``app.services.ingestion.reaper.reconcile`` for an interrupted upload: this app is
+    single-process, so at the moment this function runs -- before the scheduler starts and
+    before any request is served -- there is definitionally no live Scan yet. Any row still
+    ``running`` here cannot be a genuinely in-flight one; it can only be left over from a
+    process that is already gone. Closed with EMPTY board statuses rather than invented ones
+    (nothing about which boards it reached is known any more), the same way a Scan that raised
+    mid-flight is closed by ``ScanRunner._close_failed`` -- the previous Job Listing list is
+    left standing either way.
+    """
+    reaped = 0
+    with Session(engine) as session:
+        for row in jobs_repo.list_running_scans(session):
+            logger.warning(
+                "job scan reconcile: orphaned running Scan id=%s (started=%s) closed -- the "
+                "process that started it is gone",
+                row.id,
+                row.started_at,
+            )
+            jobs_repo.finish_scan(
+                session, row, board_statuses={}, listings_found=0, listings_scored=0
+            )
+            reaped += 1
+        if reaped:
+            session.commit()
+    if reaped:
+        logger.warning("job scan reconcile: closed %d orphaned running Scan(s)", reaped)
+    return reaped
 
 
 # The process-wide runner. Module-level because the single-flight lock has to be shared by

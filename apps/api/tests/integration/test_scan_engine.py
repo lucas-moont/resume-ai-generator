@@ -24,6 +24,7 @@ from app.domain.listing_identity import identity_key
 from app.domain.schemas import BoardQuery, BoardResult, RawPosting
 from app.repositories import jobs_repo
 from app.services.jobboards.provider_registry import BoardProviderRegistry
+from app.services.jobs import scan_service
 from app.services.jobs import scheduler as scheduler_module
 from app.services.jobs.scan_service import ScanAlreadyRunning, ScanRunner, run_scan
 from app.services.jobs.scheduler import ScanScheduler
@@ -694,6 +695,30 @@ class TestDedupAndRanking:
         titles = {listing.title for listing in read_listings(test_db_engine)}
         assert titles == {"Quiet Role", "Silent Board Role"}
 
+    async def test_the_posting_age_cap_drops_older_jobs_and_undated_ones_at_write_time(
+        self, test_db_engine, make_fake_board
+    ):
+        """Unlike the request-time ``?posted_within_hours=`` filter (which only hides a listing
+        on the way OUT), ``maxPostingAgeHours`` never lets an older posting into ``job_listings``
+        in the first place -- an Immediate Scan run right after saving it must not even show the
+        job for one request before the next Scan catches up."""
+        save_profile(test_db_engine, boards=["linkedin"], max_posting_age_hours=3)
+        registry = BoardProviderRegistry(
+            [
+                make_fake_board("linkedin").queue_ok(
+                    job(title="Fresh Role", url="https://a.test", date_posted=ago(1)),
+                    job(title="Exactly The Cap", url="https://b.test", date_posted=ago(3)),
+                    job(title="Stale Role", url="https://c.test", date_posted=ago(5)),
+                    job(title="Undated Role", url="https://d.test", date_posted=None),
+                )
+            ]
+        )
+
+        await scan(test_db_engine, registry)
+
+        titles = {listing.title for listing in read_listings(test_db_engine)}
+        assert titles == {"Fresh Role", "Exactly The Cap"}
+
     async def test_the_scan_row_records_the_counts_and_every_board_status(
         self, test_db_engine, make_fake_board
     ):
@@ -897,6 +922,37 @@ class TestSingleFlight:
             scan_service_module.group_postings = original
 
         assert [listing.title for listing in read_listings(test_db_engine)] == ["Backend Engineer"]
+
+
+class TestReconcileOrphanedScans:
+    """A ``job_scans`` row left ``status='running'`` by a process that is no longer around --
+    the shape a crashed or restarted process leaves behind, since the single-flight lock that
+    would have closed it lived only in that process's memory."""
+
+    async def test_a_running_row_from_a_dead_process_is_closed(self, test_db_engine):
+        with Session(test_db_engine) as session:
+            jobs_repo.start_scan(session, trigger="scheduled")
+            session.commit()
+
+        reaped = scan_service.reconcile_orphaned_scans(test_db_engine)
+        assert reaped == 1
+
+        with Session(test_db_engine) as session:
+            assert jobs_repo.get_running_scan(session) is None
+            row = jobs_repo.get_latest_scan(session)
+            assert row.status == "done"
+            assert row.finished_at is not None
+            assert row.listings_found == 0
+
+    # There is deliberately no "a genuinely running Scan is left alone" test here: the function
+    # is only ever called once, at startup (``app.main``'s lifespan), BEFORE the scheduler
+    # starts and before any request is served -- there is no code path in this process that
+    # could hold the single-flight lock yet. That is the whole premise documented on
+    # ``reconcile_orphaned_scans``: every 'running' row it can see is, by construction, left
+    # over from a process that is already gone.
+
+    async def test_no_running_rows_is_a_no_op(self, test_db_engine):
+        assert scan_service.reconcile_orphaned_scans(test_db_engine) == 0
 
 
 # --- Criterion 4b: the scheduler -----------------------------------------------------------------

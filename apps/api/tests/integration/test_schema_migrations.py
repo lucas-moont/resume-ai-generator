@@ -287,3 +287,56 @@ def test_init_db_proposal_rebuild_is_a_no_op_on_a_fresh_db(tmp_path):
     init_db(engine)  # second boot must not error
 
     assert not _column_is_not_null(engine, "improvement_proposals", "session_id")
+
+
+def _create_legacy_pre_max_posting_age_search_profile_table(engine) -> None:
+    """The ``search_profile`` schema before ``maxPostingAgeHours`` (v7 fix round): every column
+    it already had, minus the new one."""
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE search_profile (
+                    id INTEGER PRIMARY KEY,
+                    roles TEXT NOT NULL DEFAULT '[]',
+                    locations TEXT NOT NULL DEFAULT '[]',
+                    remote TEXT NOT NULL DEFAULT 'any',
+                    languages TEXT NOT NULL DEFAULT '[]',
+                    boards TEXT NOT NULL DEFAULT '[]',
+                    max_applicant_band TEXT,
+                    interval_hours INTEGER,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO search_profile (id, roles, boards, interval_hours, updated_at) "
+                "VALUES (1, '[\"Backend Engineer\"]', '[\"linkedin\"]', 6, '2026-01-01T00:00:00')"
+            )
+        )
+        conn.commit()
+
+
+def test_init_db_adds_max_posting_age_hours_to_a_legacy_search_profile_table(tmp_path):
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'legacy_v7fix.db').as_posix()}")
+    _create_legacy_pre_max_posting_age_search_profile_table(engine)
+    assert "max_posting_age_hours" not in _table_columns(engine, "search_profile")
+
+    init_db(engine)
+
+    assert "max_posting_age_hours" in _table_columns(engine, "search_profile")
+    with Session(engine) as session:
+        row = session.exec(text("SELECT id, interval_hours FROM search_profile WHERE id = 1")).first()
+        assert row is not None
+        assert row[1] == 6  # the pre-existing row survives untouched, new column reads NULL
+
+
+def test_init_db_max_posting_age_hours_migration_is_a_no_op_on_a_fresh_db(tmp_path):
+    engine = create_db_engine(f"sqlite:///{(tmp_path / 'fresh_v7fix.db').as_posix()}")
+
+    init_db(engine)
+    init_db(engine)  # second boot must not error
+
+    assert "max_posting_age_hours" in _table_columns(engine, "search_profile")

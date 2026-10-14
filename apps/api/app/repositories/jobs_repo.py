@@ -29,7 +29,7 @@ import json
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 
-from sqlalchemy import delete
+from sqlalchemy import case, delete
 from sqlmodel import Session, select
 
 from app.db.tables import (
@@ -92,6 +92,7 @@ def put_search_profile(
     boards: Sequence[str],
     max_applicant_band: str | None,
     interval_hours: int | None,
+    max_posting_age_hours: int | None = None,
 ) -> SearchProfile:
     """Creates or replaces the Search Profile -- a PUT, never a PATCH: every field is written
     from the arguments, so an omitted list is an EMPTY list, not "unchanged". That mirrors the
@@ -112,6 +113,7 @@ def put_search_profile(
     row.boards = _dumps(boards)
     row.max_applicant_band = max_applicant_band
     row.interval_hours = interval_hours
+    row.max_posting_age_hours = max_posting_age_hours
     row.updated_at = _utcnow()
     session.add(row)
     session.flush()
@@ -163,6 +165,15 @@ def get_running_scan(session: Session) -> JobScan | None:
     return session.exec(
         select(JobScan).where(JobScan.status == "running").order_by(JobScan.started_at.desc())
     ).first()
+
+
+def list_running_scans(session: Session) -> list[JobScan]:
+    """Every Scan row still marked ``running`` -- normally at most one, but a process that
+    crashed or was restarted mid-scan more than once leaves one behind each time (each fresh
+    process starts a scheduler with an empty in-process lock, with no memory of the row a PRIOR
+    process left open). Used only by the startup reconciler (``scan_service.reconcile_orphaned_
+    scans``); every other caller reads the single-flight state through ``get_running_scan``."""
+    return list(session.exec(select(JobScan).where(JobScan.status == "running")).all())
 
 
 def get_latest_scan(session: Session) -> JobScan | None:
@@ -279,20 +290,48 @@ def replace_listings(
     return [listing for listing, _ in listings]
 
 
-def list_listings(session: Session) -> list[JobListing]:
-    """Every listing of the latest Scan, ordered by ``visibility_score`` descending -- the ONE
-    order this product has (CONTEXT.md: Visibility Score is the ranking key), with the id as a
-    stable tiebreaker so two equally-scored listings do not swap places between requests.
+# Applicant Band as an ORDER-able rank for ``sort="applicants"`` (fewest applicants first). The
+# bands are categories, not a number, so "fewest" needs this explicit ordinal; ``unknown`` (and
+# anything unforeseen) sorts LAST via ``else_``, because "we could not tell how crowded it is" is
+# not a reason to rank a job above one we KNOW has under 10 applicants.
+_APPLICANT_BAND_RANK = case(
+    (JobListing.applicant_band == "<10", 0),
+    (JobListing.applicant_band == "<25", 1),
+    (JobListing.applicant_band == "<50", 2),
+    (JobListing.applicant_band == "<100", 3),
+    (JobListing.applicant_band == "100+", 4),
+    else_=5,
+)
+
+
+def _order_by(sort: str):
+    """The ORDER BY for a given ``sort`` (schemas.ListingSort). Visibility Score desc, then id,
+    is both the DEFAULT and the tiebreaker every other sort ends with -- so a chosen sort never
+    lets two otherwise-equal rows swap places between requests, and ``date_posted`` with no value
+    lands last under ``recent`` (SQLite sorts NULL below any value, so ``.desc()`` puts it at the
+    end). An unrecognized value falls back to the default rather than raising: the router already
+    rejected anything off-contract with a 422 before we get here."""
+    visibility = (JobListing.visibility_score.desc(), JobListing.id)
+    if sort == "recent":
+        return (JobListing.date_posted.desc(), *visibility)
+    if sort == "fit":
+        return (JobListing.fit_score.desc(), *visibility)
+    if sort == "applicants":
+        return (_APPLICANT_BAND_RANK.asc(), *visibility)
+    return visibility
+
+
+def list_listings(session: Session, sort: str = "visibility") -> list[JobListing]:
+    """Every listing of the latest Scan, ordered by ``sort`` (default ``"visibility"`` -- the
+    Visibility Score descending the product shipped with; CONTEXT.md: Visibility Score is the
+    ranking key). Every order ends with ``visibility_score`` desc then id as a stable tiebreaker,
+    so equally-ranked listings do not swap places between requests. See ``_order_by``.
 
     No status/board/band filters here: they need the Listing Memory joined in and the Search
     Profile's cap read, which is the router's composition to make (ticket 09), not a
     combinatorial explosion of keyword arguments in the repository.
     """
-    return list(
-        session.exec(
-            select(JobListing).order_by(JobListing.visibility_score.desc(), JobListing.id)
-        ).all()
-    )
+    return list(session.exec(select(JobListing).order_by(*_order_by(sort))).all())
 
 
 def get_listing(session: Session, listing_id: int) -> JobListing | None:

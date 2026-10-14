@@ -9,8 +9,11 @@ rule below is a product rule that deserves a test without an HTTP client in it.
 
 The rules, once:
 
-* **Order is not a parameter.** Visibility Score descending, id ascending, always -- the ONE
-  order this product has. It comes from ``jobs_repo.list_listings`` and is never re-sorted here.
+* **Order comes from the repository, never re-sorted here.** Visibility Score descending, id
+  ascending is the DEFAULT and the order the product shipped with; ``?sort=`` (schemas.
+  ListingSort) chooses an alternative -- most recent, best Fit, fewest applicants -- and every one
+  of them still ends with Visibility desc then id, so equal rows keep a stable order. The whole
+  decision lives in ``jobs_repo.list_listings`` / ``_order_by``; this service only passes it on.
 * **``dismissed`` is hidden unless asked for.** That is what dismissing a job means. A Scan
   already leaves a dismissed listing out of ``job_listings`` entirely; the ones this filter
   catches are those dismissed AFTER the Scan that found them.
@@ -21,6 +24,10 @@ The rules, once:
   ``scan_service.passes_band_cap``, imported rather than restated: the Scan applies the Search
   Profile's cap when it writes, this applies the request's, and two copies of one rule would
   eventually disagree.
+* **A listing with no date never passes an active ``?posted_within_hours=`` cap** -- the opposite
+  asymmetry from the band cap's ``unknown``. Same sharing discipline: ``scan_service.
+  passes_posting_age_cap`` is the ONE rule, applied here per-request and by the Scan itself
+  (permanently, via the Search Profile's ``maxPostingAgeHours``) when it writes.
 * **``description`` travels only in the detail.** Fifty full postings is a payload nobody reads;
   ``descriptionWordCount`` is always there so a card can pre-disable One-click without it.
 
@@ -31,7 +38,7 @@ everywhere else in this codebase.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import Session
 
@@ -39,7 +46,7 @@ from app.db.tables import JobListing, ListingMemory, ListingSource
 from app.domain.recency import as_utc
 from app.domain.schemas import JobListingOut, ListingSourceOut
 from app.repositories import jobs_repo
-from app.services.jobs.scan_service import passes_band_cap
+from app.services.jobs.scan_service import passes_band_cap, passes_posting_age_cap
 
 # What a listing's status is when nothing remembers it. A Scan writes a memory for every job it
 # finds, so this is the fallback for a listing whose memory was wiped, not the normal path.
@@ -56,6 +63,15 @@ class ListingFilters:
     board: str | None = None
     max_band: str | None = None
     include_dismissed: bool = False
+    # ``?posted_within_hours=`` (schemas.PostedWithinHours). Drops any listing OLDER than this
+    # many hours, and any listing with no ``datePosted`` at all -- an unknown age is not evidence
+    # it happened recently, the same asymmetry ``max_band`` gives ``unknown`` in the other
+    # direction (there, silence never excludes; here, silence never qualifies).
+    posted_within_hours: int | None = None
+    # How the list is ordered (schemas.ListingSort). Not a filter -- it drops no rows -- but it
+    # rides along here because it is the other thing the query string carries and, like the
+    # filters, makes each combination a distinct server answer the web client caches by.
+    sort: str = "visibility"
 
 
 def status_of(memory: ListingMemory | None) -> str:
@@ -109,7 +125,12 @@ def _source_out(source: ListingSource) -> ListingSourceOut:
 
 
 def matches(
-    listing: JobListing, sources: list[ListingSource], memory: ListingMemory | None, filters: ListingFilters
+    listing: JobListing,
+    sources: list[ListingSource],
+    memory: ListingMemory | None,
+    filters: ListingFilters,
+    *,
+    now: datetime,
 ) -> bool:
     """Whether one listing survives the request's filters (see the module docstring for why
     each rule reads the way it does). Pure -- no session, no I/O -- so the filter matrix is
@@ -123,16 +144,25 @@ def matches(
         return False
     if not passes_band_cap(listing.applicant_band, filters.max_band):
         return False
+    if not passes_posting_age_cap(listing.date_posted, filters.posted_within_hours, now=now):
+        return False
     return True
 
 
 def list_listings(
-    session: Session, filters: ListingFilters | None = None
+    session: Session, filters: ListingFilters | None = None, *, now: datetime | None = None
 ) -> list[JobListingOut]:
     """The ranked list of the last Scan, filtered. Three queries regardless of how many
-    listings there are: the rows, all their sources, all their memories."""
+    listings there are: the rows, all their sources, all their memories.
+
+    ``now`` is the instant ``posted_within_hours`` measures age from -- injectable so a test
+    never depends on the wall clock, the same convention as the Scan engine's own ``now``
+    (module docstring, ``scan_service``, rule 4). Production leaves it unset and gets the real
+    clock: this is a READ, not a Scan, so there is no one shared instant to reuse.
+    """
     filters = filters or ListingFilters()
-    rows = jobs_repo.list_listings(session)
+    instant = as_utc(now) if now is not None else datetime.now(timezone.utc)
+    rows = jobs_repo.list_listings(session, sort=filters.sort)
     if not rows:
         return []
     sources_by_listing = jobs_repo.get_sources_by_listing(session, [int(r.id or 0) for r in rows])
@@ -142,7 +172,7 @@ def list_listings(
     for row in rows:
         sources = sources_by_listing.get(int(row.id or 0), [])
         memory = memories.get(row.identity_key)
-        if not matches(row, sources, memory, filters):
+        if not matches(row, sources, memory, filters, now=instant):
             continue
         out.append(to_listing_out(row, sources, memory, include_description=False))
     return out

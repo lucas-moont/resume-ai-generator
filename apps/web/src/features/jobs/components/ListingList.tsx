@@ -2,8 +2,9 @@ import type { ListingFilters } from '../../../lib/api/jobs'
 import { useListings } from '../hooks/useListings'
 import { ListingCard } from './ListingCard'
 
-/** v7 ticket 12 — the ranked list itself. The order is the server's (Visibility Score desc,
- * always) and so is the filtering: this component never re-sorts or re-slices what it gets. */
+/** v7 ticket 12 — the ranked list itself. The order is the server's (Visibility Score desc by
+ * default, or whatever `filters.sort` asked for) and so is the filtering: this component never
+ * re-sorts or re-slices what it gets. */
 
 interface ListingListProps {
   filters: ListingFilters

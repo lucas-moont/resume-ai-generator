@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useTabUrl } from '../../../app/useMobileTabUrl'
-import type { BoardId, ListingStatus, MaxApplicantBand } from '../../../lib/api/dto'
+import type {
+  BoardId,
+  ListingSort,
+  ListingStatus,
+  MaxApplicantBand,
+  PostedWithinHours,
+} from '../../../lib/api/dto'
 import type { ListingFilters } from '../../../lib/api/jobs'
 import { useJobScanMonitor } from '../hooks/useJobScan'
 import { BOARD_LABEL, formatScanMoment } from '../listingFormat'
@@ -19,6 +25,20 @@ const JOBS_TABS = ['busca', 'vagas'] as const
 type JobsTab = (typeof JOBS_TABS)[number]
 
 const BAND_OPTIONS: MaxApplicantBand[] = ['<10', '<25', '<50', '<100']
+
+// "Publicada há até" options. Same numbers as the Search Profile's own scan interval select
+// (ScanIntervalHours) — the two questions share the "how far back" vocabulary in this UI, even
+// though they are unrelated server-side (this one filters a request, that one schedules a Scan).
+const POSTED_WITHIN_OPTIONS: PostedWithinHours[] = [1, 3, 6, 12, 24]
+
+// The "Ordenar por" options, in menu order. 'visibility' is first because it is the default and
+// the order the product shipped with; the rest are the alternatives the user asked for.
+const SORT_OPTIONS: { value: ListingSort; label: string }[] = [
+  { value: 'visibility', label: 'Relevância' },
+  { value: 'recent', label: 'Mais recentes' },
+  { value: 'fit', label: 'Melhor fit' },
+  { value: 'applicants', label: 'Menos candidaturas' },
+]
 
 const STATUS_OPTIONS: { value: ListingStatus; label: string }[] = [
   { value: 'new', label: 'Novas' },
@@ -59,6 +79,8 @@ export function JobsShell() {
   const [board, setBoard] = useState<BoardId | ''>('')
   const [maxBand, setMaxBand] = useState<MaxApplicantBand | ''>('')
   const [status, setStatus] = useState<ListingStatus | ''>('')
+  const [postedWithin, setPostedWithin] = useState<PostedWithinHours | ''>('')
+  const [sort, setSort] = useState<ListingSort>('visibility')
   // Ticket 13: the third column below renders <ListingDetail> for this id. It only EXISTS while
   // a listing is selected — an empty third of the screen next to the list would be worse than
   // the two-column layout it replaces — which is also why the panel owns a close button.
@@ -74,8 +96,11 @@ export function JobsShell() {
       ...(status !== '' ? { status } : {}),
       // Dismissing hides a listing, so asking for the dismissed ones has to lift that default.
       ...(status === 'dismissed' ? { includeDismissed: true } : {}),
+      ...(postedWithin !== '' ? { postedWithinHours: postedWithin } : {}),
+      // 'visibility' is the server default, so it stays out of the filters (and the URL).
+      ...(sort !== 'visibility' ? { sort } : {}),
     }),
-    [board, maxBand, status],
+    [board, maxBand, status, postedWithin, sort],
   )
 
   const isRunning = runningScan !== null
@@ -166,6 +191,21 @@ export function JobsShell() {
       >
         <div className="mb-3 flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-xs font-medium text-stone-600 dark:text-zinc-400">
+            Ordenar por
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as ListingSort)}
+              className={SELECT_CLASS}
+            >
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 text-xs font-medium text-stone-600 dark:text-zinc-400">
             Portal
             <select
               value={board}
@@ -208,6 +248,26 @@ export function JobsShell() {
               {STATUS_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 text-xs font-medium text-stone-600 dark:text-zinc-400">
+            Publicada há até
+            <select
+              value={postedWithin === '' ? '' : String(postedWithin)}
+              onChange={(e) =>
+                setPostedWithin(
+                  e.target.value === '' ? '' : (Number(e.target.value) as PostedWithinHours),
+                )
+              }
+              className={SELECT_CLASS}
+            >
+              <option value="">Qualquer</option>
+              {POSTED_WITHIN_OPTIONS.map((hours) => (
+                <option key={hours} value={hours}>
+                  {hours}h
                 </option>
               ))}
             </select>

@@ -337,6 +337,27 @@ MaxApplicantBand = Literal["<10", "<25", "<50", "<100"]
 # again. ``new`` is only ever the initial state the Scan writes -- see ListingStatusUpdateIn.
 ListingStatus = Literal["new", "seen", "applied", "dismissed"]
 
+# How the user asked the list to be ordered (``?sort=`` on ``GET /listings``). The product
+# shipped with exactly ONE order -- Visibility Score descending -- and it stays the DEFAULT;
+# these are the alternatives the monitor's "Ordenar por" select offers. Every non-default sort
+# still falls back to Visibility Score, then id, as tiebreakers, so a chosen sort never reshuffles
+# equally-ranked rows between requests.
+#   visibility -- Visibility Score desc (Fit + recency + competition; the default)
+#   recent     -- date_posted desc (a listing with no posted date sorts last)
+#   fit        -- Fit Score desc
+#   applicants -- Applicant Band ascending (fewest applicants first; unknown/None last)
+ListingSort = Literal["visibility", "recent", "fit", "applicants"]
+
+# ``?posted_within_hours=`` on ``GET /listings``: drop any listing whose ``datePosted`` is OLDER
+# than this many hours (or has no date at all -- an unknown age cannot be shown to be within a
+# window). Same offerable set as ``ScanIntervalHours`` -- the two questions ("how far back do I
+# look") share the same vocabulary in the UI -- but a DIFFERENT type on purpose: this is a
+# request-time filter with no persisted meaning, while ``ScanIntervalHours`` is a Search Profile
+# column. ``datePosted`` already carries the NEWEST date across a listing's sources (Scan engine,
+# ``_newer``), which is bumped forward the moment a Repost is detected -- so filtering on it alone
+# already means "posted OR reposted within this window", with no separate Repost case to write.
+PostedWithinHours = Literal[1, 3, 6, 12, 24]
+
 # How one Job Board fared in one Scan (CONTEXT.md: Scan). A Scan is PARTIAL, never failed, when
 # a board blocks or errors: the other boards' results stand and the UI shows a per-board flag.
 #   ok      -- the board answered
@@ -581,6 +602,12 @@ class SearchProfileIn(BaseModel):
     maxApplicantBand: MaxApplicantBand | None = None
     # ``None`` is off: no scheduled Scan, Immediate Scan still works.
     intervalHours: ScanIntervalHours | None = None
+    # ``None`` is "qualquer" -- no cap. Unlike ``intervalHours`` (how OFTEN the Monitor scans),
+    # this caps how OLD a posting may be for a Scan to KEEP it -- a listing older than this is
+    # dropped when the Scan writes its result, every time it runs (scheduled or Immediate), not
+    # merely hidden by a request-time filter. A listing with no date at all never passes an
+    # active cap, the opposite asymmetry from ``maxApplicantBand``'s ``unknown``.
+    maxPostingAgeHours: PostedWithinHours | None = None
 
 
 class SearchProfileOut(SearchProfileIn):

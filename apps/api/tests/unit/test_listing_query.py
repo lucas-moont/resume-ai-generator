@@ -259,6 +259,34 @@ class TestFilters:
         assert len(out) == 1
         assert out[0].visibilityScore == 90.0
 
+    @pytest.mark.parametrize(
+        ("age_hours", "cap", "kept"),
+        [
+            (1, 3, True),  # 1h old, capped at 3h
+            (3, 3, True),  # exactly the cap
+            (5, 3, False),  # older than the cap
+            (10, None, True),  # no cap at all -- "qualquer"
+        ],
+        ids=["well within", "exactly the cap", "older than the cap", "no cap"],
+    )
+    def test_posted_within_hours_caps_the_age(self, session, age_hours, cap, kept):
+        """``datePosted`` already carries the newest date across every source, bumped forward
+        the moment a Repost is detected -- so this one cap is "posted OR reposted within the
+        window", with nothing Repost-specific to write."""
+        seed(session, listing("a", date_posted=NOW - timedelta(hours=age_hours)))
+
+        out = list_listings(session, ListingFilters(posted_within_hours=cap), now=NOW)
+        assert bool(out) is kept
+
+    def test_posted_within_hours_excludes_a_listing_with_no_date(self, session):
+        """An absent date is not evidence a job is fresh -- the opposite asymmetry from
+        ``max_band``, where an absent number never excludes."""
+        seed(session, listing("a", date_posted=None))
+
+        assert list_listings(session, ListingFilters(posted_within_hours=24), now=NOW) == []
+        # ...and it is not held back by an unrelated cap -- only the age filter drops it.
+        assert list_listings(session, ListingFilters(), now=NOW) != []
+
 
 class TestDetail:
     def test_the_detail_carries_the_description(self, session):
