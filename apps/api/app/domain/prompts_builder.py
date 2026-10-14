@@ -10,10 +10,29 @@ import json
 from app.domain.schemas import ProposalItem, ResumeDocument
 
 
-def dump_prompt_json(model: ResumeDocument) -> str:
+def dump_prompt_json(model: ResumeDocument, *, exclude: set[str] | None = None) -> str:
     """Compact JSON for LLM user messages. Pretty-print indent is for humans; the model
     does not need it, and on a full Profile it is hundreds of wasted tokens per call."""
-    return model.model_dump_json()
+    return model.model_dump_json(exclude=exclude)
+
+
+# The profile's own headline and summary are written for LinkedIn (a keyword-list headline, a
+# long first-person "About"). Inside the profile JSON they look exactly like the output fields
+# the model is asked to write, and the model copied their shape: a nine-segment headline in,
+# a six-segment headline out; a 250-word About in, a 150-word summary out. They are sent apart,
+# labelled as raw material, so their facts are kept and their form is not.
+_PROFILE_PROSE_FIELDS = {"headline", "summary"}
+
+
+def _profile_notes_block(profile: ResumeDocument, *, label: str) -> str:
+    lines: list[str] = []
+    if (profile.headline or "").strip():
+        lines.append(f"Headline: {profile.headline.strip()}")
+    if (profile.summary or "").strip():
+        lines.append(f"Summary: {profile.summary.strip()}")
+    if not lines:
+        return ""
+    return f"\n\n{label}\n" + "\n".join(lines)
 
 
 def _format_agreed_improvements_block(items: list[ProposalItem]) -> str:
@@ -41,6 +60,10 @@ def _format_agreed_improvements_block(items: list[ProposalItem]) -> str:
         "selection/order and experience/project order — it was agreed with the user in chat. "
         "Only the truthfulness rule (never invent facts not present in the profile) still "
         "outranks this plan.\n"
+        "The plan decides WHICH entries appear, not HOW MANY: the system prompt's ceilings still "
+        "apply (8-16 skills, at most 5 bullets on the current role and 4 on earlier ones, at most "
+        "4 projects, a headline of at most 3 segments). A skills item is the exact list to ship, "
+        "in its order; if it says \"and the rest\" or similar, ship only the entries it names.\n"
         "The plan decides WHAT changes, not the form: a proposed text still follows the system "
         "prompt's voice, summary shape and punctuation rules. If a proposed summary uses a "
         "pronoun or self-description verb, tells a project anecdote or counts PRs/commits, keep "
@@ -123,6 +146,13 @@ def build_generation_user_msg(
     plan_block = ""
     if agreed_improvements:
         plan_block = _format_agreed_improvements_block(agreed_improvements) + "\n\n"
+    notes_block = _profile_notes_block(
+        profile,
+        label=(
+            "CANDIDATE'S OWN NOTES (written for LinkedIn, not for this resume: take facts from "
+            "them, never their length, voice, wording or shape):"
+        ),
+    )
     return f"""Job description:
 ---
 {job_description.strip()}
@@ -132,14 +162,14 @@ def build_generation_user_msg(
 - Use ONLY facts present in the profile (and supporting sources). Do NOT invent employers, job titles, dates, schools, certifications, projects, or metrics.
 - Keep the candidate's name and contact details EXACTLY as in the profile.
 - Keep every employer, role, dates and school from the profile — never open a gap in the timeline. You may rewrite their wording (bullets/descriptions) freely.
-- Relevance beats completeness. Give each role space proportional to how much it serves THIS job: a directly relevant role gets its full 3-5 bullets, a role with little bearing on the job gets one factual bullet (never zero). Same for skills and projects — select the ones this job actually calls for and leave the rest out, rather than listing everything the profile happens to contain. A focused resume of 9 skills beats a padded one of 16.
+- Relevance beats completeness. Give each role space proportional to how much it serves THIS job: the current role gets at most 5 bullets, an earlier relevant role 3-4, a role with little bearing on the job gets one factual bullet (never zero). Same for skills and projects — select the ones this job actually calls for and leave the rest out, rather than listing everything the profile happens to contain. A focused resume of 9 skills beats a padded one of 16. Every skill you list must be shown in a bullet, a role's keyTechnologies or a project description.
 - If the profile lacks something the job wants, omit it — never fabricate it.
 
 CANDIDATE PROFILE (authoritative JSON — the single source of truth):
-{dump_prompt_json(profile)}{sources_block}
+{dump_prompt_json(profile, exclude=_PROFILE_PROSE_FIELDS)}{notes_block}{sources_block}
 
 Target locale for labels and prose: {locale}
-Return the tailored resume as JSON only, using the same schema as the profile."""
+Return the tailored resume as JSON only, using the JSON schema in the system prompt."""
 
 
 def build_proposal_analysis_user_msg(
@@ -152,8 +182,16 @@ def build_proposal_analysis_user_msg(
     description + locale ONLY -- deliberately lean (no PDF/project-notes/GitHub context), unlike
     ``build_generation_user_msg``'s ``sources_block``, since the Analysis only needs to compare
     the profile against the job, not author a full resume."""
+    notes_block = _profile_notes_block(
+        profile,
+        label=(
+            "Candidate's own notes (the profile's current headline and summary, written for "
+            "LinkedIn; a headline or summary item quotes them as `current`, and never copies "
+            "their length or shape into `proposed`):"
+        ),
+    )
     return f"""Candidate profile (authoritative JSON):
-{dump_prompt_json(profile)}
+{dump_prompt_json(profile, exclude=_PROFILE_PROSE_FIELDS)}{notes_block}
 
 Job description:
 ---

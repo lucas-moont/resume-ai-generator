@@ -11,6 +11,13 @@ never to leave profile noise out, so the Relevance Filter could not exist while 
 old text is quoted in ``test_hard_rules_no_longer_forbid_leaving_irrelevant_content_out`` so the
 change stays visible as a change rather than a quietly re-baselined snapshot.
 
+It was updated a SECOND time, also deliberately, when the profile's ``headline`` and ``summary``
+moved out of the profile JSON into a separate "CANDIDATE'S OWN NOTES" block. Inside the JSON they
+looked like output fields and the model copied their shape (a LinkedIn keyword-list headline, a
+250-word first-person About), so the final line no longer says "using the same schema as the
+profile" either. The bullet rule now states the per-position ceilings (5 for the current role,
+3-4 for an earlier relevant one) and that every listed skill must be shown somewhere.
+
 The rest of this module tests the v4/v6 additions: the APPROVED IMPROVEMENT PLAN block (now
 including the DROP/COMPRESS ops), and the Analysis / Proposal Turn user-message builders.
 """
@@ -46,14 +53,18 @@ Tailor a resume for the candidate described in the CANDIDATE PROFILE below. Hard
 - Use ONLY facts present in the profile (and supporting sources). Do NOT invent employers, job titles, dates, schools, certifications, projects, or metrics.
 - Keep the candidate's name and contact details EXACTLY as in the profile.
 - Keep every employer, role, dates and school from the profile — never open a gap in the timeline. You may rewrite their wording (bullets/descriptions) freely.
-- Relevance beats completeness. Give each role space proportional to how much it serves THIS job: a directly relevant role gets its full 3-5 bullets, a role with little bearing on the job gets one factual bullet (never zero). Same for skills and projects — select the ones this job actually calls for and leave the rest out, rather than listing everything the profile happens to contain. A focused resume of 9 skills beats a padded one of 16.
+- Relevance beats completeness. Give each role space proportional to how much it serves THIS job: the current role gets at most 5 bullets, an earlier relevant role 3-4, a role with little bearing on the job gets one factual bullet (never zero). Same for skills and projects — select the ones this job actually calls for and leave the rest out, rather than listing everything the profile happens to contain. A focused resume of 9 skills beats a padded one of 16. Every skill you list must be shown in a bullet, a role's keyTechnologies or a project description.
 - If the profile lacks something the job wants, omit it — never fabricate it.
 
 CANDIDATE PROFILE (authoritative JSON — the single source of truth):
-{profile.model_dump_json()}{sources_block}
+{profile.model_dump_json(exclude={'headline', 'summary'})}
+
+CANDIDATE'S OWN NOTES (written for LinkedIn, not for this resume: take facts from them, never their length, voice, wording or shape):
+Headline: {profile.headline}
+Summary: {profile.summary}{sources_block}
 
 Target locale for labels and prose: {locale}
-Return the tailored resume as JSON only, using the same schema as the profile."""
+Return the tailored resume as JSON only, using the JSON schema in the system prompt."""
 
 
 class TestBuildGenerationUserMsgCharacterization:
@@ -232,8 +243,18 @@ class TestBuildProposalAnalysisUserMsg:
             locale="pt-BR",
         )
         assert "We need a backend engineer." in out
-        assert _PROFILE.model_dump_json() in out
+        assert _PROFILE.model_dump_json(exclude={"headline", "summary"}) in out
         assert "pt-BR" in out
+
+    def test_the_profile_headline_and_summary_travel_as_notes_not_as_json_fields(self) -> None:
+        out = build_proposal_analysis_user_msg(
+            profile=_PROFILE, job_description="We need a backend engineer.", locale="pt-BR"
+        )
+        assert '"headline"' not in out
+        assert '"summary"' not in out
+        assert "Candidate's own notes" in out
+        assert "Headline: Backend Developer" in out
+        assert "Summary: Backend developer with 5 years of experience." in out
 
     def test_does_not_mention_projects_or_github_context(self) -> None:
         # Spec 4.1: the Analysis builder is deliberately lean -- no project/GitHub context block,
@@ -515,3 +536,31 @@ class TestGenerationHardRulesLicenseSubtraction:
         out = self._prompt()
         assert "never open a gap in the timeline" in out
         assert "one factual bullet (never zero)" in out
+
+
+class TestProfileProseIsSentAsNotes:
+    """The profile's headline and summary leave the JSON so the model cannot read them as the
+    shape of the output fields it writes."""
+
+    def test_a_profile_without_headline_or_summary_sends_no_notes_block(self) -> None:
+        bare = _PROFILE.model_copy(update={"headline": "", "summary": ""})
+        out = build_generation_user_msg(
+            job_description="We need a backend engineer.",
+            profile=bare,
+            pdf_block="",
+            project_notes="",
+            locale="pt-BR",
+        )
+        assert "CANDIDATE'S OWN NOTES" not in out
+
+    def test_the_plan_block_states_that_ceilings_still_apply(self) -> None:
+        out = build_generation_user_msg(
+            job_description="We need a backend engineer.",
+            profile=_PROFILE,
+            pdf_block="",
+            project_notes="",
+            locale="pt-BR",
+            agreed_improvements=_ITEMS,
+        )
+        assert "The plan decides WHICH entries appear, not HOW MANY" in out
+        assert "and the rest" in out

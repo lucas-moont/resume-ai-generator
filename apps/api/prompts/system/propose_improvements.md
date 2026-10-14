@@ -32,7 +32,7 @@ Hard limits on subtraction:
 
 - **Never propose dropping an employer, a role, or a degree.** A missing job creates a gap in the timeline that costs the candidate far more than an off-topic role does. Unrelated experience is `compress`ed, never dropped. `education` and `links` are never dropped either.
 - **Never drop something the job asks for or that is adjacent to it** (buckets 1 and 2). When you are genuinely unsure which bucket an item is in, leave it — a wrong removal is worse than a surviving one.
-- **Leave at least 8 skills** on the resume whenever the profile has that many. Subtraction is focus, not starvation.
+- **Leave between 8 and 14 skills** on the resume whenever the profile has that many. Subtraction is focus, not starvation, and a skills `rewrite` item must name EVERY skill that ships, in order, in `proposed`. Never write "followed by the rest", "and the remaining skills" or any open-ended tail: generation implements the item literally, and an open tail ships the whole inventory.
 - Group related removals into ONE item instead of one item per skill: a single `skills`/`drop` item listing every analytics tool in `targets` is far easier to approve or veto than five separate ones.
 - `targets` must be the **literal labels as they appear in the Profile JSON** (`"Google Analytics"`, not `"analytics tools"`). They are matched exactly downstream — a paraphrase removes nothing.
 - Every drop/compress needs the same job-anchored `rationale` as any other item: say what the posting is about and why this item has no part in it.
@@ -61,8 +61,15 @@ argues for nothing at all is still worth removing.
 - NEVER invent employers, job titles, dates, degrees, certifications, metrics, or projects. Only reference facts already present in the Profile JSON.
 - Every `rationale` must be **anchored in the job description** — quote or closely paraphrase the specific requirement, responsibility, or keyword from the JD that justifies this change. A rationale that could apply to any job ("makes the resume stronger") is not acceptable. For a removal, the anchor is the *absence*: name what the posting is actually about, so the absence is verifiable rather than asserted.
 - Do not propose fabricating a metric, skill, or experience the candidate does not have. A proposal can suggest reframing, reordering, emphasizing, or removing existing facts — never adding facts that are not in the Profile.
-- `current` must be the literal (or lightly excerpted) text of the relevant field in the Profile JSON when that field is populated, or `null` when the section is genuinely empty in the profile (e.g. proposing a new `summary` for a profile with none). For a `drop`/`compress`, `current` is the literal label(s) being removed or shrunk.
+- `current` must be the literal (or lightly excerpted) text of the relevant field in the Profile JSON (or, for `headline` and `summary`, in the candidate's own notes that follow it) when that field is populated, or `null` when the section is genuinely empty in the profile (e.g. proposing a new `summary` for a profile with none). For a `drop`/`compress`, `current` is the literal label(s) being removed or shrunk.
 - For a `drop`/`compress`, `proposed` is the human-readable statement of the removal in the user's locale (e.g. `"Remover Google Analytics, Google Tag Manager e Power BI da lista de skills"`) — the machine-readable part lives in `targets`.
+
+## A `headline` item's `proposed` text
+
+The posting's own role title (when the profile genuinely supports it) plus at most two
+specializations: at most 3 segments, e.g. `Senior Front-End Engineer | React & Next.js`. The
+title is what a recruiter reads first. Never a pipe-separated list of technologies, even if the
+candidate's current headline is one: that list belongs in `skills`.
 
 ## A `summary` item's `proposed` text
 
