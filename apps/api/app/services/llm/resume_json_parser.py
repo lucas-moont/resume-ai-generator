@@ -428,6 +428,21 @@ MIN_SKILLS_AFTER_DROPS = 4
 # decides what stays.
 MAX_SKILLS = 16
 
+# The generate prompt's own ceilings, applied to what the model SELECTED (never to the profile's
+# fallback content, which the quality pass flags instead). Before these, a profile with eight
+# bullets per role and eight projects shipped all of them, whatever the prompt asked for.
+MAX_BULLETS_FIRST_ROLE = 5
+MAX_BULLETS_OTHER_ROLE = 4
+MAX_PROJECTS = 4
+
+
+def _single_title(title: str) -> str:
+    """One job title per role. A profile synced from LinkedIn can store two joined by " | "
+    ("Desenvolvedor Full-Stack Sênior | Engenheiro de Software Sênior") and the model copies it;
+    the first is the one the candidate leads with. Roles are matched by company + start date,
+    never by title, so trimming it cannot break the match."""
+    return title.split(" | ", 1)[0].strip() or title.strip()
+
 
 def _dropped_targets(
     agreed_improvements: list[ProposalItem] | None,
@@ -662,11 +677,15 @@ def _anchor_generate_to_profile(
                 # always stay the profile's -- only wording, never the anchor, comes from the LLM.
                 llm_title = match.get("title")
                 if isinstance(llm_title, str) and llm_title.strip():
-                    new_role["title"] = llm_title.strip()
+                    new_role["title"] = llm_title.strip() if is_seed else _single_title(llm_title)
                 highlights = match.get("highlights")
                 if isinstance(highlights, list):
                     cleaned = [h.strip() for h in highlights if isinstance(h, str) and h.strip()]
                     if cleaned:
+                        if not is_seed:
+                            is_current = i == 0 or not base.get("end")
+                            limit = MAX_BULLETS_FIRST_ROLE if is_current else MAX_BULLETS_OTHER_ROLE
+                            cleaned = cleaned[:limit]
                         new_role["highlights"] = cleaned
                         matched_any = True
                 # Key Technologies (v7): adopted only when at least one entry survived the
@@ -756,7 +775,7 @@ def _anchor_generate_to_profile(
             selected_proj.append(merged)
             used_keys.add(key)
         # No match at all means the model ignored the profile, not that it chose nothing.
-        out["projects"] = selected_proj if selected_proj else base_proj
+        out["projects"] = selected_proj[:MAX_PROJECTS] if selected_proj else base_proj
     else:
         out["projects"] = patch_proj
 

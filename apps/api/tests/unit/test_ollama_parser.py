@@ -1288,3 +1288,97 @@ class SkillSelectionTests(unittest.TestCase):
         parsed = parse_resume_json(raw, fallback, refine=False)
 
         self.assertEqual(list(reversed(many))[:16], parsed.skills)
+
+
+class AnchorCeilingTests(unittest.TestCase):
+    """The parser enforces the prompt's own ceilings on what the model SELECTED: bullets per
+    role, projects, one title per role. Profile fallback content and seed extraction are never
+    cut here; the quality pass flags those instead."""
+
+    def _profile(self) -> ResumeDocument:
+        return ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            experience=[
+                {
+                    "company": "SmartHow",
+                    "title": "Desenvolvedor Full-Stack Sênior | Engenheiro de Software Sênior",
+                    "start": "2026-01",
+                    "end": None,
+                    "highlights": [f"Profile bullet {i}" for i in range(8)],
+                },
+                {
+                    "company": "Savvi",
+                    "title": "Front-End Developer",
+                    "start": "2021-06",
+                    "end": "2025-04",
+                    "highlights": [f"Older profile bullet {i}" for i in range(8)],
+                },
+            ],
+            projects=[{"name": f"Project {i}", "description": f"Real project {i}."} for i in range(6)],
+            locale="en",
+        )
+
+    def _patch(self, **extra: object) -> dict:
+        patch: dict = {
+            "experience": [
+                {
+                    "company": "SmartHow",
+                    "title": "Senior Full-Stack Developer | Senior Software Engineer",
+                    "start": "2026-01",
+                    "highlights": [f"Model bullet {i}" for i in range(8)],
+                },
+                {
+                    "company": "Savvi",
+                    "title": "Front-End Developer",
+                    "start": "2021-06",
+                    "highlights": [f"Older model bullet {i}" for i in range(8)],
+                },
+            ]
+        }
+        patch.update(extra)
+        return patch
+
+    def test_matched_roles_keep_at_most_five_then_four_bullets_in_model_order(self) -> None:
+        parsed = parse_resume_json(json.dumps(self._patch()), self._profile(), refine=False)
+
+        self.assertEqual(parsed.experience[0].highlights, [f"Model bullet {i}" for i in range(5)])
+        self.assertEqual(parsed.experience[1].highlights, [f"Older model bullet {i}" for i in range(4)])
+
+    def test_a_role_the_model_did_not_match_keeps_its_profile_bullets(self) -> None:
+        patch = self._patch()
+        patch["experience"] = patch["experience"][:1]
+        parsed = parse_resume_json(json.dumps(patch), self._profile(), refine=False)
+
+        self.assertEqual(len(parsed.experience[1].highlights), 8)
+
+    def test_a_double_title_keeps_the_first_one(self) -> None:
+        parsed = parse_resume_json(json.dumps(self._patch()), self._profile(), refine=False)
+
+        self.assertEqual(parsed.experience[0].title, "Senior Full-Stack Developer")
+        self.assertEqual(parsed.experience[1].title, "Front-End Developer")
+
+    def test_selected_projects_are_capped_at_four(self) -> None:
+        projects = [{"name": f"Project {i}", "description": f"Rewritten {i}."} for i in (5, 4, 3, 2, 1)]
+        parsed = parse_resume_json(json.dumps(self._patch(projects=projects)), self._profile(), refine=False)
+
+        self.assertEqual([p.name for p in parsed.projects], ["Project 5", "Project 4", "Project 3", "Project 2"])
+
+    def test_the_profile_fallback_project_list_is_not_capped(self) -> None:
+        projects = [{"name": "Invented Project", "description": "x"}]
+        parsed = parse_resume_json(json.dumps(self._patch(projects=projects)), self._profile(), refine=False)
+
+        self.assertEqual(len(parsed.projects), 6)
+
+    def test_a_seed_extraction_keeps_everything(self) -> None:
+        seed = ResumeDocument(fullName="", headline="", summary="", locale="en")
+        patch = self._patch(
+            fullName="Lucas Monteiro",
+            projects=[{"name": f"Project {i}", "description": "x"} for i in range(6)],
+        )
+        parsed = parse_resume_json(json.dumps(patch), seed, refine=False)
+
+        self.assertEqual(len(parsed.experience[0].highlights), 8)
+        self.assertEqual(parsed.experience[0].title, "Senior Full-Stack Developer | Senior Software Engineer")
+        self.assertEqual(len(parsed.projects), 6)
