@@ -47,3 +47,9 @@ data/uploads/
 
 # Local eval runs (real postings and profile copies, personal data)
 data/eval/
+
+# Personal documents kept at the repo root (the repository is public)
+/Profile.pdf
+/LEANTEAMS-LUCAS.html
+/PORTFOLIO-SMARTHOW-LUCAS.md
+/filtro-experiencia-gupy.pdf
