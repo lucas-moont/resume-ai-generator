@@ -21,10 +21,9 @@ DB has no versions yet, fall back to disk (source="disk") — same placeholder/P
 policy v1 had (``needs_extraction`` tells the caller whether the on-disk profile looks like the
 shipped placeholder and must be extracted from a Profile.pdf before it can be used; the caller
 decides how to react — the router just serves the placeholder as-is, generation_service raises
-if there is no PDF to extract from). A PDF text excerpt is loaded and returned unconditionally,
-independent of DB/disk source, because generation reuses it as prompt context even when the
-profile itself came from the DB (unchanged from v1's behavior); a PDF present but unreadable is
-always a hard error, regardless of whether extraction is actually needed.
+if there is no PDF to extract from). A PDF text excerpt is loaded for callers that still need it (an unreadable PDF is always a
+hard error). Generation no longer attaches that excerpt once a Living Profile exists — the
+JSON is the source of truth, and resending the PDF duplicated facts already paid for.
 """
 
 from __future__ import annotations
