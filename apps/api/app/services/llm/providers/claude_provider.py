@@ -211,7 +211,7 @@ class ClaudeProvider:
         user: str,
         model_override: str | None = None,
     ) -> str:
-        model_name = (model_override or self._ctx.default_claude_model or "claude-haiku-4-5").strip()
+        model_name = (model_override or self._ctx.default_claude_model or "claude-opus-5-5").strip()
 
         if self.auth_mode == "cli":
             return await _chat_json_claude_cli(

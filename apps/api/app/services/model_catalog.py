@@ -23,7 +23,9 @@ from app.services.llm_client import llm_backend_label
 CLAUDE_MODEL_SUGGESTIONS: list[dict[str, str]] = [
     {"value": "claude-haiku-4-5", "label": "Claude Haiku 4.5 — cheapest"},
     {"value": "claude-sonnet-5", "label": "Claude Sonnet 5"},
-    {"value": "claude-opus-4-8", "label": "Claude Opus 4.8 — most expensive"},
+    {"value": "claude-opus-5-5", "label": "Claude Opus 5.5"},
+    {"value": "claude-opus-4-8", "label": "Claude Opus 4.8"},
+    {"value": "claude-fable-5-1", "label": "Claude Fable 5.1 — most expensive"},
 ]
 
 GEMINI_MODEL_SUGGESTIONS: list[dict[str, str]] = [
@@ -38,20 +40,25 @@ GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 CATALOG_CACHE_TTL_SECONDS = 300.0
 
-# Cheapest Claude first in the picker. Unknown ids (a live catalog entry we have not ranked)
-# sort after the known three, alphabetically, so a new SKU still appears rather than vanishing.
+# Cheapest Claude first in the picker. The order was measured, not assumed: the same prompt
+# through the Claude CLI, comparing its reported cost per model (Opus 5.5 costs less than Opus
+# 4.8, and Fable 5.1 about twice Opus 4.8). Unknown ids (a live catalog entry we have not ranked)
+# sort after the known ones, alphabetically, so a new SKU still appears rather than vanishing.
 _CLAUDE_COST_RANK: dict[str, int] = {
     "claude-haiku-4-5": 0,
     "claude-sonnet-5": 1,
-    "claude-opus-4-8": 2,
+    "claude-opus-5-5": 2,
+    "claude-opus-4-8": 3,
+    "claude-fable-5-1": 4,
 }
+_CHEAPEST_CLAUDE = min(_CLAUDE_COST_RANK, key=_CLAUDE_COST_RANK.__getitem__)
+_PRICIEST_CLAUDE = max(_CLAUDE_COST_RANK, key=_CLAUDE_COST_RANK.__getitem__)
 
 
 def _claude_label(value: str, display: str) -> str:
-    lowered = value.lower()
-    if "haiku" in lowered:
+    if value == _CHEAPEST_CLAUDE:
         return f"{display} — cheapest"
-    if "opus" in lowered:
+    if value == _PRICIEST_CLAUDE:
         return f"{display} — most expensive"
     return display
 

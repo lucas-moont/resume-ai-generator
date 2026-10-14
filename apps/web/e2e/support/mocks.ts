@@ -39,7 +39,7 @@ export async function mockBaseline(page: Page): Promise<void> {
             name: 'claude',
             available: false,
             auth: 'cli',
-            defaultModel: 'claude-haiku-4-5',
+            defaultModel: 'claude-opus-5-5',
             defaultModelLockedByEnv: false,
             defaultModelEnvVar: 'CLAUDE_MODEL',
             models: [],

@@ -235,29 +235,36 @@ def resolve_github_token() -> str | None:
     return resolve_secret("GITHUB_TOKEN")
 
 
+# Opus 5.5: the generation default under evaluation since 2026-10-14. Haiku 4.5 was briefly the
+# default for cost and is still selectable, but generation is where quality decides whether a
+# resume gets read, and Opus 5.5 measured cheaper than Opus 4.8 for the same call.
+DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"
+
+
 def resolve_default_claude_model() -> str:
     env_value = os.getenv(_DEFAULT_MODEL_ENV_VARS["claude"], "").strip()
     if env_value:
         return env_value
-    return _app_setting_str("default_claude_model") or "claude-haiku-4-5"
+    return _app_setting_str("default_claude_model") or DEFAULT_CLAUDE_MODEL
 
 
 def resolve_analysis_claude_model() -> str:
     """Claude model the Analysis (chat_service.persist_proposal's structured, schema-strict
-    Improvement Proposal JSON) is forced onto when no model was explicitly requested.
+    Improvement Proposal JSON) uses when no model was explicitly requested.
 
-    ``resolve_default_claude_model`` is deliberately the cheap Haiku default for everything
-    else, but Haiku's weaker instruction-following turns that savings into a reliability tax
-    on this one call: comparing the whole Profile against a job description and returning a
-    strict itemized JSON shape is exactly the kind of task where a cheaper model drifts into
-    markdown fences, truncation, or missing required fields often enough to matter -- surfaced
-    as "LLM returned an unusable Improvement Proposal (invalid JSON or no valid items)". Still
-    overridable via env for anyone who wants to tune it back down.
+    It follows the Claude default, except that a Haiku default is lifted to Sonnet for this one
+    call: comparing the whole Profile against a job description and returning a strict itemized
+    JSON shape is where a cheaper model drifts into markdown fences, truncation, or missing
+    required fields often enough to matter -- surfaced as "LLM returned an unusable Improvement
+    Proposal (invalid JSON or no valid items)". ``CLAUDE_ANALYSIS_MODEL`` overrides both.
     """
     env_value = os.getenv("CLAUDE_ANALYSIS_MODEL", "").strip()
     if env_value:
         return env_value
-    return "claude-sonnet-5"
+    default = resolve_default_claude_model()
+    if "haiku" in default.lower():
+        return "claude-sonnet-5"
+    return default
 
 
 def resolve_default_gemini_model() -> str:

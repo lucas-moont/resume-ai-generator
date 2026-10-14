@@ -783,10 +783,9 @@ def _resolve_analysis_model(model: str | None) -> str | None:
 
     An explicit ``model`` (the user picked one in the UI, or a caller like the One-click
     pipeline forwarded one) is always honored unchanged. Only a genuinely unset request -- "use
-    whatever's default" -- gets bumped, and only when Claude is what would actually run: a
-    Gemini/Ollama setup is left untouched, since ``config.resolve_default_claude_model``'s cheap
-    Haiku default (and the reliability tradeoff it makes for this specific call, see
-    ``config.resolve_analysis_claude_model``) is a Claude-only concern.
+    whatever's default" -- is resolved here, and only when Claude is what would actually run: a
+    Gemini/Ollama setup is left untouched. ``config.resolve_analysis_claude_model`` follows the
+    Claude default but lifts a Haiku default to Sonnet for this strict-JSON call.
     """
     if (model or "").strip():
         return model

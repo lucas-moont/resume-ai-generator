@@ -249,14 +249,13 @@ class TestAnalysisTurnHappyPath:
 
 
 class TestAnalysisTurnModelSelection:
-    """The Analysis forces Sonnet when Claude is the active provider and the request left the
-    model unset (chat_service._resolve_analysis_model) -- config.resolve_default_claude_model's
-    cheap Haiku default is fine for generation/refine/converse, but Haiku's weaker strict-JSON
-    instruction-following was producing "LLM returned an unusable Improvement Proposal" often
-    enough on this specific call to matter. An explicit model in the request, or a non-Claude
-    provider, must both be left untouched."""
+    """With Claude active and no model in the request, the Analysis resolves its model through
+    config.resolve_analysis_claude_model (the Claude default, with a Haiku default lifted to
+    Sonnet, whose weaker strict-JSON instruction-following was producing "LLM returned an unusable
+    Improvement Proposal"). An explicit model in the request, or a non-Claude provider, must both
+    be left untouched."""
 
-    async def test_no_model_requested_with_claude_active_forces_sonnet(
+    async def test_no_model_requested_with_claude_active_uses_the_claude_default(
         self, client, fake_llm, write_profile, monkeypatch
     ):
         monkeypatch.setenv(
@@ -272,7 +271,7 @@ class TestAnalysisTurnModelSelection:
         )
 
         assert resp.status_code == 200
-        assert fake_llm.calls[0]["model"] == "claude-sonnet-5"
+        assert fake_llm.calls[0]["model"] == "claude-opus-5-5"
 
     async def test_an_explicitly_requested_model_is_never_overridden(
         self, client, fake_llm, write_profile, monkeypatch

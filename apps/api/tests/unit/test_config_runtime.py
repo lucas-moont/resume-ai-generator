@@ -73,7 +73,7 @@ class TestResolveAiDefaultModel:
 
 class TestResolveDefaultModels:
     def test_claude_default_falls_back_to_hardcoded_value(self) -> None:
-        assert config.resolve_default_claude_model() == "claude-haiku-4-5"
+        assert config.resolve_default_claude_model() == "claude-opus-5-5"
 
     def test_claude_default_reads_app_settings_override(self, settings_engine, monkeypatch) -> None:
         monkeypatch.delenv("CLAUDE_MODEL", raising=False)
@@ -89,11 +89,17 @@ class TestResolveDefaultModels:
 
 
 class TestResolveAnalysisClaudeModel:
-    """The Analysis (Improvement Proposal) forces Sonnet regardless of
-    ``resolve_default_claude_model``'s cheap Haiku default -- see chat_service._resolve_analysis_model
-    for why (Haiku's weaker instruction-following on a strict, schema-heavy JSON task)."""
+    """The Analysis (Improvement Proposal) follows the Claude default, except that a Haiku
+    default is lifted to Sonnet -- see chat_service._resolve_analysis_model for why (Haiku's
+    weaker instruction-following on a strict, schema-heavy JSON task)."""
 
-    def test_defaults_to_sonnet_even_though_the_general_claude_default_is_haiku(self) -> None:
+    def test_follows_the_claude_default(self) -> None:
+        assert config.resolve_default_claude_model() == "claude-opus-5-5"
+        assert config.resolve_analysis_claude_model() == "claude-opus-5-5"
+
+    def test_a_haiku_default_is_lifted_to_sonnet(self, settings_engine) -> None:
+        _write_setting(settings_engine, "default_claude_model", "claude-haiku-4-5")
+
         assert config.resolve_default_claude_model() == "claude-haiku-4-5"
         assert config.resolve_analysis_claude_model() == "claude-sonnet-5"
 
@@ -111,7 +117,7 @@ class TestGetRuntimeConfig:
         runtime = config.get_runtime_config()
 
         assert runtime.ai_provider == "gemini"
-        assert runtime.default_claude_model == "claude-haiku-4-5"
+        assert runtime.default_claude_model == "claude-opus-5-5"
         assert runtime.default_gemini_model == "gemini-2.5-flash"
         assert runtime.default_ollama_model == "llama3.2"
 

@@ -125,7 +125,7 @@ describe('ProviderForm', () => {
       renderApp(<ProviderForm />)
 
       await screen.findByText('Claude (Anthropic)')
-      expect(screen.getByText('claude-haiku-4-5')).toBeInTheDocument()
+      expect(screen.getByText('claude-opus-5-5')).toBeInTheDocument()
       expect(screen.getByText(/CLAUDE_MODEL/)).toBeInTheDocument()
       expect(screen.queryByLabelText('Default model')).not.toBeInTheDocument()
     })

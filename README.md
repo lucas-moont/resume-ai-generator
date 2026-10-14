@@ -54,11 +54,11 @@ These files are **gitignored** and must be created on each machine:
 | Provider | Behavior |
 |---------------|----------|
 | `auto` | Claude if `ANTHROPIC_API_KEY` is set; else Gemini if `GEMINI_API_KEY` is set; otherwise Ollama. A local `ant auth login` sets no key, so use `claude` explicitly to select it that way. |
-| `claude` | Always Claude. Auth resolves from `ant auth login` (the Claude session on your machine) or `ANTHROPIC_API_KEY`. Model from `CLAUDE_MODEL` (default `claude-haiku-4-5`, cheapest). |
+| `claude` | Always Claude. Auth resolves from `ant auth login` (the Claude session on your machine) or `ANTHROPIC_API_KEY`. Model from `CLAUDE_MODEL` (default `claude-opus-5-5`). |
 | `gemini` | Always Gemini (requires `GEMINI_API_KEY`). |
 | `ollama` | Always Ollama (uses `OLLAMA_MODEL` / `OLLAMA_BASE_URL`). |
 
-**Claude "linked on your machine":** run `ant auth login` once (ships with the Claude / `ant` CLI) and the app uses that local session automatically — no key anywhere (the Settings UI shows Claude with auth mode `cli`). Select Claude in Settings, or pick **Claude Haiku 4.5** (default, cheapest), **Claude Sonnet 5**, or **Claude Opus 4.8** (most expensive) in the model selector: a `claude-*` (or `gemini-*`) model chosen in the UI routes to that backend regardless of the active provider. Have an API key? Paste it in **Settings → API keys** and it goes straight to the **OS keychain** (see [Security](#security)) — never to a file.
+**Claude "linked on your machine":** run `ant auth login` once (ships with the Claude / `ant` CLI) and the app uses that local session automatically — no key anywhere (the Settings UI shows Claude with auth mode `cli`). Select Claude in Settings, or pick a model in the selector, cheapest first: **Claude Haiku 4.5**, **Claude Sonnet 5**, **Claude Opus 5.5** (default), **Claude Opus 4.8**, **Claude Fable 5.1** (most expensive): a `claude-*` (or `gemini-*`) model chosen in the UI routes to that backend regardless of the active provider. Have an API key? Paste it in **Settings → API keys** and it goes straight to the **OS keychain** (see [Security](#security)) — never to a file.
 
 Optional **`AI_DEFAULT_MODEL`** applies when the UI does not send a `model` field (empty override). Per-request `model` in the API body still wins when provided.
 

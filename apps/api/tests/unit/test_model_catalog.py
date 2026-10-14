@@ -140,7 +140,7 @@ class TestClaudeModels(ModelCatalogTestCase):
         self.assertEqual(models, model_catalog.CLAUDE_MODEL_SUGGESTIONS)
         self.assertEqual(
             [m["value"] for m in models],
-            ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+            ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5", "claude-opus-4-8", "claude-fable-5-1"],
         )
 
     async def test_fetches_the_dynamic_catalog_when_a_key_is_present(self) -> None:
@@ -166,7 +166,7 @@ class TestClaudeModels(ModelCatalogTestCase):
             models,
             [
                 {"value": "claude-sonnet-5", "label": "Claude Sonnet 5"},
-                {"value": "claude-opus-4-8", "label": "Claude Opus 4.8 — most expensive"},
+                {"value": "claude-opus-4-8", "label": "Claude Opus 4.8"},
             ],
         )
 
@@ -177,7 +177,9 @@ class TestClaudeModels(ModelCatalogTestCase):
                 json={
                     "data": [
                         {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8"},
+                        {"id": "claude-fable-5-1", "display_name": "Claude Fable 5.1"},
                         {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5"},
+                        {"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"},
                         {"id": "claude-sonnet-5", "display_name": "Claude Sonnet 5"},
                     ]
                 },
@@ -188,7 +190,7 @@ class TestClaudeModels(ModelCatalogTestCase):
 
         self.assertEqual(
             [m["value"] for m in models],
-            ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+            ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5", "claude-opus-4-8", "claude-fable-5-1"],
         )
         self.assertTrue(models[0]["label"].endswith("cheapest"))
         self.assertTrue(models[-1]["label"].endswith("most expensive"))

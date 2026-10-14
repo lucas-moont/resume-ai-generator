@@ -43,11 +43,13 @@ class TestGetProviders:
         claude = next(p for p in resp.json()["providers"] if p["name"] == "claude")
         assert claude["auth"] == "cli"
         assert claude["available"] is False  # no key, no CLI on PATH (fixture above)
-        assert claude["defaultModel"] == "claude-haiku-4-5"
-        assert [m["value"] for m in claude["models"]][:3] == [
+        assert claude["defaultModel"] == "claude-opus-5-5"
+        assert [m["value"] for m in claude["models"]][:5] == [
             "claude-haiku-4-5",
             "claude-sonnet-5",
+            "claude-opus-5-5",
             "claude-opus-4-8",
+            "claude-fable-5-1",
         ]
 
     async def test_gemini_without_a_key_reports_none_auth_and_static_suggestions(self, client) -> None:
@@ -146,7 +148,7 @@ class TestEnvLockIndicator:
         assert body["active"] == "auto"
         claude = next(p for p in body["providers"] if p["name"] == "claude")
         assert claude["auth"] == "cli"
-        assert claude["defaultModel"] == "claude-haiku-4-5"
+        assert claude["defaultModel"] == "claude-opus-5-5"
         assert isinstance(claude["models"], list)
 
 
