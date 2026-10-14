@@ -440,7 +440,7 @@ def _finalize_resume_turn(
         session_id=chat_session.id if chat_session is not None else None,
         parent_version_id=parent_version_id,
         profile_version_id=profile_version_id,
-        model_used=model,
+        model_used=llm_client.effective_model_id(model),
         provider_used=backend_label,
     )
 
@@ -452,7 +452,7 @@ def _finalize_resume_turn(
     if chat_session is not None:
         chat_session.active_resume_version_id = resume_row.id
         session.add(chat_session)
-        meta = {"model": model, "provider": backend_label}
+        meta = {"model": llm_client.effective_model_id(model), "provider": backend_label}
         if extra_meta:
             meta.update(extra_meta)
         assistant_msg = chat_repo.append_message(
@@ -833,7 +833,7 @@ def persist_proposal(
         session_id=session_id,
         job_description=job_description,
         items=parsed.items,
-        model_used=model,
+        model_used=llm_client.effective_model_id(model),
     )
     return row, parsed
 
