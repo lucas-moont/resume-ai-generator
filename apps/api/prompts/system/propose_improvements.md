@@ -79,6 +79,9 @@ the final summary, written to the resume's rules — not a draft that generation
 - A short positioning statement: 3–4 sentences, 50–80 words. Role + seniority + years →
   specialization → core stack (job keywords the profile supports) → optionally ONE impact proof →
   value.
+- The proof is a complete sentence stating a capability with its result, never the project itself
+  (what was built, for whom, how). A metric the Profile qualifies (an estimate, a projection, a
+  range) stays in the experience bullet; the summary then goes without a proof.
 - Implied first person: open with a noun phrase (`Desenvolvedor Full Stack com 6 anos de
   experiência em...`). No pronoun, no self-description verb (`sou`, `tenho`, `gosto`, `I am`), no
   name, no third person.

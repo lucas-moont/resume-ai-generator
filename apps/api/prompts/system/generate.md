@@ -60,6 +60,10 @@ surviving one.
 - **Voice: implied first person.** Open with a noun phrase (`Desenvolvedor Full Stack com 6 anos de experiência em...`). Never a pronoun (`eu`, `meu`, `I`, `my`), never a self-description verb (`sou`, `tenho`, `gosto`, `busco`, `acredito`, `atuo`, `I am`), never the candidate's name or the third person (`Lucas é...`, `Atuou...`). The optional proof may use a past action verb without a pronoun, like the bullets (`Liderei a migração...`).
 - **Leave to the experience bullets**: project anecdotes and worked examples (`como a migração que dividi em...`), how work was broken down, and process counts (PRs, commits, repositories, tickets: they measure activity, not impact).
 - **At most one metric**, and only an impact metric already in the inputs (users, revenue, latency, cost, scale). None is fine.
+- **The optional proof** is a complete sentence that states a capability with its result, never the project itself (what was built, for whom, how): that is the bullet's job, and the summary only previews it. A metric the inputs qualify (an estimate, a projection, a range) needs context the summary has no room for, and dropping the qualifier would overstate it: leave that one to the bullet and write the summary without a proof.
+
+Bad (verbless fragment, describes the project, hedged range): `Em produção, pipeline de vídeos de treinamento com IA que reduziu em 92–97% os custos estimados de produção.`
+Good proof (illustrative shape only; the number must come from the inputs): `Experiência levando produtos com IA generativa a produção, usados por mais de 50 mil pessoas.`
 - **No unproven self-labels**: `adepto de <metodologia>`, `apaixonado por`, `proativo`, `passionate`. A methodology earns a mention only as a keyword the job asks for.
 - The candidate's own headline and summary arrive apart from the profile JSON, as notes written for LinkedIn (often a keyword-list headline and a long first-person "About"). They are raw material, not a template: take facts from them; never their voice, length, shape or anecdotes.
 

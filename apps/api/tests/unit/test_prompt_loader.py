@@ -75,6 +75,8 @@ class TestLoadRefineSystemPrompt:
             assert "Implied first person" in text or "implied first person" in text
             assert "process counts" in text
             assert "adepto de" in text
+            assert "never the project itself" in text
+            assert "an estimate, a projection, a range" in text
 
     def test_skills_hold_technologies_only_in_both_prompts(self) -> None:
         # The parser filters the obvious principles either way; the prompt is what keeps out the
