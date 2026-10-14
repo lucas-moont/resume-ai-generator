@@ -92,7 +92,7 @@ from collections.abc import AsyncIterator, Callable
 
 from sqlmodel import Session
 
-from app.config import LLM_TIMEOUT_SECONDS, PROMPTS_DIR
+from app.config import LLM_TIMEOUT_SECONDS, PROMPTS_DIR, resolve_analysis_claude_model
 from app.db.tables import ChatMessage, ChatSession, ImprovementProposal, ResumeVersion, SourceDocument
 from app.domain.baseline_brief import build_baseline_brief, has_career_target, is_target_brief
 from app.domain.chat_intent import classify_intent
@@ -112,6 +112,7 @@ from app.prompt_loader import (
 )
 from app.repositories import chat_repo, profile_repo, proposal_repo, resume_repo
 from app.services import llm_client, streaming
+from app.services.llm.provider_resolver import resolve_active_provider_name
 from app.services.analysis_service import analysis_turn_events
 from app.services.html_sanitize import sanitize_resume_for_display
 from app.services.generation_service import generate_resume_events
@@ -636,6 +637,7 @@ async def _handle_propose_turn(
     system, user_msg = build_analysis_prompt(
         profile=resolved_profile.profile, job_description=jd_text, locale=resolved_locale
     )
+    model = _resolve_analysis_model(model)
 
     llm_task = asyncio.create_task(llm_client.chat_json(system, user_msg, model=model))
     async for is_timeout, data in run_with_heartbeat(
@@ -776,6 +778,23 @@ async def _handle_approve_branch(
 # to reapprove it in. Callers own the rollback (see ``services/jobs/one_click_service.py``).
 
 
+def _resolve_analysis_model(model: str | None) -> str | None:
+    """The model the Analysis call actually goes out with.
+
+    An explicit ``model`` (the user picked one in the UI, or a caller like the One-click
+    pipeline forwarded one) is always honored unchanged. Only a genuinely unset request -- "use
+    whatever's default" -- gets bumped, and only when Claude is what would actually run: a
+    Gemini/Ollama setup is left untouched, since ``config.resolve_default_claude_model``'s cheap
+    Haiku default (and the reliability tradeoff it makes for this specific call, see
+    ``config.resolve_analysis_claude_model``) is a Claude-only concern.
+    """
+    if (model or "").strip():
+        return model
+    if resolve_active_provider_name() != "claude":
+        return model
+    return resolve_analysis_claude_model()
+
+
 def build_analysis_prompt(
     *, profile: ProfileMaster, job_description: str, locale: str
 ) -> tuple[str, str]:
@@ -840,6 +859,7 @@ async def propose_for_description(
     system, user_msg = build_analysis_prompt(
         profile=profile, job_description=job_description, locale=locale
     )
+    model = _resolve_analysis_model(model)
     async with asyncio.timeout(LLM_TIMEOUT_SECONDS):
         raw = await llm_client.chat_json(system, user_msg, model=model)
     return persist_proposal(
@@ -1280,7 +1300,7 @@ def _build_profile_update_user_message(profile: ProfileMaster, message: str) -> 
     return (
         "The user's CURRENT profile (JSON) -- match any replace/remove target to an existing "
         "index in these lists; only 'add' may use '-':\n"
-        f"{profile.model_dump_json(indent=2)}\n\n"
+        f"{profile.model_dump_json()}\n\n"
         f'User message: "{message}"\n\n'
         "Return PatchOp[] JSON only."
     )

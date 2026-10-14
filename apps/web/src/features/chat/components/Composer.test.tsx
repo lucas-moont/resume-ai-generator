@@ -112,6 +112,14 @@ describe('Composer — attachments and validation', () => {
 })
 
 describe('Composer — model picker', () => {
+  it('shows the catalog default as the placeholder without pre-filling the value', async () => {
+    renderComposer()
+
+    const combobox = screen.getByRole('combobox', { name: /ai model/i })
+    await waitFor(() => expect(combobox).toHaveAttribute('placeholder', DEFAULT_MODEL_SUGGESTIONS[0].label))
+    expect(combobox).toHaveValue('')
+  })
+
   it('lists the server catalog as listbox options and sends the picked model', async () => {
     const onSend = vi.fn()
     const user = userEvent.setup()

@@ -40,13 +40,13 @@ export const DEFAULT_PROVIDERS_SETTINGS: ProvidersSettingsResponse = {
       name: 'claude',
       available: false,
       auth: 'cli',
-      defaultModel: 'claude-sonnet-5',
+      defaultModel: 'claude-haiku-4-5',
       defaultModelLockedByEnv: false,
       defaultModelEnvVar: 'CLAUDE_MODEL',
       models: [
-        { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+        { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 — cheapest' },
         { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-        { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+        { value: 'claude-opus-4-8', label: 'Claude Opus 4.8 — most expensive' },
       ],
     },
     {

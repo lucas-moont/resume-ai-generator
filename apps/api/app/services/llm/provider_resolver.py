@@ -84,9 +84,17 @@ def provider_context_for(mode: ProviderName) -> ProviderContext:
     )
 
 
-def resolve_active_provider() -> LlmProvider:
+def resolve_active_provider_name() -> ProviderName:
+    """Which provider a call with no explicit model would actually hit right now -- the same
+    ``auto``/env resolution ``resolve_active_provider`` uses, exposed on its own so a caller
+    that only needs the name (e.g. deciding whether a Claude-specific default applies) does
+    not have to construct a provider adapter just to ask."""
     runtime = config_module.get_runtime_config()
-    provider_name = resolve_provider_name(
+    return resolve_provider_name(
         runtime.ai_provider, runtime.gemini_api_key, runtime.anthropic_api_key
     )
+
+
+def resolve_active_provider() -> LlmProvider:
+    provider_name = resolve_active_provider_name()
     return build_provider(provider_name, provider_context_for(provider_name))

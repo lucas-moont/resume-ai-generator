@@ -27,7 +27,7 @@ class ProviderContext:
 
     # repr=False: a stray `logger.info(f"{ctx}")` must not leak either key.
     anthropic_api_key: str | None = field(default=None, repr=False)
-    default_claude_model: str = "claude-sonnet-5"
+    default_claude_model: str = "claude-haiku-4-5"
     claude_max_output_tokens: int = 8192
     claude_thinking: str = "off"
 

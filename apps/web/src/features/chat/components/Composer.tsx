@@ -47,6 +47,10 @@ export function Composer({
   // alignment an explicit, compiler-checked fact here instead of an
   // incidental one discovered only if the shapes ever drift apart.
   const modelSuggestions = (modelsQuery.data?.models ?? []) satisfies ComboboxOption[]
+  const catalogDefault = modelsQuery.data?.default
+  const catalogDefaultLabel =
+    modelSuggestions.find((opt) => opt.value === catalogDefault)?.label ?? catalogDefault
+  const modelPlaceholder = catalogDefaultLabel || 'Model'
   const modelEmptyState = modelsQuery.isLoading
     ? 'Loading models…'
     : modelsQuery.isError
@@ -187,10 +191,10 @@ export function Composer({
               <span className="text-xs text-stone-500 dark:text-zinc-500">{opt.label}</span>
             </>
           )}
-          placeholder="Model"
+          placeholder={modelPlaceholder}
           wrapperClassName="shrink-0"
-          className="w-24 rounded-xl border border-stone-200 bg-white px-2.5 py-2.5 text-xs text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus-visible:ring-zinc-500 sm:w-32"
-          listClassName={`absolute bottom-full right-0 ${zIndex.dropdown} mb-1 max-h-60 w-56 overflow-auto rounded-xl border border-stone-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900`}
+          className="w-28 rounded-xl border border-stone-200 bg-white px-2.5 py-2.5 text-xs text-stone-900 shadow-sm placeholder:text-stone-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus-visible:ring-zinc-500 sm:w-44"
+          listClassName={`absolute bottom-full right-0 ${zIndex.dropdown} mb-1 max-h-60 w-72 overflow-auto rounded-xl border border-stone-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900`}
         />
 
         {streaming ? (

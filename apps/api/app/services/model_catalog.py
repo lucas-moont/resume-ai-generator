@@ -21,9 +21,9 @@ from app import config as config_module
 from app.services.llm_client import llm_backend_label
 
 CLAUDE_MODEL_SUGGESTIONS: list[dict[str, str]] = [
-    {"value": "claude-opus-4-8", "label": "Claude Opus 4.8"},
+    {"value": "claude-haiku-4-5", "label": "Claude Haiku 4.5 — cheapest"},
     {"value": "claude-sonnet-5", "label": "Claude Sonnet 5"},
-    {"value": "claude-haiku-4-5", "label": "Claude Haiku 4.5"},
+    {"value": "claude-opus-4-8", "label": "Claude Opus 4.8 — most expensive"},
 ]
 
 GEMINI_MODEL_SUGGESTIONS: list[dict[str, str]] = [
@@ -37,6 +37,30 @@ ANTHROPIC_API_VERSION = "2023-06-01"
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 CATALOG_CACHE_TTL_SECONDS = 300.0
+
+# Cheapest Claude first in the picker. Unknown ids (a live catalog entry we have not ranked)
+# sort after the known three, alphabetically, so a new SKU still appears rather than vanishing.
+_CLAUDE_COST_RANK: dict[str, int] = {
+    "claude-haiku-4-5": 0,
+    "claude-sonnet-5": 1,
+    "claude-opus-4-8": 2,
+}
+
+
+def _claude_label(value: str, display: str) -> str:
+    lowered = value.lower()
+    if "haiku" in lowered:
+        return f"{display} — cheapest"
+    if "opus" in lowered:
+        return f"{display} — most expensive"
+    return display
+
+
+def _sort_claude_models(models: list[dict[str, str]]) -> list[dict[str, str]]:
+    return sorted(
+        models,
+        key=lambda item: (_CLAUDE_COST_RANK.get(item["value"], 50), item["value"]),
+    )
 
 # Test seams (module-qualified, same pattern as app.config.set_settings_engine): production
 # never touches either -- _transport=None means "real network", _clock=time.monotonic means
@@ -153,8 +177,8 @@ async def _fetch_anthropic_models(api_key: str) -> list[dict[str, str]] | None:
             continue
         display_name = item.get("display_name")
         label = display_name if isinstance(display_name, str) and display_name else item["id"]
-        models.append({"value": item["id"], "label": label})
-    return models
+        models.append({"value": item["id"], "label": _claude_label(item["id"], label)})
+    return _sort_claude_models(models)
 
 
 async def _fetch_gemini_models(api_key: str) -> list[dict[str, str]] | None:

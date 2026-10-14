@@ -43,8 +43,12 @@ class TestGetProviders:
         claude = next(p for p in resp.json()["providers"] if p["name"] == "claude")
         assert claude["auth"] == "cli"
         assert claude["available"] is False  # no key, no CLI on PATH (fixture above)
-        assert claude["defaultModel"] == "claude-sonnet-5"
-        assert {"claude-sonnet-5", "claude-opus-4-8"} <= {m["value"] for m in claude["models"]}
+        assert claude["defaultModel"] == "claude-haiku-4-5"
+        assert [m["value"] for m in claude["models"]][:3] == [
+            "claude-haiku-4-5",
+            "claude-sonnet-5",
+            "claude-opus-4-8",
+        ]
 
     async def test_gemini_without_a_key_reports_none_auth_and_static_suggestions(self, client) -> None:
         resp = await client.get("/api/settings/providers")
@@ -142,7 +146,7 @@ class TestEnvLockIndicator:
         assert body["active"] == "auto"
         claude = next(p for p in body["providers"] if p["name"] == "claude")
         assert claude["auth"] == "cli"
-        assert claude["defaultModel"] == "claude-sonnet-5"
+        assert claude["defaultModel"] == "claude-haiku-4-5"
         assert isinstance(claude["models"], list)
 
 
@@ -166,13 +170,13 @@ class TestPutProviders:
     ) -> None:
         resp = await client.put(
             "/api/settings/providers",
-            json={"provider": "claude", "defaultModel": "claude-haiku-4-5"},
+            json={"provider": "claude", "defaultModel": "claude-sonnet-5"},
         )
 
         assert resp.status_code == 200
         claude = next(p for p in resp.json()["providers"] if p["name"] == "claude")
-        assert claude["defaultModel"] == "claude-haiku-4-5"
-        assert config_module.resolve_default_claude_model() == "claude-haiku-4-5"
+        assert claude["defaultModel"] == "claude-sonnet-5"
+        assert config_module.resolve_default_claude_model() == "claude-sonnet-5"
         # Only claude's own default changed -- gemini/ollama untouched.
         assert config_module.resolve_default_gemini_model() == "gemini-2.5-flash"
 

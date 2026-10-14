@@ -138,6 +138,10 @@ class TestClaudeModels(ModelCatalogTestCase):
     async def test_falls_back_to_static_suggestions_without_a_key(self) -> None:
         models = await model_catalog.claude_models(None)
         self.assertEqual(models, model_catalog.CLAUDE_MODEL_SUGGESTIONS)
+        self.assertEqual(
+            [m["value"] for m in models],
+            ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+        )
 
     async def test_fetches_the_dynamic_catalog_when_a_key_is_present(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -162,9 +166,32 @@ class TestClaudeModels(ModelCatalogTestCase):
             models,
             [
                 {"value": "claude-sonnet-5", "label": "Claude Sonnet 5"},
-                {"value": "claude-opus-4-8", "label": "Claude Opus 4.8"},
+                {"value": "claude-opus-4-8", "label": "Claude Opus 4.8 — most expensive"},
             ],
         )
+
+    async def test_fetched_catalog_is_sorted_cheapest_first_and_annotated(self) -> None:
+        self._mock(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8"},
+                        {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5"},
+                        {"id": "claude-sonnet-5", "display_name": "Claude Sonnet 5"},
+                    ]
+                },
+            )
+        )
+
+        models = await model_catalog.claude_models("test-key")  # pragma: allowlist secret
+
+        self.assertEqual(
+            [m["value"] for m in models],
+            ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+        )
+        self.assertTrue(models[0]["label"].endswith("cheapest"))
+        self.assertTrue(models[-1]["label"].endswith("most expensive"))
 
     async def test_falls_back_to_static_suggestions_on_http_error(self) -> None:
         self._mock(lambda request: httpx.Response(401, json={"error": "invalid key"}))

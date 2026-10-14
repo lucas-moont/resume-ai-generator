@@ -248,6 +248,67 @@ class TestAnalysisTurnHappyPath:
         assert "Disk Decoy Person" not in prompt
 
 
+class TestAnalysisTurnModelSelection:
+    """The Analysis forces Sonnet when Claude is the active provider and the request left the
+    model unset (chat_service._resolve_analysis_model) -- config.resolve_default_claude_model's
+    cheap Haiku default is fine for generation/refine/converse, but Haiku's weaker strict-JSON
+    instruction-following was producing "LLM returned an unusable Improvement Proposal" often
+    enough on this specific call to matter. An explicit model in the request, or a non-Claude
+    provider, must both be left untouched."""
+
+    async def test_no_model_requested_with_claude_active_forces_sonnet(
+        self, client, fake_llm, write_profile, monkeypatch
+    ):
+        monkeypatch.setenv(
+            "ANTHROPIC_API_KEY", "sk-ant-fake-model-selection-0123456789abcdef"
+        )  # pragma: allowlist secret
+        write_profile(make_profile())
+        fake_llm.queue(_proposal_llm_response())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        assert resp.status_code == 200
+        assert fake_llm.calls[0]["model"] == "claude-sonnet-5"
+
+    async def test_an_explicitly_requested_model_is_never_overridden(
+        self, client, fake_llm, write_profile, monkeypatch
+    ):
+        monkeypatch.setenv(
+            "ANTHROPIC_API_KEY", "sk-ant-fake-model-selection-0123456789abcdef"
+        )  # pragma: allowlist secret
+        write_profile(make_profile())
+        fake_llm.queue(_proposal_llm_response())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION, "model": "claude-haiku-4-5"},
+        )
+
+        assert resp.status_code == 200
+        assert fake_llm.calls[0]["model"] == "claude-haiku-4-5"
+
+    async def test_a_non_claude_provider_is_left_untouched(
+        self, client, fake_llm, write_profile, monkeypatch
+    ):
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini-key-model-selection")
+        write_profile(make_profile())
+        fake_llm.queue(_proposal_llm_response())
+        created = (await client.post("/api/chat/sessions", json={})).json()
+
+        resp = await client.post(
+            f"/api/chat/sessions/{created['id']}/messages/stream",
+            json={"message": GENERIC_JOB_DESCRIPTION},
+        )
+
+        assert resp.status_code == 200
+        assert fake_llm.calls[0]["model"] is None
+
+
 class TestAnalysisTurnTitle:
     """v4.1-02: the Analysis's own JSON may name the job via an optional `title` -- when
     present, it becomes the chat session's own title (replacing whatever excerpt-based title
