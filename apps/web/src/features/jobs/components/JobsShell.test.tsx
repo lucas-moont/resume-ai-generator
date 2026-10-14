@@ -172,7 +172,7 @@ describe('JobsShell', () => {
     const user = userEvent.setup()
     renderApp(<JobsShell />)
 
-    const select = await screen.findByLabelText('Publicada há até', T)
+    const select = await screen.findByLabelText('Publicada há até', undefined, T)
     expect(select).toHaveValue('')
     await waitFor(() => expect(params).toContain(null))
 
@@ -192,7 +192,7 @@ describe('JobsShell', () => {
     const user = userEvent.setup()
     renderApp(<JobsShell />)
 
-    const select = await screen.findByLabelText('Ordenar por', T)
+    const select = await screen.findByLabelText('Ordenar por', undefined, T)
     // Defaults to Relevância, and that default never travels — a clean URL still means "ranked".
     expect(select).toHaveValue('visibility')
     await waitFor(() => expect(sorts).toContain(null))
