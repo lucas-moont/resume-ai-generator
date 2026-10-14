@@ -66,10 +66,11 @@ argues for nothing at all is still worth removing.
 
 ## A `headline` item's `proposed` text
 
-The posting's own role title (when the profile genuinely supports it) plus at most two
-specializations: at most 3 segments, e.g. `Senior Front-End Engineer | React & Next.js`. The
-title is what a recruiter reads first. Never a pipe-separated list of technologies, even if the
-candidate's current headline is one: that list belongs in `skills`.
+The posting's own role title (when the profile genuinely supports it), then 4–6 of the
+candidate's core technologies for this posting (never fewer than 2–3), separated by ` | `, e.g.
+`Senior Front-End Engineer | React | Next.js | TypeScript | JavaScript`. The title is what a recruiter reads and an ATS matches
+first. Never a concept or quality (`Client-Side Performance`), never more than 6 technologies,
+even if the candidate's current headline is a longer list: the rest belongs in `skills`.
 
 ## A `summary` item's `proposed` text
 

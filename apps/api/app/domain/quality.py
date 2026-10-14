@@ -139,7 +139,8 @@ def has_posting_reference(resume: ResumeDocument) -> bool:
 MAX_BULLETS_FIRST_ROLE = 5
 MAX_BULLETS_OTHER_ROLE = 4
 MAX_PROJECTS = 4
-MAX_HEADLINE_SEGMENTS = 3
+# The role plus at most six technologies (``resume_json_parser._anchor_headline``).
+MAX_HEADLINE_SEGMENTS = 7
 # A few unevidenced skills are tolerated (Git, a test runner): the check is after a skills list
 # that is an inventory rather than a summary of what the bullets show.
 UNEVIDENCED_SKILLS_THRESHOLD = 3
@@ -403,9 +404,9 @@ def quality_issues(
 
     if headline_segments(resume) > MAX_HEADLINE_SEGMENTS:
         issues.append(
-            "Shorten the headline to the target role title plus at most two specializations "
-            "(e.g. 'Senior Front-End Developer | React & Next.js'). A list of technologies "
-            "belongs in skills, not in the headline."
+            "Shorten the headline to the target role title plus 4-6 of the candidate's core "
+            "technologies for this posting (e.g. 'Senior Front-End Developer | React | Next.js "
+            "| TypeScript | JavaScript'). The rest belongs in skills."
         )
 
     missing_evidence = unevidenced_skills(resume)

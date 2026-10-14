@@ -855,9 +855,64 @@ def _anchor_generate_to_profile(
                 if s not in ordered:
                     ordered.append(s)
         out["skills"] = ordered[:MAX_SKILLS]
+        out["headline"] = _anchor_headline(
+            out.get("headline") or "",
+            skill_lookup={k: v for k, v in lookup.items() if k not in dropped},
+            ranked_skills=out["skills"],
+        )
     else:
         out["skills"] = patch_skills
     return out
+
+
+_HEADLINE_SEGMENT_SPLIT = re.compile(r"\s*[|•·]\s*")
+# Inside one segment: "React, Node.js & Cloud", "React and Next.js", "React e Next.js". A "/" is not
+# a separator here either, since it is part of real names (CI/CD).
+_HEADLINE_ITEM_SPLIT = re.compile(r"\s*(?:,|&|\+|\band\b|\be\b)\s*", re.IGNORECASE)
+_HEADLINE_WORDS = re.compile(r"[^a-z0-9.+#-]+")
+# The candidate's ask: 4-6 technologies is the ideal, so a thinner list is topped up to 4; 2-3
+# is the floor that a profile with little relevant to the posting may end at.
+MIN_HEADLINE_TECHNOLOGIES = 4
+MAX_HEADLINE_TECHNOLOGIES = 6
+
+
+def _anchor_headline(headline: str, *, skill_lookup: dict[str, str], ranked_skills: list[str]) -> str:
+    """The generated headline as ``Role | Tech | Tech | ...``: the role the model wrote,
+    followed by 4-6 technologies the candidate has, which is what an ATS and a recruiter match
+    against the posting. Each technology the model named after the role is kept (canonical
+    spelling, its order) when it is one of the candidate's skills; anything else (a concept lifted
+    from the posting, "Client-Side Performance", or a technology the candidate never claimed) is
+    dropped. A list left under ``MIN_HEADLINE_TECHNOLOGIES`` is topped up from ``ranked_skills``,
+    which already leads with what the posting asks for. A technology the role already names
+    ("React Developer") is not repeated."""
+    plain = re.sub(r"<[^>]+>", "", headline or "").strip()
+    segments = [s.strip() for s in _HEADLINE_SEGMENT_SPLIT.split(plain) if s.strip()]
+    if not segments or not ranked_skills:
+        return headline
+    role = segments[0]
+    role_words = {w.strip(".-") for w in _HEADLINE_WORDS.split(role.lower()) if w}
+    taken: set[str] = set()
+    technologies: list[str] = []
+
+    def take(name: str) -> None:
+        token = skill_token(name)
+        if not token or token in taken or len(technologies) >= MAX_HEADLINE_TECHNOLOGIES:
+            return
+        taken.add(token)
+        if name.lower() in role_words or token in role_words:
+            return
+        technologies.append(name)
+
+    for segment in segments[1:]:
+        for item in _HEADLINE_ITEM_SPLIT.split(segment):
+            canonical = skill_lookup.get(skill_token(item))
+            if canonical and not is_non_technology(canonical):
+                take(canonical)
+    for skill in ranked_skills:
+        if len(technologies) >= MIN_HEADLINE_TECHNOLOGIES:
+            break
+        take(skill)
+    return " | ".join([role, *technologies])
 
 
 def _merge_llm_patch_into_profile(

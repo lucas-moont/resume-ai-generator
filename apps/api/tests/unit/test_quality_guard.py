@@ -410,12 +410,15 @@ class CeilingChecksTests(unittest.TestCase):
 
     def test_flags_a_headline_that_is_a_technology_list(self) -> None:
         resume = _strong_resume().model_copy(deep=True)
-        resume.headline = "Senior FullStack Developer | Software Engineer | React | Next.js | TypeScript"
+        resume.headline = (
+            "Senior FullStack Developer | Software Engineer | React | Next.js | TypeScript | "
+            "Node.js | PostgreSQL | AWS"
+        )
         self.assertTrue(any("Shorten the headline" in i for i in _quality_issues(resume, "")))
 
-    def test_three_headline_segments_are_fine(self) -> None:
+    def test_a_role_and_six_technologies_are_fine(self) -> None:
         resume = _strong_resume().model_copy(deep=True)
-        resume.headline = "Senior Front-End Developer | React & Next.js | Design Systems"
+        resume.headline = "Front-End Developer | React | Next.js | TypeScript | JavaScript | HTML | CSS"
         self.assertFalse(any("Shorten the headline" in i for i in _quality_issues(resume, "")))
 
     def test_flags_skills_that_appear_nowhere_but_the_skills_list(self) -> None:

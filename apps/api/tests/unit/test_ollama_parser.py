@@ -231,8 +231,8 @@ class OllamaParserTests(unittest.TestCase):
         # Identity is canonical; fabricated name/phone are ignored.
         self.assertEqual(parsed.fullName, "Lucas Monteiro")
         self.assertEqual(parsed.phone, "+55 11 90000-0000")
-        # Prose is adopted from the LLM.
-        self.assertEqual(parsed.headline, "Senior Full Stack Developer")
+        # Prose is adopted from the LLM; the headline's role is too, followed by the stack.
+        self.assertEqual(parsed.headline, "Senior Full Stack Developer | React | JavaScript | Node.js")
         self.assertEqual(parsed.summary, "Tailored summary for the job.")
         # Only the real role remains, with its rewritten bullets; the fabricated one is dropped.
         self.assertEqual(len(parsed.experience), 1)
@@ -1382,3 +1382,119 @@ class AnchorCeilingTests(unittest.TestCase):
         self.assertEqual(len(parsed.experience[0].highlights), 8)
         self.assertEqual(parsed.experience[0].title, "Senior Full-Stack Developer | Senior Software Engineer")
         self.assertEqual(len(parsed.projects), 6)
+
+
+class HeadlineAnchorTests(unittest.TestCase):
+    """A generated headline is the role followed by 4-6 technologies the candidate has, the shape
+    an ATS and a recruiter both match against the posting (`Front-End Developer | React |
+    Next.js`). A segment that is not one of the candidate's technologies (a concept lifted from the
+    posting, a vague strength) is dropped, and the list is topped up from the skills section,
+    which already leads with what the posting asks for."""
+
+    _SKILLS = [
+        "React", "Next.js", "TypeScript", "JavaScript", "Node.js", "PostgreSQL", "Redis", "SOLID"
+    ]
+
+    def _parse(
+        self, headline: str, skills: list[str], profile_skills: list[str] | None = None
+    ) -> ResumeDocument:
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer | React | Next.js | Node.js | TypeScript | AI | SaaS",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=profile_skills if profile_skills is not None else self._SKILLS,
+            locale="en",
+        )
+        return parse_resume_json(
+            json.dumps({"headline": headline, "skills": skills}), fallback, refine=False
+        )
+
+    def test_a_concept_from_the_posting_is_replaced_by_the_stack(self) -> None:
+        parsed = self._parse(
+            "Front-End React Developer | TypeScript and Client-Side Performance",
+            ["React", "JavaScript", "TypeScript", "Next.js"],
+        )
+        self.assertEqual(
+            "Front-End React Developer | TypeScript | JavaScript | Next.js", parsed.headline
+        )
+
+    def test_a_good_headline_keeps_its_technologies_and_order(self) -> None:
+        parsed = self._parse(
+            "Front-End Developer | Next.js | React", ["React", "TypeScript", "Next.js"]
+        )
+        self.assertEqual(
+            "Front-End Developer | Next.js | React | TypeScript | JavaScript", parsed.headline
+        )
+
+    def test_a_grouped_segment_is_split_into_technologies(self) -> None:
+        parsed = self._parse(
+            "Senior Full Stack Developer | React, Node.js & Cloud",
+            ["Node.js", "React", "PostgreSQL"],
+        )
+        self.assertEqual(
+            "Senior Full Stack Developer | React | Node.js | PostgreSQL | Next.js", parsed.headline
+        )
+
+    def test_at_most_six_technologies(self) -> None:
+        parsed = self._parse(
+            "Full Stack Developer | React | Next.js | TypeScript | JavaScript | Node.js | "
+            "PostgreSQL | Redis",
+            ["React", "Next.js"],
+        )
+        self.assertEqual(
+            "Full Stack Developer | React | Next.js | TypeScript | JavaScript | Node.js | PostgreSQL",
+            parsed.headline,
+        )
+
+    def test_a_profile_with_little_to_offer_ends_at_what_it_has(self) -> None:
+        parsed = self._parse(
+            "Front-End Developer | React", ["React", "Next.js"], profile_skills=["React", "Next.js"]
+        )
+        self.assertEqual("Front-End Developer | React | Next.js", parsed.headline)
+
+    def test_a_bare_role_gets_the_top_skills(self) -> None:
+        parsed = self._parse("Desenvolvedor Full Stack Sênior", ["Node.js", "React", "PostgreSQL"])
+        self.assertEqual(
+            "Desenvolvedor Full Stack Sênior | Node.js | React | PostgreSQL | Next.js",
+            parsed.headline,
+        )
+
+    def test_a_technology_the_candidate_does_not_have_is_dropped(self) -> None:
+        parsed = self._parse(
+            "Back-End Developer | Kubernetes | Node.js | SOLID", ["Node.js", "PostgreSQL"]
+        )
+        self.assertEqual(
+            "Back-End Developer | Node.js | PostgreSQL | React | Next.js", parsed.headline
+        )
+
+    def test_markup_is_stripped(self) -> None:
+        parsed = self._parse(
+            "<strong>Front-End Developer</strong> | React", ["React", "TypeScript"]
+        )
+        self.assertEqual(
+            "Front-End Developer | React | TypeScript | Next.js | JavaScript", parsed.headline
+        )
+
+    def test_a_seed_profile_keeps_the_extracted_headline(self) -> None:
+        seed = ResumeDocument(fullName="", headline="", summary="", locale="en")
+        raw = json.dumps(
+            {
+                "fullName": "Ana Costa",
+                "headline": "Backend Developer | Distributed Systems",
+                "skills": ["Go"],
+            }
+        )
+        parsed = parse_resume_json(raw, seed, refine=False)
+        self.assertEqual("Backend Developer | Distributed Systems", parsed.headline)
+
+    def test_a_refine_keeps_the_headline_the_user_asked_for(self) -> None:
+        fallback = ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Front-End Developer | React | Next.js",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=self._SKILLS,
+            locale="en",
+        )
+        raw = json.dumps({"headline": "Tech Lead | Front-End Architecture"})
+        parsed = parse_resume_json(raw, fallback, refine=True)
+        self.assertEqual("Tech Lead | Front-End Architecture", parsed.headline)

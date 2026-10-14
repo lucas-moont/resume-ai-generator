@@ -62,7 +62,7 @@ def _format_agreed_improvements_block(items: list[ProposalItem]) -> str:
         "outranks this plan.\n"
         "The plan decides WHICH entries appear, not HOW MANY: the system prompt's ceilings still "
         "apply (8-16 skills, at most 5 bullets on the current role and 4 on earlier ones, at most "
-        "4 projects, a headline of at most 3 segments). A skills item is the exact list to ship, "
+        "4 projects, a headline of the role plus at most 6 technologies). A skills item is the exact list to ship, "
         "in its order; if it says \"and the rest\" or similar, ship only the entries it names.\n"
         "The plan decides WHAT changes, not the form: a proposed text still follows the system "
         "prompt's voice, summary shape and punctuation rules. If a proposed summary uses a "

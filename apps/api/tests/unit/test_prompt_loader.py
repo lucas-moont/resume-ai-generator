@@ -89,6 +89,14 @@ class TestLoadRefineSystemPrompt:
             assert "grouped by kind" in text
             assert "`Arquitetura Multi-tenant`" in text
 
+    def test_headline_is_the_role_and_the_stack_in_both_prompts(self) -> None:
+        for text in (
+            load_generate_system_prompt(PROMPTS_DIR),
+            load_refine_system_prompt(PROMPTS_DIR),
+        ):
+            assert "4–6 of the candidate's core technologies" in text
+            assert "`Client-Side Performance`" in text
+
     def test_missing_file_raises_file_not_found(self, tmp_path) -> None:
         import pytest
 
