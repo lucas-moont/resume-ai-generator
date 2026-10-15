@@ -1,9 +1,11 @@
+import io
 import json
 import re
 import unittest
 from typing import get_args
 
 import pytest
+from pypdf import PdfReader
 
 from app.domain.schemas import ResumeDocument, TemplateId
 from app.services.pdf_export import (
@@ -257,3 +259,28 @@ class KeyTechnologiesReachThePrintTemplateTests(unittest.TestCase):
         for template_id in sorted(_EXPECTED_TEMPLATE_IDS):
             with self.subTest(template=template_id):
                 self.assertIn(_KEY_TECH_LABEL_EN, render_resume_html(resume, template_id))
+
+
+# The highlight bullet must be a real "•" character, not the shape a `disc` marker
+# draws: Chromium paints a disc as a vector circle that never reaches the PDF's text
+# layer, so copy-paste and ATS parsers read every highlight with no bullet at all.
+_BULLET_MARKER_RULE = re.compile(r'\.resume-doc \.exp-list \{[^}]*list-style-type: "• "')
+
+
+def test_highlight_bullets_are_declared_as_a_text_marker() -> None:
+    # Cheap guard for the default suite — the PDF-level proof below is opt-in (e2e).
+    html = render_resume_html(ResumeDocument(**make_resume_payload()), "latex-ats")
+    assert _BULLET_MARKER_RULE.search(html)
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("template_id", ["latex-ats", "modern"])
+async def test_highlight_bullets_reach_the_pdf_text_layer(template_id: str) -> None:
+    payload = make_resume_payload()
+    highlights = payload["experience"][0]["highlights"]
+    pdf_bytes = await render_resume_pdf(ResumeDocument(**payload), template_id)
+
+    lines = PdfReader(io.BytesIO(pdf_bytes)).pages[0].extract_text().splitlines()
+    for highlight in highlights:
+        line = next(line for line in lines if highlight[:30] in line)
+        assert line.startswith("•"), line

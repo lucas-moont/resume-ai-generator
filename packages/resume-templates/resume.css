@@ -271,7 +271,12 @@
   color: var(--c-muted);
 }
 
+/* A string marker, not `disc`: Chromium paints a disc as a vector circle that
+   never reaches the PDF's text layer, so copy-paste and ATS parsers read every
+   highlight with no bullet. A string marker is emitted as a real "•" glyph,
+   in reading order, right before its line. */
 .resume-doc .exp-list {
+  list-style-type: "• ";
   margin: 5px 0 0;
   padding-left: 16px;
   font-size: 9.75pt;
