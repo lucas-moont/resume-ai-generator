@@ -465,6 +465,15 @@ class TestApprovedPlanRendersSubtractionOps:
         assert "A DROP item is an instruction to OMIT the listed entries from the output" in out
         assert "A COMPRESS item keeps the" in out
 
+    def test_a_project_rewrite_does_not_decide_which_projects_appear(self) -> None:
+        # A plan whose only "projects" rewrite named one project shipped a resume with that
+        # project alone: the model read the text swap as the section's whole roster.
+        out = self._plan()
+        assert (
+            "A rewrite of one project changes that project's text only; it does not decide "
+            "which projects appear." in out
+        )
+
     def test_a_rewrite_item_still_renders_in_the_pre_v6_shape(self) -> None:
         # The default op must be byte-compatible with what the block emitted before v6, so a
         # proposal persisted back then reaches the LLM unchanged.

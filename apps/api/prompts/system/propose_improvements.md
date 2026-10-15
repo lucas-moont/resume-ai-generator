@@ -19,6 +19,8 @@ Then **propose subtraction for the noise**. This is not optional politeness: a p
 
 Judge relevance against the *whole* posting — responsibilities, stack, domain, seniority — not a keyword scan. And judge it honestly in both directions: a skill the JD never names is not automatically noise if it plainly serves the role.
 
+Judge a project by what the candidate built, not by its name. A product with its own UI or API layer that calls AI services (a browser editor, a dashboard) is front-end or full-stack evidence, so it is never noise on a front-end or full-stack posting; only a project whose substance is the AI itself (an agent, an LLM pipeline) is AI-only. A project the experience bullets also mention is not a duplicate to drop: the bullet names it in one line, the project entry shows its scope and stack.
+
 ## Subtraction (`op`) — how to propose removing and shrinking
 
 Every item carries an `op` saying what it does to its section:

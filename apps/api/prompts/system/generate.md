@@ -35,6 +35,11 @@ or **off-topic** (belongs to a different discipline or career direction than thi
   stakes and collaboration and the other shows a completed course. Do not fill the section to
   a quota — two projects that speak to the posting beat five that mostly do not. Zero projects
   is a valid outcome when none of them do; the section simply does not appear.
+  Judge a project by what the candidate built, not by its name: a product with its own UI or API
+  layer that calls AI services (a browser editor, a dashboard) is front-end or full-stack
+  evidence, and only a project whose substance is the AI itself (an agent, an LLM pipeline) is
+  AI-only. A project the experience bullets also mention still belongs here when it argues for
+  the job: the bullet names it in one line, the project entry shows its scope and stack.
 - **Experience** — every employer, title and date stays, always: never open a gap in the
   timeline. What varies is *space*. The current role gets at most 5 bullets, an earlier relevant
   role 3-4; a role with little bearing on this job gets **one** factual bullet (never zero) so the
