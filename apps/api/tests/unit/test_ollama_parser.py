@@ -891,6 +891,113 @@ class ProjectSelectionTests(unittest.TestCase):
 
         self.assertEqual([p.name for p in parsed.projects], ["AI Video Editor"])
 
+
+class RenamedProjectTests(unittest.TestCase):
+    """A project whose name came back translated is still the candidate's project.
+
+    Selection matches by name, so "Editor de Vídeo com IA no Navegador" for "AI Video Editor"
+    used to be discarded as invented -- while a product name the model left alone
+    ("Resume AI Generator") survived. A pt-BR resume then shipped only the projects with
+    untranslatable names, and the strongest one silently disappeared. Technology names are
+    never translated, so they identify the project when its name does not.
+    """
+
+    def _profile(self) -> ResumeDocument:
+        return ResumeDocument(
+            fullName="Lucas Monteiro",
+            headline="Full Stack Developer",
+            summary="Base summary long enough to satisfy every unrelated anchor check here.",
+            skills=["React", "Next.js", "TypeScript", "Remotion", "Zustand", "NestJS", "Electron"],
+            projects=[
+                {
+                    "name": "AI Video Editor",
+                    "description": "Editor de vídeo no navegador. Tecnologias: React, Next.js, "
+                    "TypeScript, Remotion, Zustand, Framer Motion.",
+                },
+                {
+                    "name": "AI Video Cost Analytics Dashboard",
+                    "description": "Dashboard de custos. Tecnologias: Next.js, TypeScript, "
+                    "React Flow, NestJS.",
+                },
+                {
+                    "name": "Resume AI Generator",
+                    "description": "Chat que adapta o currículo. Tecnologias: React, FastAPI.",
+                },
+                {
+                    "name": "Bat-Signal",
+                    "description": "App desktop. Tecnologias: Electron, TypeScript, React.",
+                },
+            ],
+            locale="pt-BR",
+        )
+
+    def test_translated_names_are_matched_by_their_technologies(self) -> None:
+        raw = json.dumps(
+            {
+                "projects": [
+                    {
+                        "name": "Editor de Vídeo com IA no Navegador",
+                        "description": "Timeline com Remotion, Zustand e Framer Motion.",
+                    },
+                    {
+                        "name": "Dashboard de Custos de Vídeos com IA",
+                        "description": "KPIs em Next.js com React Flow e NestJS.",
+                    },
+                    {"name": "Resume AI Generator", "description": "Chat em React e FastAPI."},
+                ]
+            }
+        )
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual(
+            [p.name for p in parsed.projects],
+            ["AI Video Editor", "AI Video Cost Analytics Dashboard", "Resume AI Generator"],
+        )
+        self.assertEqual(
+            parsed.projects[0].description, "Timeline com Remotion, Zustand e Framer Motion."
+        )
+
+    def test_a_tie_between_two_projects_maps_to_neither(self) -> None:
+        # React + TypeScript fit the editor and Bat-Signal equally: guessing could swap them.
+        raw = json.dumps(
+            {
+                "projects": [
+                    {"name": "Resume AI Generator", "description": "Chat."},
+                    {"name": "Aplicativo Sem Nome", "description": "Feito em React e TypeScript."},
+                ]
+            }
+        )
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual([p.name for p in parsed.projects], ["Resume AI Generator"])
+
+    def test_two_renamed_entries_never_take_the_same_project(self) -> None:
+        raw = json.dumps(
+            {
+                "projects": [
+                    {"name": "Editor de Vídeo", "description": "Remotion e Zustand."},
+                    {"name": "Editor de Vídeo (cópia)", "description": "Remotion e Zustand."},
+                ]
+            }
+        )
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual([p.name for p in parsed.projects], ["AI Video Editor"])
+
+    def test_one_shared_technology_is_not_enough(self) -> None:
+        raw = json.dumps(
+            {
+                "projects": [
+                    {"name": "Resume AI Generator", "description": "Chat."},
+                    {"name": "Plataforma Inventada", "description": "Feita com Remotion."},
+                ]
+            }
+        )
+        parsed = parse_resume_json(raw, self._profile(), refine=False)
+
+        self.assertEqual([p.name for p in parsed.projects], ["Resume AI Generator"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

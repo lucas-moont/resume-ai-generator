@@ -524,6 +524,83 @@ def _anchor_key_technologies(
     return anchored
 
 
+_TECH_TAIL = re.compile(r"(?:tecnologias|technologies|tech stack|stack)\s*:\s*(.+)$", re.I | re.S)
+_TECH_WORD_SPLIT = re.compile(r"[^a-z0-9.+#-]+")
+# A renamed project needs this many technologies in common with ONE profile project, and
+# strictly more than with any other: one shared "React" says nothing about which project it is.
+MIN_SHARED_TECHNOLOGIES = 2
+
+
+def _tech_words(text: str) -> set[str]:
+    plain = re.sub(r"<[^>]+>", " ", text or "").lower()
+    return {w.strip(".-") for w in _TECH_WORD_SPLIT.split(plain)} - {""}
+
+
+def _technologies_in(text: str, vocabulary: list[str]) -> set[str]:
+    """Which vocabulary entries ``text`` names, each by whole words (``Go`` never matches
+    ``Google``; ``React Query`` needs both words)."""
+    words = _tech_words(text)
+    found: set[str] = set()
+    for tech in vocabulary:
+        tech_words = _tech_words(tech)
+        if tech_words and tech_words <= words:
+            found.add(skill_token(tech))
+    return found
+
+
+def _adopt_project_description(base: dict, patch: dict) -> dict:
+    """The profile's project, with the model's description when it wrote one. The name always
+    stays the profile's own spelling, translated or not in the patch."""
+    merged = dict(base)
+    desc = patch.get("description")
+    if isinstance(desc, str) and desc.strip():
+        merged["description"] = desc.strip()
+    return merged
+
+
+def _match_renamed_projects(
+    renamed: list[tuple[int, dict]],
+    free_base: list[dict],
+    profile_skills: list[str],
+) -> list[tuple[int, dict, dict]]:
+    """Patch projects whose name matched no profile project, paired with the profile project
+    they are, identified by the technologies they name.
+
+    The model translates descriptive project names into the resume's language ("AI Video
+    Editor" -> "Editor de Vídeo com IA") even when told not to, and an exact-name match then
+    discarded the project as invented while a product name it left alone survived. Technology
+    names are the one part of a description that is never translated, so they identify the
+    project. The bar is high on purpose -- a unique best match sharing at least
+    ``MIN_SHARED_TECHNOLOGIES`` -- because pairing an invented entry with a real project would
+    ship the real name over the model's text; anything ambiguous is discarded, as before.
+    """
+    if not renamed or not free_base:
+        return []
+    vocabulary = list(profile_skills)
+    for base in free_base:
+        tail = _TECH_TAIL.search(str(base.get("description") or ""))
+        if tail:
+            vocabulary.extend(t.strip(" .") for t in tail.group(1).split(","))
+    vocabulary = [t for t in vocabulary if t]
+    base_techs = [_technologies_in(str(b.get("description") or ""), vocabulary) for b in free_base]
+    taken: set[int] = set()
+    matches: list[tuple[int, dict, dict]] = []
+    for index, patch in renamed:
+        techs = _technologies_in(str(patch.get("description") or ""), vocabulary)
+        scores = sorted(
+            ((len(techs & base_techs[i]), i) for i in range(len(free_base)) if i not in taken),
+            reverse=True,
+        )
+        if not scores or scores[0][0] < MIN_SHARED_TECHNOLOGIES:
+            continue
+        if len(scores) > 1 and scores[1][0] == scores[0][0]:
+            continue
+        best = scores[0][1]
+        taken.add(best)
+        matches.append((index, patch, free_base[best]))
+    return matches
+
+
 def _anchor_generate_to_profile(
     fallback: ResumeDocument,
     patch: dict,
@@ -722,8 +799,9 @@ def _anchor_generate_to_profile(
     # them study exercises, buries the two that argue for the role.
     #
     # Selection is now honored, and the anti-fabrication guarantee is unchanged -- a project not
-    # in the profile is still discarded, matched by ``entity_key``, and only the DESCRIPTION of a
-    # matched project may be rewritten. Omitting a real project is curation, not a lie; inventing
+    # in the profile is still discarded, matched by ``entity_key`` (or, when the model translated
+    # the name, by the technologies it names -- ``_match_renamed_projects``), and only the
+    # DESCRIPTION of a matched project may be rewritten. Omitting a real project is curation, not a lie; inventing
     # one is. This also collapses what used to be two branches (with/without an approved
     # "projects" item), since reordering is just a special case of selecting everything.
     #
@@ -759,21 +837,25 @@ def _anchor_generate_to_profile(
         base_by_key: dict[str, dict] = {}
         for b in base_proj:
             base_by_key.setdefault(entity_key(b.get("name")), b)
-        selected_proj: list[dict] = []
+        selected: list[tuple[int, dict]] = []
+        renamed: list[tuple[int, dict]] = []
         used_keys: set[str] = set()
-        for p in patch_proj:
+        for index, p in enumerate(patch_proj):
             if not isinstance(p, dict):
                 continue
             key = entity_key(p.get("name"))
+            if not key or key in used_keys:
+                continue  # unnamed, or already taken -- never promoted
             base = base_by_key.get(key)
-            if not key or base is None or key in used_keys:
-                continue  # invented, unnamed, or already taken -- never promoted
-            merged = dict(base)
-            desc = p.get("description")
-            if isinstance(desc, str) and desc.strip():
-                merged["description"] = desc.strip()
-            selected_proj.append(merged)
+            if base is None:
+                renamed.append((index, p))
+                continue
+            selected.append((index, _adopt_project_description(base, p)))
             used_keys.add(key)
+        free_base = [b for b in base_proj if entity_key(b.get("name")) not in used_keys]
+        for index, p, base in _match_renamed_projects(renamed, free_base, profile_skills):
+            selected.append((index, _adopt_project_description(base, p)))
+        selected_proj = [merged for _, merged in sorted(selected, key=lambda pair: pair[0])]
         # No match at all means the model ignored the profile, not that it chose nothing.
         out["projects"] = selected_proj[:MAX_PROJECTS] if selected_proj else base_proj
     else:
